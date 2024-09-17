@@ -1,3 +1,9 @@
+#### Build docker
+```
+docker buildx build -t docker.io/library/auki-archive:latest --load  .
+```
+
+
 #### Local refinement for single scan
 ```
 docker run \
