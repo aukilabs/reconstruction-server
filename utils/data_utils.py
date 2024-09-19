@@ -56,7 +56,11 @@ def convert_pose_colmap_to_opengl(position, quaternion):
 
 
 def get_data_paths(group_folder):
-    truth_portal_poses = load_portals_json(group_folder / "portals.json")
+    path_to_truth_portals = group_folder / "portals.json"
+    if path_to_truth_portals.exists():
+        truth_portal_poses = load_portals_json(group_folder / "portals.json")
+    else:
+        truth_portal_poses = None
 
     zip_list = group_folder.glob('**/*.zip')
 

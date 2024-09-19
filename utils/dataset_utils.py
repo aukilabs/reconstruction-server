@@ -809,7 +809,8 @@ def stitching_helper(
 
     if basic_stitch_only:
         logger.info("Basic stitch only!")
-        compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+        if truth_portal_poses:
+            compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
         logger.info('Finished Global Merge!')
         logger.info('========================================================================')
@@ -844,7 +845,8 @@ def stitching_helper(
         deviation = np.mean(deviation)
         logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
 
-    compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+    if truth_portal_poses:
+        compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
     logger.info('========================================================================')
     logger.info('Finished Global refinement!')
