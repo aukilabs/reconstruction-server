@@ -360,7 +360,7 @@ def refine_dataset(
 
     logging.info("Now save adjusted QR code poses")
     stitched_qr_detections = get_world_space_qr_codes(refined_rec, detections_per_qr, image_ids_per_qr)
-    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items()}
+    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items() if poses}
     for qr_id, pose in stitched_mean_qr_poses.items():
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
