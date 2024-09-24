@@ -304,7 +304,11 @@ def refine_dataset(
         # print(f"QR position for {id}:", detection["pose"])
 
         # Convert back into cam space of nearest image frame (since we skip some frames)
-        nearest_image_timestamp = np.max([t for t in valid_timestamps if t <= timestamp])
+        valid_nearest_timestamps = [t for t in valid_timestamps if t <= timestamp]
+        if valid_nearest_timestamps:
+            nearest_image_timestamp = np.max(valid_nearest_timestamps)
+        else:
+            continue
         nearest_image = image_per_timestamp[nearest_image_timestamp]
         cam_space_qr_pose = nearest_image.cam_from_world * detection["pose"] #T_RC = T_WC*T_RW
 
