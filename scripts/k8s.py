@@ -14,8 +14,11 @@ v1 = client.CoreV1Api()
 docker_image = "docker.io/library/auki-archive:latest"  # Replace this with your image
 
 # Set the base directory
-base_dir = "./test/datasets"  # Replace with your directory path
-output_path = "./test/refined/local"
+base_dir = "/path/to/datasets"  # Replace with your directory path
+output_path = "/path/to/refined/local"
+# base_dir = "./test/datasets"  # Replace with your directory path
+# output_path = "./test/refined/local"
+
 # Create a pod for each folder in the base directory
 def create_pod_for_folder(folder_name, folder_path):
     pod_name = f"{folder_name.replace('_', '-')}-pod"
@@ -69,16 +72,10 @@ def create_pod_for_folder(folder_name, folder_path):
                 #  "value": "20"}
         ],
         resources=V1ResourceRequirements(
-            requests={
-                "cpu": "4",
-                "memory": "8Gi",
-                "nvidia.com/gpu": "1"  # Assuming you have an NVIDIA GPU plugin for Kubernetes
-            },
             limits={
-                "cpu": "4",
-                "memory": "8Gi",
+                "cpu": "6",
+                "memory": "4Gi",
                 "nvidia.com/gpu": "1",  # This will allocate 1 GPU with 3GB of GPU RAM
-                # "nvidia.com/gpu-memory": "3Gi"
             }
         ),
         volume_mounts=[
@@ -123,7 +120,7 @@ def monitor_and_delete_pod(name):
             print(f"Pod {name} deleted.")
             break
         else:
-            print(f"Pod {name} status: {pod_status}. Waiting...")
+            # print(f"Pod {name} status: {pod_status}. Waiting...")
             time.sleep(5)
 
 def create_pods_for_folders(base_dir):
