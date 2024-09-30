@@ -1,6 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional
+import logging
 
 import pycolmap
 import pyceres
@@ -18,6 +19,9 @@ def run_triangulation(
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None
 ) -> pycolmap.Reconstruction:
+    # Grab logger by name
+    logger = logging.getLogger("logger")
+
     mapper_options = pycolmap.IncrementalMapperOptions(options)
 
     database = pycolmap.Database(database_path)
@@ -46,7 +50,7 @@ def run_triangulation(
         image = reconstruction.images[image_id]
         num_existing_points = image.num_points3D
         mapper.triangulate_image(tri_options, image_id)
-        print(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
+        logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
 
     mapper.complete_and_merge_tracks(tri_options)
 
@@ -72,7 +76,7 @@ def run_triangulation(
 
         num_observations = reconstruction.compute_num_observations()
 
-        print(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
+        logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
 
         ba_config = pycolmap.BundleAdjustmentConfig()
 
@@ -111,30 +115,33 @@ def run_triangulation(
 
         final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
-        print("------------")
-        print("INITIAL LOSS BREAKDOWN:")
-        print("\n".join(f"{category}: {loss}" for category, loss in initial_loss_breakdown.items()))
-        print("------------")
-        print("FINAL LOSS BREAKDOWN:")
-        print("\n".join(f"{category}: {loss}" for category, loss in final_loss_breakdown.items()))
-        print("------------")
+        logger.info("------------")
+        logger.info("INITIAL LOSS BREAKDOWN:")
+        for category, loss in initial_loss_breakdown.items():
+            logger.info(f"{category}: {loss}")
+        logger.info("------------")
+        logger.info("FINAL LOSS BREAKDOWN:")
+        for category, loss in final_loss_breakdown.items():
+            logger.info(f"{category}: {loss}")
+        logger.info("------------")
 
-        print("\n".join(summary.FullReport().split(",")))
+        # logger.info("\n".join(summary.FullReport().split(",")))
+        logger.info(f"{summary.FullReport()}")
 
         num_changed_observations = 0
         num_changed_observations += mapper.complete_and_merge_tracks(tri_options)
         num_changed_observations += mapper.filter_points(mapper_options)
 
         changed = num_changed_observations / num_observations
-        print(f'Changed observations: {changed}')
+        logger.info(f'Changed observations: {changed}')
 
         ba_iterations_remaining -= 1
 
         # Retriangulate underreconstructed image pairs after first BA success
         if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
-            print('Retriangulating...')
+            logger.info('Retriangulating...')
             num_retriangulated = mapper.retriangulate(tri_options)
-            print(f'Retriangulated {num_retriangulated} observations')
+            logger.info(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
 
             # make sure there are at least two more BA iterations after retriangulation
@@ -144,7 +151,7 @@ def run_triangulation(
             ba_iterations_remaining += additional_iterations
 
 
-    print('Extracting colors...')
+    logger.info('Extracting colors...')
     reconstruction.extract_colors_for_all_images(image_dir)
 
     mapper.end_reconstruction(False)
@@ -193,5 +200,7 @@ def triangulate_model(
         database, image_dir, reference, mapper_options if mapper_options is not None else {},
         timestamp_per_image, arkit_precomputed
     )
-    print("Finished the triangulation with statistics:\n%s", reconstruction.summary())
+    # Grab logger by name
+    shared_logger = logging.getLogger("shared_logger")
+    shared_logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction

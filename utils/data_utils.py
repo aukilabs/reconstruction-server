@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
 import torch
+import logging
 
 
 def convert_pose_opengl_to_colmap(position, quaternion):
@@ -351,3 +352,17 @@ def pycolmap_to_batch_matrix(
         extra_params = extra_params[:, None]
 
     return points3D, extrinsics, intrinsics, extra_params
+
+
+def setup_logger(name, log_file, level=logging.INFO):
+    """To setup as many loggers as you want"""
+
+    handler = logging.FileHandler(log_file)   
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')     
+    handler.setFormatter(formatter)
+
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.addHandler(handler)
+
+    return logger
