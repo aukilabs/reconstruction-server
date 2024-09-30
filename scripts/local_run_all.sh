@@ -19,7 +19,7 @@ for dir in $SUB_DIRS; do
         -v /path/to/jobs/:/path/to/jobs/ \
         -it \
         auki-archive:latest \
-        main \
+        local_main \
         --dataset_path "$dir" \
         --output_path /path/to/jobs/my_domain_job/refined/local/ \
         --every_nth_image 2 

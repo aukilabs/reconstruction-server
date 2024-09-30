@@ -11,7 +11,7 @@ docker run \
 --shm-size=512m \
 -v /path/to/jobs/:/path/to/jobs/ \
 -it auki-archive:latest \
-main \
+local_main \
 --dataset_path /path/to/jobs/my_domain_job/datasets/dmt_scan_2024-06-26_10-29-57 \
 --output_path /path/to/jobs/my_domain_job/refined/local \
 --every_nth_image 2 \
@@ -30,7 +30,7 @@ docker run \
 --gpus all \
 -v /path/to/jobs/:/path/to/jobs/ \
 -it auki-archive:latest \
-global_stitching_main \
+global_main \
 --data_dir ./datasets \
 --all_poses \
 --all_observations \
@@ -44,7 +44,7 @@ docker run \
 --gpus all \
 -v /path/to/jobs/:/path/to/jobs/ \
 -it auki-archive:latest \
-global_stitching_main \
+global_main \
 --data_dir ./datasets \
 --all_poses \
 --all_observations \
