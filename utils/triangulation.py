@@ -21,7 +21,7 @@ def run_triangulation(
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger("logger")
-    
+
     mapper_options = pycolmap.IncrementalMapperOptions(options)
 
     database = pycolmap.Database(database_path)
@@ -200,5 +200,7 @@ def triangulate_model(
         database, image_dir, reference, mapper_options if mapper_options is not None else {},
         timestamp_per_image, arkit_precomputed
     )
-    print("Finished the triangulation with statistics:\n%s", reconstruction.summary())
+    # Grab logger by name
+    shared_logger = logging.getLogger("shared_logger")
+    shared_logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction

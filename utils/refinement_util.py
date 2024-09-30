@@ -356,7 +356,6 @@ def refine_dataset(
     logger.info("Finished triangulation")
     reproj_error = refined_rec.compute_mean_reprojection_error()
     logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
-    shared_logger.info(f'The resulting mean reprojection error is {reproj_error}')
 
     logging.info("Now save adjusted QR code poses")
     stitched_qr_detections = get_world_space_qr_codes(refined_rec, detections_per_qr, image_ids_per_qr)
