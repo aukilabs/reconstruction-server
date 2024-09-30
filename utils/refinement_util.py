@@ -13,7 +13,8 @@ from utils.data_utils import (
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets,
     get_world_space_qr_codes,
-    mean_pose
+    mean_pose,
+    setup_logger
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -41,15 +42,13 @@ def refine_dataset(
     ############################
 
     # Create and configure logger
-    os.makedirs(output_path, exist_ok=True)
-    logging.basicConfig(filename=str(output_path) + "/local_logs",
-                        format='%(asctime)s %(message)s',
-                        level=logging.INFO,
-                        filemode='a')
-
-    # Creating an object
-    logger = logging.getLogger()
+    log_path = str(output_path) + '/' + str(scan_folder_path.name)
+    os.makedirs(log_path, exist_ok=True)
+    logger = setup_logger("logger", log_path + "/local_logs")
     logger.info(f'Working on {str(scan_folder_path.name)}')
+
+    shared_logger = setup_logger("shared_logger", str(output_path) + "/shared_local_logs")
+    shared_logger.info(f'Working on {str(scan_folder_path.name)}')
 
     experiment_name = Path(scan_folder_path).name
 
@@ -356,7 +355,8 @@ def refine_dataset(
     refined_rec.write(sfm_dir)
     logger.info("Finished triangulation")
     reproj_error = refined_rec.compute_mean_reprojection_error()
-    logger.info(f'After triangulation, the initial mean reprojection error is {reproj_error}')
+    logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
+    shared_logger.info(f'The resulting mean reprojection error is {reproj_error}')
 
     logging.info("Now save adjusted QR code poses")
     stitched_qr_detections = get_world_space_qr_codes(refined_rec, detections_per_qr, image_ids_per_qr)
@@ -367,13 +367,18 @@ def refine_dataset(
         logging.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
 
     if remove_outputs:
-        logger.info('Remove output directory')
+        shared_logger.info('Remove output directory')
         shutil.rmtree(outputs)
     
     logger.info('Finished local refinement!')
     logger.info('========================================================================')
     logger.info('')
     logger.info('========================================================================')
+
+    shared_logger.info(f'Successful run on {str(scan_folder_path.name)}')
+    shared_logger.info('========================================================================')
+    shared_logger.info('')
+    shared_logger.info('========================================================================')
 
    
     return refined_rec, rec
