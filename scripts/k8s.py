@@ -73,7 +73,7 @@ def create_pod_for_folder(folder_name, folder_path):
         ],
         resources=V1ResourceRequirements(
             limits={
-                "cpu": "6",
+                "cpu": "4",
                 "memory": "4Gi",
                 "nvidia.com/gpu": "1",  # This will allocate 1 GPU with 3GB of GPU RAM
             }
@@ -88,7 +88,7 @@ def create_pod_for_folder(folder_name, folder_path):
         args=[
             "--dataset_path", f"/{folder_name}",
             "--output_path", "/output",
-            "--every_nth_image", "2" 
+            "--every_nth_image", "3" 
         ]
         # command=["ls", "-la"],
     )
