@@ -73,8 +73,8 @@ def create_pod_for_folder(folder_name, folder_path):
         ],
         resources=V1ResourceRequirements(
             limits={
-                "cpu": "4",
-                "memory": "4Gi",
+                "cpu": "6",
+                "memory": "6Gi",
                 "nvidia.com/gpu": "1",  # This will allocate 1 GPU with 3GB of GPU RAM
             }
         ),
@@ -84,7 +84,7 @@ def create_pod_for_folder(folder_name, folder_path):
             # shm_volume_mount
         ],
         working_dir = "/app",
-        command=["python3", "-m", "main"],
+        command=["python3", "-m", "local_main"],
         args=[
             "--dataset_path", f"/{folder_name}",
             "--output_path", "/output",
@@ -139,9 +139,9 @@ def create_pods_for_folders(base_dir):
             except ApiException as e:
                 print(f"Exception when creating pod for folder {folder_name}: {e}")
         
-    # Monitor and delete pods concurrently
-    for name in pod_names:
-        monitor_and_delete_pod(name)
+    # # Monitor and delete pods concurrently
+    # for name in pod_names:
+    #     monitor_and_delete_pod(name)
 
 if __name__ == "__main__":
     create_pods_for_folders(base_dir)
