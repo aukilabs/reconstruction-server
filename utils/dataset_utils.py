@@ -33,6 +33,11 @@ class NoOverlapException(Exception):
         # Call the base class constructor with the parameters it needs
         super(NoOverlapException, self).__init__(message)
 
+floor_origin_portal_pose_GL = pycolmap.Rigid3d(
+    pycolmap.Rotation3d(np.array([-0.7071068, 0.0, 0.0, 0.7071068])),
+    np.array([0.0, 0.0, 0.0]))
+p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
+floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
 def load_partial(
     unzip_folder, 
@@ -254,7 +259,7 @@ def load_partial(
     elif is_first_chunk:
         origin_portal_id = list(this_chunk_mean_qr_poses.keys())[0]
         print("SET ORIGIN PORTAL:", origin_portal_id)
-        alignment_transform = this_chunk_mean_qr_poses[origin_portal_id].inverse()
+        alignment_transform = floor_origin_portal_pose * this_chunk_mean_qr_poses[origin_portal_id].inverse()
         print(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
         print(alignment_transform)
 

@@ -41,7 +41,7 @@ def load_portals_json(file_path):
             pos = np.array([entry["px"], entry["py"], entry["pz"]])
             quat = np.array([entry["rx"], entry["ry"], entry["rz"], entry["rw"]])
 
-            quat = (pycolmap.Rotation3d(quat) * rot90).quat # TODO: remove later (see above)
+            # quat = (pycolmap.Rotation3d(quat) * rot90).quat # TODO: remove later (see above)
 
             pos, quat = convert_pose_opengl_to_colmap(pos, quat)
 
