@@ -97,7 +97,7 @@ def create_pod_for_folder(folder_name, folder_path):
     pod_spec = V1PodSpec(
         containers=[container],
         volumes=[input_volume, output_volume], #,shm_volume],
-        restart_policy="Never"
+        restart_policy="OnFailure"
     )
 
     # Create Pod object
