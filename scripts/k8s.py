@@ -3,6 +3,7 @@ from kubernetes import client, config
 from kubernetes.client import V1Volume, V1VolumeMount, V1ResourceRequirements, V1PodSpec, V1Pod, V1Container, V1PodTemplateSpec
 from kubernetes.client.rest import ApiException
 import time 
+from tqdm import tqdm
 
 # Load Kubernetes configuration (assuming Minikube is running)
 config.load_kube_config()
@@ -18,6 +19,12 @@ base_dir = "/path/to/datasets"  # Replace with your directory path
 output_path = "/path/to/refined/local"
 # base_dir = "./test/datasets"  # Replace with your directory path
 # output_path = "./test/refined/local"
+
+def get_cpu_resource_required(folder_path):
+    frame_path = os.path.join(folder_path, "Frames")
+    img_num = len([entry for entry in os.listdir(frame_path) if os.path.isfile(os.path.join(frame_path, entry))])
+    num_thread = 4 + img_num / 200
+    return f"{int(num_thread)}"
 
 # Create a pod for each folder in the base directory
 def create_pod_for_folder(folder_name, folder_path):
@@ -60,6 +67,10 @@ def create_pod_for_folder(folder_name, folder_path):
         mount_path="/dev/shm"  # Mounting the volume to /dev/shm
     )
 
+    cpu_resource = get_cpu_resource_required(folder_path)
+
+    print(f"folder path: {folder_name}\tcpu: {cpu_resource}")
+
     # Define container with resource limits
     container = V1Container(
         name="container",
@@ -73,7 +84,7 @@ def create_pod_for_folder(folder_name, folder_path):
         ],
         resources=V1ResourceRequirements(
             limits={
-                "cpu": "6",
+                "cpu": cpu_resource,
                 "memory": "6Gi",
                 "nvidia.com/gpu": "1",  # This will allocate 1 GPU with 3GB of GPU RAM
             }
@@ -123,6 +134,62 @@ def monitor_and_delete_pod(name):
             # print(f"Pod {name} status: {pod_status}. Waiting...")
             time.sleep(5)
 
+def get_pod_status(namespace=None):
+    """
+    Get the status of pods in the specified namespace (or all namespaces if none is specified).
+    Returns a dictionary with pod names as keys and their statuses as values.
+    """
+    if namespace:
+        pods = v1.list_namespaced_pod(namespace=namespace).items
+    else:
+        pods = v1.list_pod_for_all_namespaces().items
+    
+    pod_status = {}
+    for pod in pods:
+        pod_status[pod.metadata.name] = pod.status.phase
+    return pod_status
+
+def delete_completed_pods(namespace=None):
+    """
+    Delete pods that have reached the 'Succeeded' status in the specified namespace.
+    """
+    pod_status = get_pod_status(namespace)
+    for pod_name, status in pod_status.items():
+        if status == "Succeeded":
+            try:
+                if namespace:
+                    v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+                else:
+                    pod_ns = pod_name.split('/')[0]  # Extract namespace from pod name
+                    v1.delete_namespaced_pod(name=pod_name, namespace=pod_ns)
+                print(f"Pod {pod_name} deleted.")
+            except client.exceptions.ApiException as e:
+                print(f"Failed to delete pod {pod_name}: {e}")
+
+def monitor_pods(namespace=None):
+    """
+    Monitor the progress of all pods reaching the 'Completed' status.
+    """
+    print("Fetching pod details...")
+
+    # Get initial pod statuses
+    pod_status = get_pod_status(namespace)
+    total_pods = len(pod_status)
+    completed_pods = 0
+    
+    # Create a progress bar
+    with tqdm(total=total_pods, desc="Monitoring Pods", unit="pod") as pbar:
+        while completed_pods < total_pods:
+            pod_status = get_pod_status(namespace)
+            completed_pods = sum(1 for status in pod_status.values() if status == "Succeeded")
+            pbar.n = completed_pods
+            pbar.refresh()
+
+            # Wait before the next check
+            time.sleep(5)
+
+    print("All pods have completed.")
+
 def create_pods_for_folders(base_dir):
     pod_names = []
     # List all folders in the base directory
@@ -138,10 +205,14 @@ def create_pods_for_folders(base_dir):
                 pod_names.append(podname)
             except ApiException as e:
                 print(f"Exception when creating pod for folder {folder_name}: {e}")
-        
-    # # Monitor and delete pods concurrently
-    # for name in pod_names:
-    #     monitor_and_delete_pod(name)
+
 
 if __name__ == "__main__":
+    start_time = time.time()
     create_pods_for_folders(base_dir)
+    monitor_pods(namespace="default")
+    
+    # Delete pods that have completed
+    delete_completed_pods(namespace = "default")
+
+    print(f"Total time spent: {time.time() - start_time} seconds")
