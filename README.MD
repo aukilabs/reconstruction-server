@@ -1,6 +1,9 @@
 #### Build docker
-```
+```bash
 docker buildx build -t docker.io/library/auki-archive:latest --load  .
+
+# Jetson Device
+ DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo} -f Dockerfile.jetson .
 ```
 
 

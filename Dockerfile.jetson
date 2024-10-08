@@ -1,0 +1,87 @@
+FROM dustynv/l4t-pytorch:r36.4.0
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y wget \
+    curl \
+    vim \
+    git \
+    autoconf \
+    automake \
+    libtool \
+    libffi-dev \
+    ninja-build \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-filesystem-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgtest-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libsuitesparse-dev \
+    python3-h5py
+
+RUN pip install --upgrade pip setuptools wheel
+
+RUN git clone https://github.com/google/glog.git && cd glog && \
+    git checkout tags/v0.6.0 && \
+    cmake -S . -B build -G "Unix Makefiles" && \
+    cmake --build build --target install
+
+RUN pip install "pybind11[global]"
+    
+WORKDIR /src
+
+# Ceres
+RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
+    && cd ceres-solver \
+    && git checkout tags/2.2.0 \
+    && mkdir build \
+    && cd build \
+    && cmake .. -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+    && make -j4 \
+    && make install
+
+# pyCeres
+RUN git clone https://github.com/cvg/pyceres.git \
+    && cd pyceres \
+    && git checkout tags/v2.3 \
+    && python3 -m pip install -e .
+
+# COLMAP
+RUN git clone https://github.com/colmap/colmap.git && \
+    cd colmap \
+    && git checkout release/3.10 \
+    && mkdir build \
+    && cd build \
+    && cmake -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="87" .. \
+    && make -j 4 \
+    && make install \
+    && cd ../pycolmap \
+    && python3 -m pip install -e .
+
+# hloc
+RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
+    cd Hierarchical-Localization && \
+    python3 -m pip install -e . --config-settings editable_mode=compat
+
+RUN python3 -m pip install enlighten evo hloc
+
+
+WORKDIR /app
+
+COPY . /app/
+
+RUN mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make all
+
+ENTRYPOINT [ "python3", "-m" ]
