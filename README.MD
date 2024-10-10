@@ -1,13 +1,25 @@
-#### Build docker
+# Reconstruction Node
+This repository has the code and algorithms for the reconstruction node, part of Auki Network. The reconstruction node is used when setting up large posemesh domains.
+
+The node processes scans from the Domain Management Tool (DMT) app. A custom structure-from-motion (SfM) pipeline improves accuracy and creates 3D representations such as point clouds, bounding boxes, and gaussian splats.
+
+## Build
+
+### Building Docker
+
+> **NOTE:** On Mac with Apple Silicon, the --platform flag is needed. Although running the image with CUDA won't work on Mac, the image can still run on a cloud server for example, pulling from the docker hub.
+
 ```bash
-docker buildx build -t docker.io/library/auki-archive:latest --load  .
+# Linux computer or deploy to Linux server
+docker buildx build --platform linux/amd64 -t docker.io/library/auki-archive:latest --load  .
 
 # Jetson Device
- DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo} -f Dockerfile.jetson .
+DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo} -f Dockerfile.jetson .
 ```
 
+## Running Refinement
 
-#### Local refinement for single scan
+### Local refinement for single scan
 ```
 docker run \
 --gpus all \
@@ -21,12 +33,12 @@ local_main \
 --remove_outputs
 ```
 
-#### Local refinement for all scans within a folder
+### Local refinement for all scans within a folder
 ```
 bash ./scripts/local_run_all.sh
 ```
 
-#### Global refinement pipeline using refined outputs
+### Global refinement pipeline using refined outputs
 
 ```
 docker run \
@@ -40,7 +52,7 @@ global_main \
 --use_refined_outputs
 ```
 
-#### Global refinement pipeline, basic pointcloud stitch only
+### Global refinement pipeline, basic pointcloud stitch only
 
 ```
 docker run \
