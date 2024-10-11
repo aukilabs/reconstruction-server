@@ -1,3 +1,16 @@
+##
+## Go build for server
+##
+FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
+RUN mkdir -p /app
+WORKDIR /app
+ADD server /app
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
+
+
 # FROM nvidia/cuda:12.4.1-devel-ubuntu20.04
 FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
@@ -97,8 +110,15 @@ RUN python3 -m pip install enlighten evo
 
 WORKDIR /app
 
-COPY . /app/
+#COPY . /app/
+COPY k8s-config scripts src CMakeLists.txt /app/
+#RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
 
-RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
+COPY utils local_main.py global_main.py /app/
+#ENTRYPOINT [ "python3", "-m" ]
 
-ENTRYPOINT [ "python3", "-m" ]
+# Run reconstruction server as separate user, not root
+RUN adduser --disabled-password --gecos "" reconstruction-server
+USER reconstruction-server
+COPY --from=go-build /app/reconstruction ./reconstruction
+ENTRYPOINT ["./reconstruction"]
