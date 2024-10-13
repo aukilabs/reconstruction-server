@@ -14,7 +14,8 @@ from utils.data_utils import (
     precompute_arkit_offsets,
     get_world_space_qr_codes,
     mean_pose,
-    setup_logger
+    setup_logger,
+    mp4_to_frames
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -62,9 +63,23 @@ def refine_dataset(
     matches = sfm_dir / 'matches.h5'
 
 
-    feature_conf = extract_features.confs["superpoint_max"]
-    feature_conf["output"] = features
-    matcher_conf = match_features.confs["superpoint+lightglue"]
+    #feature_conf = extract_features.confs["superpoint_max"]
+    #feature_conf["output"] = features
+
+    feature_conf = {
+        "output": features,
+        "model": {
+            "name": "disk",
+            "max_keypoints": 1024,
+        },
+        "preprocessing": {
+            "grayscale": False,
+            "resize_max": 1024,
+        },
+    }
+    print("Feature conf: ", feature_conf)
+    #matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf = match_features.confs["disk+lightglue"]
 
     ############################
     # LOAD DATASET
@@ -72,6 +87,17 @@ def refine_dataset(
 
     #--------------------
     # RGB Frames
+
+
+    frames_mp4 = dataset / 'Frames.mp4'
+    print("Looking for mp4 encoded frames: ", frames_mp4)
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        print("Frames mp4 found, unpacking into", images)
+        if not images.exists():
+            images.mkdir()
+        mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        use_frames_from_video = True
 
     references = [str(p.relative_to(images)) for p in (images).iterdir()]
     original_image_count = len(references)
@@ -94,10 +120,15 @@ def refine_dataset(
 
     # Read and process the CSV file
     with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
         csv_reader = csv.reader(csvfile)
         for row in csv_reader:
             timestamp = round(float(row[0]) * 1e9) # s to ns
-            filename = row[1]
+            if use_frames_from_video:
+                filename = f"{experiment_name}_{frame_index:06d}.jpg" # Match with how frames are unpacked to images, by mp4_to_frames
+            else:
+                filename = row[1]
+            frame_index += 1
             timestamps_per_image[filename] = timestamp
 
     # Display the result
@@ -153,10 +184,11 @@ def refine_dataset(
     #--------------------
     # QR detections
 
-    qr_detections_csv_path = str(dataset / "PortalDetections.csv")
+    qr_detections_csv_path = dataset / "PortalDetections.csv"
     if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
-        qr_detections_csv_path = str(Path(dataset) / "Observations.csv")
+        qr_detections_csv_path = dataset / "Observations.csv"
         print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
+    qr_detections_csv_path = str(qr_detections_csv_path)
 
     logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
     # Initialize the dictionary
@@ -247,7 +279,7 @@ def refine_dataset(
     # IMAGE PAIRS
     ############################
     logger.info("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
+    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 10, rotation_threshold=360)
 
     ############################
     # FEATURE POINTS
@@ -266,7 +298,10 @@ def refine_dataset(
 
     # Feature Matching
     logger.info("Feature matching")
+    print("Start feature matching")
+    logger.info("Matcher conf: " + str(matcher_conf))
     match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
+    print("Finished feature matching")
 
     ############################
     # PRE-PROCESSING
@@ -296,6 +331,7 @@ def refine_dataset(
 
     detections_per_qr = {}
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
+    print("count of qr detections: ", len(qr_detections_per_timestamp))
     for timestamp, detection in qr_detections_per_timestamp.items():
         id = detection["short_id"]
 
@@ -343,6 +379,7 @@ def refine_dataset(
 
 
     logger.info("Start triangulation")
+    print("Start triangulation")
     refined_rec = triangulate_model(
         sfm_dir, 
         colmap_rec_path, 
@@ -357,6 +394,8 @@ def refine_dataset(
     )
     refined_rec.write(sfm_dir)
     logger.info("Finished triangulation")
+    print("Finished triangulation")
+
     reproj_error = refined_rec.compute_mean_reprojection_error()
     logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
 

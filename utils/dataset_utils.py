@@ -176,10 +176,12 @@ def load_partial(
 
     #--------------------
     # QR detections
-    qr_detections_csv_path = str(dataset / "PortalDetections.csv")
+    qr_detections_csv_path = dataset / "PortalDetections.csv"
     if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
-        qr_detections_csv_path = str(Path(dataset) / "Observations.csv")
+        qr_detections_csv_path = dataset / "Observations.csv"
         print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
+    qr_detections_csv_path = str(qr_detections_csv_path)
+    
     print("Loading QR detections from", qr_detections_csv_path, "...")
 
     # Read and process the CSV file

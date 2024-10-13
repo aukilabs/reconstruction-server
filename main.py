@@ -8,11 +8,11 @@ from utils.dataset_utils import save_manifest_json
 
 def local_main_wrapper(args):
     scans = args.scans
-    dataset_root_path = args.dataset_root_path
+    job_root_path = args.job_root_path
     output_path = args.output_path
     print("--------------------------------")
     print(f"Running local refinement on {len(scans)} scans")
-    print(f"Dataset root path: {dataset_root_path}")
+    print(f"Job root path: {job_root_path}")
     print(f"Output path: {output_path}")
     print(f"Scans: {scans}")
     print("--------------------------------")
@@ -20,7 +20,7 @@ def local_main_wrapper(args):
     for scan in scans:
         print(f"Refining scan {scan}...")
         local_args = argparse.Namespace(
-            dataset_path=Path(dataset_root_path) / scan,
+            dataset_path=Path(job_root_path) / 'datasets' / scan,
             output_path=args.output_path,
             every_nth_image=2,
             remove_outputs=False
@@ -48,12 +48,20 @@ def global_main_wrapper(args):
     print("--------------------------------")
 
 def local_and_global_main_wrapper(args):
-    local_main_wrapper(args)
+    local_args = argparse.Namespace(**vars(args))
+    local_args.output_path = args.job_root_path / "refined" / "local"
+    local_main_wrapper(local_args)
     global_main_wrapper(args)
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
+
+    # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
+    args.scans = []
+    for scan in Path(args.job_root_path / "datasets").iterdir():
+        if scan.is_dir() or scan.suffix == ".zip":
+            args.scans.append(scan.name)
 
     try:
         if args.mode == "local_refinement":
