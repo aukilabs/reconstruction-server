@@ -19,11 +19,13 @@ import matplotlib.pyplot as plt
 
 from utils.data_utils import (
     load_qr_detections_csv, 
-    mean_pose, 
+    mean_pose,
+    mp4_to_frames,
     flatten_quaternion, 
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets, 
-    get_world_space_qr_codes
+    get_world_space_qr_codes,
+    save_manifest_json
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 
@@ -61,7 +63,19 @@ def load_partial(
     experiment_name = unzip_folder.name
 
     dataset = unzip_folder # TODO will remove this as we can use scan_folder_path all along
+
     images = unzip_folder / 'Frames/'
+    
+    frames_mp4 = unzip_folder / 'Frames.mp4'
+    print("Looking for mp4 encoded frames: ", frames_mp4)
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        print("Frames mp4 found, unpacking into", images)
+        if not images.exists():
+            images.mkdir()
+        mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        use_frames_from_video = True
+
 
     outputs = Path(os.path.join(dataset_dir.parent, "refined/global"))
     if dataset_group is not None:
@@ -99,10 +113,15 @@ def load_partial(
     # Read and process the CSV file
     timestamp_per_image_chunk = {}
     with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
         csv_reader = csv.reader(csvfile)
         for row in csv_reader:
             timestamp = round(float(row[0]) * 1e9) # s to ns
-            filename = row[1]
+            if use_frames_from_video:
+                filename = f"{experiment_name}_{frame_index:06d}.jpg" # Match with how frames are unpacked to images, by mp4_to_frames
+            else:
+                filename = row[1]
+            frame_index += 1
 
             timestamp_per_image_chunk[filename] = timestamp
     print(len(timestamp_per_image_chunk), "frame timestamps loaded")
@@ -157,8 +176,10 @@ def load_partial(
 
     #--------------------
     # QR detections
-    qr_detections_csv_path = str(dataset / "Observations.csv")
-
+    qr_detections_csv_path = str(dataset / "PortalDetections.csv")
+    if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
+        qr_detections_csv_path = str(Path(dataset) / "Observations.csv")
+        print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
     print("Loading QR detections from", qr_detections_csv_path, "...")
 
     # Read and process the CSV file
@@ -704,6 +725,8 @@ def stitching_helper(
                     logger.info(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
                     with zipfile.ZipFile(dataset_path, 'r') as zip_ref:
                         zip_ref.extractall(dataset_dir)
+        else:
+            unzip_folder = dataset_path
 
     
         refined_portals_csv = None
@@ -842,13 +865,18 @@ def stitching_helper(
     )
 
     logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (bundle adjusted):")
+    logger.info('ALL DETECTIONS (bundle adjusted):')
     logger.info('========================================================================')
     stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items()}
     for qr_id, pose in stitched_mean_qr_poses.items():
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
         logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
+
+
+    manifest_out_path = output_path / 'refined_manifest.json'
+    print(f"Saving refined manifest with {len(stitched_qr_detections)} detections, to: {manifest_out_path}")
+    save_manifest_json(stitched_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
 
     if truth_portal_poses:
         compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)

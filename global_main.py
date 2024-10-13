@@ -6,14 +6,14 @@ from utils.dataset_utils import stitching_helper
 
 
 def main(args):
-    truth_portal_poses, dataset_zip_paths = get_data_paths(args.data_dir)
+    truth_portal_poses, dataset_paths = get_data_paths(args.data_dir)
 
     (
     unadjusted_rec, unadjusted_qr_detections, unadjusted_mean_qr_poses,
     adjusted_rec, adjusted_qr_detections, adjusted_mean_qr_poses,
     detections_per_qr, image_ids_per_qr
     ) = stitching_helper(
-        dataset_zip_paths, 
+        dataset_paths, 
         args.dataset_group, 
         args.data_dir, 
         truth_portal_poses, 

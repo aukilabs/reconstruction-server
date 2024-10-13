@@ -76,6 +76,7 @@ type job struct {
 	DataIDs         []string  `json:"data_ids"`
 	DomainID        string    `json:"domain_id"`
 	JobPath         string    `json:"job_path"`
+	ProcessingType  string    `json:"processing_type"`
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	AccessToken     string    `json:"-"`
@@ -86,6 +87,7 @@ type JobRequestData struct {
 	DataIDs         []string `json:"data_ids"`
 	DomainID        string   `json:"domain_id"`
 	AccessToken     string   `json:"access_token"`
+	ProcessingType  string   `json:"processing_type"`
 	DomainServerURL string   `json:"domain_server_url"` // Optional. Default: "issuer" of the incoming request, since jobs are triggered via the domain server.
 }
 
@@ -135,7 +137,7 @@ func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 
 func UploadDomainDataToDomain(j *job) error {
 	// upload all files from j.OutputPath to the domain server
-	outputPath := path.Join(j.JobPath, "output", "global_refinement")
+	outputPath := path.Join(j.JobPath, "refined", "global")
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 		return err
 	}
@@ -283,16 +285,13 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 		switch meta.DataType {
 		case "dmt_manifest_json":
 			fileName = "Manifest.json"
-		case "dmt_featurepoints_ply":
-		case "dmt_pointcloud_ply":
+		case "dmt_featurepoints_ply", "dmt_pointcloud_ply":
 			fileName = "FeaturePoints.ply"
 		case "dmt_arposes_csv":
 			fileName = "ARposes.csv"
-		case "dmt_portal_detections_csv":
-		case "dmt_observations_csv":
-			fileName = "Observations.csv"
-		case "dmt_intrinsics_csv":
-		case "dmt_cameraintrinsics_csv":
+		case "dmt_portal_detections_csv", "dmt_observations_csv":
+			fileName = "PortalDetections.csv"
+		case "dmt_intrinsics_csv", "dmt_cameraintrinsics_csv":
 			fileName = "CameraIntrinsics.csv"
 		case "dmt_frames_csv":
 			fileName = "Frames.csv"
@@ -309,7 +308,7 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 			fileName = meta.Name + "." + meta.DataType
 		}
 
-		scanFolder := path.Join(j.JobPath, "input", scanFolderName)
+		scanFolder := path.Join(j.JobPath, "datasets", scanFolderName)
 		if err := os.MkdirAll(scanFolder, 0755); err != nil {
 			return err
 		}
@@ -390,6 +389,7 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 	log.Printf("Parsed Metadata:\n")
 	log.Printf("Data IDs: %s\n", jobRequest.DataIDs)
 	log.Printf("DomainID: %s\n", jobRequest.DomainID)
+	log.Printf("Processing Type: %s\n", jobRequest.ProcessingType)
 	log.Printf("Access Token: %s\n", jobRequest.AccessToken)
 	log.Printf("Domain Server URL: %s\n", jobRequest.DomainServerURL)
 
@@ -439,6 +439,7 @@ func CreateJob(dirPath string, requestJson string) (*job, error) {
 		Name:            jobName,
 		DomainID:        jobRequest.DomainID,
 		DataIDs:         jobRequest.DataIDs,
+		ProcessingType:  jobRequest.ProcessingType,
 		Status:          "started",
 		DomainServerURL: domainServerURL,
 		AccessToken:     jobRequest.AccessToken,
@@ -463,13 +464,11 @@ func CreateJob(dirPath string, requestJson string) (*job, error) {
 	//dataString := buf.String()
 	log.Println("Data File:", f.Name())
 
-	//destPath, err := unzipFile(f.Name(), path.Join(dirPath, "input"))
+	//destPath, err := unzipFile(f.Name(), path.Join(dirPath, "datasets"))
 	//if err != nil {
 	//	return nil, err
 	//}
-	inputPath := path.Join(j.JobPath, "input")
 
-	log.Println("Job input path: ", inputPath)
 	log.Println("Downloading data from domain")
 	if err := DownloadDomainDataFromDomain(context.Background(), &j, jobRequest.DataIDs...); err != nil {
 		return nil, err
@@ -484,15 +483,14 @@ func CreateJob(dirPath string, requestJson string) (*job, error) {
 }
 
 func executeJob(j *job) {
-	//localRefinementPython := "src/local_refinement.py"
-	globalRefinementPython := "src/global_stitching_g2o.py"
+	refinementPython := "main.py"
 
-	inputPath := path.Join(j.JobPath, "input")
-	//outputPath := path.Join(j.JobPath, "output")
+	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
+	outputPath := path.Join(j.JobPath, "refined")
 
-	params := []string{globalRefinementPython, j.JobPath}
+	params := []string{refinementPython, j.ProcessingType, jobRootPath, outputPath}
 
-	if allScanFolders, err := os.ReadDir(inputPath); err != nil {
+	if allScanFolders, err := os.ReadDir(jobRootPath); err != nil {
 		log.Printf("job %s failed to read input directory: %s", j.ID, err)
 		jobs.UpdateJob(j.ID, "failed")
 		return

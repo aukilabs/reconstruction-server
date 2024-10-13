@@ -110,15 +110,27 @@ RUN python3 -m pip install enlighten evo
 
 WORKDIR /app
 
-#COPY . /app/
-COPY k8s-config scripts src CMakeLists.txt /app/
-#RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
+COPY k8s-config /app/k8s-config
+COPY scripts /app/scripts
+COPY src /app/src
+RUN chmod 755 /app/src
+COPY CMakeLists.txt /app/
+RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
 
-COPY utils local_main.py global_main.py /app/
-#ENTRYPOINT [ "python3", "-m" ]
+COPY utils /app/utils
+RUN chmod 755 /app/utils
+COPY local_main.py global_main.py main.py /app/
+RUN chmod 755 /app/*.py
 
 # Run reconstruction server as separate user, not root
-RUN adduser --disabled-password --gecos "" reconstruction-server
-USER reconstruction-server
+#RUN adduser --disabled-password --gecos "" reconstruction-server
+#RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
+RUN mkdir -p /app/jobs
+
+# temporary for remote editing easier
+#RUN chown -R reconstruction-server:reconstruction-server /app/utils 
+#RUN chown -R reconstruction-server:reconstruction-server /app/*.py
+
+#USER reconstruction-server
 COPY --from=go-build /app/reconstruction ./reconstruction
 ENTRYPOINT ["./reconstruction"]

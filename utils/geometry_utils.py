@@ -5,7 +5,7 @@ import pycolmap
 import pyceres
 from pathlib import Path
 
-from utils.data_utils import get_world_space_qr_codes, save_qr_poses_csv
+from utils.data_utils import get_world_space_qr_codes
 from utils.bundle_adjuster import PyBundleAdjuster
 
 from src.cost_functions import RelativeTransformationSim3CostFunction
@@ -130,8 +130,8 @@ def run_stitching(detections_per_qr,
     combined_rec.write(combined_out_dir)
 
     combined_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
-    save_qr_poses_csv(combined_detections, combined_out_dir / "portal_poses.csv")
-
+    #save_qr_poses_csv(combined_detections, combined_out_dir / "refined_portal_poses.csv")
+    
     print("\n-------------\n")
 
     return combined_rec, combined_detections

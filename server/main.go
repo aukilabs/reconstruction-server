@@ -55,7 +55,7 @@ func main() {
 
 		j, err := CreateJob("jobs", reqBodyString)
 		if err != nil {
-			log.Print(err)
+			log.Print("Job failed with error: ", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

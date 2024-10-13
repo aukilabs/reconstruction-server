@@ -153,7 +153,10 @@ def refine_dataset(
     #--------------------
     # QR detections
 
-    qr_detections_csv_path = str(dataset / "Observations.csv")
+    qr_detections_csv_path = str(dataset / "PortalDetections.csv")
+    if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
+        qr_detections_csv_path = str(Path(dataset) / "Observations.csv")
+        print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
 
     logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
     # Initialize the dictionary

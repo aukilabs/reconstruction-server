@@ -7,7 +7,7 @@ from numpy.linalg import norm
 from numpy import arccos, rad2deg
 import torch
 import logging
-
+import cv2
 
 def convert_pose_opengl_to_colmap(position, quaternion):
     
@@ -80,18 +80,36 @@ def get_data_paths(group_folder):
         "dmt_scan_2024-06-26_14-18-11.zip"
     ]
 
-    dataset_zip_paths = []
+    dataset_paths = []
+    zip_count = 0
+    unwanted_count = 0
     for file in zip_list:
         if file.name not in unwanted_files:
-            dataset_zip_paths.append(file)   
+            dataset_paths.append(file)
+            zip_count += 1
+        else:
+            unwanted_count += 1
+    print(f"Found {zip_count} valid zip files, {unwanted_count} unwanted zip files skipped")
 
-    print(f"Using dataset from {group_folder.name}")   
+    subfolder_count = 0
+    for subfolder in group_folder.iterdir():
+        if subfolder.is_dir() and (
+            subfolder.name.startswith("dmt_scan_")
+            or subfolder.name.startswith("20")
+        ):
+            dataset_paths.append(subfolder)
+            subfolder_count += 1
+    print(f"Found {subfolder_count} scan subfolders (not zip)")
+
+    print(f"Using in total {len(dataset_paths)} scans from folder '{group_folder.name}'")
+    
     if truth_portal_poses:
         print(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
         print("\n".join(f"{id}: {value}" for id, value in truth_portal_poses.items()))
-    print(f"Found {len(dataset_zip_paths)} zip files")
+    else:
+        print("No truth provided (portals.json). Will skip comparison with ground truth.")
 
-    return truth_portal_poses, dataset_zip_paths
+    return truth_portal_poses, dataset_paths
 
 
 def load_qr_detections_csv(csv_path):
@@ -233,6 +251,57 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 
+def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
+    manifest_data = {
+        "portals": [],
+        "reconstructionServerVersion": "0.1",
+        "jobStatus": jobStatus if jobStatus is not None else "unknown",
+        "jobProgress": jobProgress if jobProgress is not None else 0,
+        "jobStatusDetails": jobStatusDetails if jobStatusDetails is not None else ""
+    }
+
+    # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
+    # For now we just take the first
+    for short_id, poses_for_qr in portal_poses.items():
+
+        pose = poses_for_qr[0]
+        pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+
+        manifest_data["portals"].append({
+            "shortId": short_id,
+            "pose": {
+                "position": {
+                    "x": pos[0],
+                    "y": pos[1],
+                    "z": pos[2],
+                },
+                "rotation": {
+                    "x": quat[0],
+                    "y": quat[1],
+                    "z": quat[2],
+                    "w": quat[3],
+                }
+            },
+            "averagePose": {
+                "position": {
+                    "x": pos[0],
+                    "y": pos[1],
+                    "z": pos[2],
+                },
+                "rotation": {
+                    "x": quat[0],
+                    "y": quat[1],
+                    "z": quat[2],
+                    "w": quat[3],
+                }
+            },
+            "physicalSize": 0.15 #TODO: use actual value from Manifest.csv
+        })
+
+    with open(csv_path, 'w') as json_file:
+        json.dump(manifest_data, json_file, indent=4)
+
+
 def vec3_angle(v, w):
     value = v.dot(w)/(norm(v)*norm(w))
 
@@ -255,6 +324,19 @@ def get_sorted_images(images):
     sorted_images.sort(key=sorting_key)
     return sorted_images
 
+
+def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
+    capture = cv2.VideoCapture(mp4_path)
+    frame_count = 0
+    print("Unpacking mp4 to frames:", mp4_path, "->", frames_path)
+    while capture.isOpened():
+        ret, frame = capture.read()
+        if not ret:
+            break
+        cv2.imwrite(f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg", frame)
+        frame_count += 1
+    print(f"Unpacked {frame_count} frames from mp4")
+    capture.release()
 
 def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
     
