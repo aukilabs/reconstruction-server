@@ -338,6 +338,7 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
     print(f"Unpacked {frame_count} frames from mp4")
     capture.release()
 
+
 def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
     
     print()

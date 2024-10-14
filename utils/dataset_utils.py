@@ -832,10 +832,14 @@ def stitching_helper(
     
     if with_3dpoints:
         # unrefined_sfm_dir = dataset_dir / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
-        unrefined_sfm_dir = refined_group_dir / 'global' / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
+        unrefined_sfm_dir = refined_group_dir / 'global' / 'unrefined_sfm_combined'
+        print(f"Saving unrefined sfm to: {unrefined_sfm_dir}")
         Path.mkdir(unrefined_sfm_dir, parents=True, exist_ok=True)
         combined_rec.write(unrefined_sfm_dir)
-        logger.info(f'...Saved basic stitch results to {unrefined_sfm_dir}')
+        point_cloud_path = refined_group_dir / 'global' / "UnrefinedPointCloud.ply"
+        print(f"Saving unrefined point cloud as PLY to: {point_cloud_path}")
+        combined_rec.export_PLY(point_cloud_path)
+        logger.info(f'...Saved')
 
     if basic_stitch_only:
         logger.info("Basic stitch only!")
@@ -879,6 +883,16 @@ def stitching_helper(
     manifest_out_path = output_path / 'refined_manifest.json'
     print(f"Saving refined manifest with {len(stitched_qr_detections)} detections, to: {manifest_out_path}")
     save_manifest_json(stitched_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+
+    if with_3dpoints:
+        refined_sfm_dir = output_path / "refined_sfm_combined"
+        print(f"Saving refined sfm to: {refined_sfm_dir}")
+        Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
+        stitched_rec.write(refined_sfm_dir)
+        point_cloud_path = output_path / "RefinedPointCloud.ply"
+        print(f"Saving point cloud as PLY to: {point_cloud_path}")
+        stitched_rec.export_PLY(point_cloud_path)
+        logger.info(f'...Saved')
 
     if truth_portal_poses:
         compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)

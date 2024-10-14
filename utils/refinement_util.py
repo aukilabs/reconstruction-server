@@ -331,6 +331,7 @@ def refine_dataset(
 
     detections_per_qr = {}
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
+    print("valid timestamps: ", len(valid_timestamps))
     print("count of qr detections: ", len(qr_detections_per_timestamp))
     for timestamp, detection in qr_detections_per_timestamp.items():
         id = detection["short_id"]

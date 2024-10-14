@@ -103,6 +103,8 @@ RUN git clone https://github.com/colmap/colmap.git && \
 
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
+    sed -i 's/num_workers=5, batch_size=1/num_workers=1, batch_size=1/' hloc/match_features.py && \
+    sed -i 's/match_path=match_path), 5)/match_path=match_path), 1)/' hloc/match_features.py && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 

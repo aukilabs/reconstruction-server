@@ -166,6 +166,14 @@ func UploadDomainDataToDomain(j *job) error {
 			name:     "refined_manifest",
 			dataType: "refined_manifest_json",
 		},
+		"RefinedPointCloud.ply": {
+			name:     "refined_pointcloud",
+			dataType: "dmt_pointcloud_ply",
+		},
+		"UnrefinedPointCloud.ply": {
+			name:     "unrefined_pointcloud",
+			dataType: "dmt_pointcloud_ply",
+		},
 	}
 
 	r, w := io.Pipe()
@@ -490,7 +498,8 @@ func executeJob(j *job) {
 
 	params := []string{refinementPython, j.ProcessingType, jobRootPath, outputPath}
 
-	if allScanFolders, err := os.ReadDir(jobRootPath); err != nil {
+	datasetsRootPath := path.Join(jobRootPath, "datasets")
+	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
 		log.Printf("job %s failed to read input directory: %s", j.ID, err)
 		jobs.UpdateJob(j.ID, "failed")
 		return

@@ -40,7 +40,7 @@ def global_main_wrapper(args):
         all_observations=True,
         all_poses=True,
         use_refined_outputs=True,
-        add_3dpoints=False,
+        add_3dpoints=True, #False,
         basic_stitch_only=False
     )
     global_main(global_args)
@@ -52,6 +52,26 @@ def local_and_global_main_wrapper(args):
     local_args.output_path = args.job_root_path / "refined" / "local"
     local_main_wrapper(local_args)
     global_main_wrapper(args)
+
+    """
+    # output stitched point cloud
+    stitch_args = argparse.Namespace(
+        data_dir=Path(args.job_root_path) / "datasets",
+        dataset_group=None,
+        all_observations=True,
+        all_poses=True,
+        use_refined_outputs=True,
+        add_3dpoints=True,
+        basic_stitch_only=True
+    )
+    global_main(stitch_args)
+    """
+    
+    ply_output_path = args.output_path / "RefinedPointCloud.ply"
+    if ply_output_path.exists():
+        print(f"Refined point cloud created! {ply_output_path}")
+    else:
+        print("Point cloud wasn't created, expected at: {ply_output_path}")
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
