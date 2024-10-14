@@ -14,7 +14,7 @@ from utils.data_utils import (
     precompute_arkit_offsets,
     get_world_space_qr_codes,
     mean_pose,
-    setup_logger,
+    #setup_logger,
     mp4_to_frames
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
@@ -45,11 +45,11 @@ def refine_dataset(
     # Create and configure logger
     log_path = str(output_path) + '/' + str(scan_folder_path.name)
     os.makedirs(log_path, exist_ok=True)
-    logger = setup_logger("logger", log_path + "/local_logs")
-    logger.info(f'Working on {str(scan_folder_path.name)}')
+    #logger = setup_logger("logger", log_path + "/local_logs")
+    #print(f'Working on {str(scan_folder_path.name)}')
 
-    shared_logger = setup_logger("shared_logger", str(output_path) + "/shared_local_logs")
-    shared_logger.info(f'Working on {str(scan_folder_path.name)}')
+    #shared_logger = setup_logger("shared_logger", str(output_path) + "/shared_local_logs")
+    print(f'Working on {str(scan_folder_path.name)}')
 
     experiment_name = Path(scan_folder_path).name
 
@@ -105,7 +105,7 @@ def refine_dataset(
 
     references = references[0:-1:every_nth_image]
 
-    logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
+    print(f'{len(references)}, frames selected, out of, {original_image_count}')
 
 
     #--------------------
@@ -113,7 +113,7 @@ def refine_dataset(
 
     frames_csv_path = str(dataset / "Frames.csv")
 
-    logger.info(f'Loading image timestamps from, {frames_csv_path} ...')
+    print(f'Loading image timestamps from, {frames_csv_path} ...')
 
     # Initialize the dictionary
     timestamps_per_image = {}
@@ -132,7 +132,7 @@ def refine_dataset(
             timestamps_per_image[filename] = timestamp
 
     # Display the result
-    logger.info(f'{len(timestamps_per_image)}, frame timestamps loaded')
+    print(f'{len(timestamps_per_image)}, frame timestamps loaded')
 
 
     #--------------------
@@ -140,7 +140,7 @@ def refine_dataset(
 
     cam_intrinsics_csv_path = str(dataset / "CameraIntrinsics.csv")
 
-    logger.info(f'Loading camera intrinsics from, {cam_intrinsics_csv_path}, ...')
+    print(f'Loading camera intrinsics from, {cam_intrinsics_csv_path}, ...')
 
     # Initialize the dictionary
     intrinsics_per_timestamp = {}
@@ -157,7 +157,7 @@ def refine_dataset(
             ]
 
     # Display the result
-    logger.info(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
+    print(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
 
 
     #--------------------
@@ -165,7 +165,7 @@ def refine_dataset(
 
     ar_poses_csv_path = str(dataset / "ARposes.csv")
 
-    logger.info(f'Loading unrefined AR poses from", {ar_poses_csv_path}, ...')
+    print(f'Loading unrefined AR poses from", {ar_poses_csv_path}, ...')
 
     # Initialize the dictionary
     ar_poses_per_timestamp = {}
@@ -178,7 +178,7 @@ def refine_dataset(
             ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]] # px, py, pz, rx, ry, rz, rw
 
     # Display the result
-    logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
+    print(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
 
 
     #--------------------
@@ -190,7 +190,7 @@ def refine_dataset(
         print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
     qr_detections_csv_path = str(qr_detections_csv_path)
 
-    logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
+    print(f'Loading QR detections from, {qr_detections_csv_path}, ...')
     # Initialize the dictionary
     qr_detections_per_timestamp = {}
 
@@ -216,7 +216,7 @@ def refine_dataset(
             }
 
     # Display the result
-    logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+    print(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
 
 
     #----------------------
@@ -251,7 +251,7 @@ def refine_dataset(
 
         rec.add_camera(cam)
 
-        # logger.info(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
+        # print(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
 
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
 
@@ -278,7 +278,7 @@ def refine_dataset(
     ############################
     # IMAGE PAIRS
     ############################
-    logger.info("Pairs from poses")
+    print("Pairs from poses")
     pairs_from_poses.main(colmap_rec_path, sfm_pairs, 10, rotation_threshold=360)
 
     ############################
@@ -286,7 +286,7 @@ def refine_dataset(
     ############################
 
     # features.unlink(missing_ok=True)
-    logger.info("Extracting features")
+    print("Extracting features")
     features = extract_features.main(
         feature_conf, 
         images, 
@@ -297,9 +297,9 @@ def refine_dataset(
     )
 
     # Feature Matching
-    logger.info("Feature matching")
+    print("Feature matching")
     print("Start feature matching")
-    logger.info("Matcher conf: " + str(matcher_conf))
+    print("Matcher conf: " + str(matcher_conf))
     match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
     print("Finished feature matching")
 
@@ -351,7 +351,7 @@ def refine_dataset(
         nearest_image = image_per_timestamp[nearest_image_timestamp]
         cam_space_qr_pose = nearest_image.cam_from_world * detection["pose"] #T_RC = T_WC*T_RW
 
-        logger.info(f"QR code {id} @ {timestamp} ns, nearest image: {nearest_image}, cam space pos: {cam_space_qr_pose}")
+        print(f"QR code {id} @ {timestamp} ns, nearest image: {nearest_image}, cam space pos: {cam_space_qr_pose}")
 
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
@@ -379,7 +379,7 @@ def refine_dataset(
             )
 
 
-    logger.info("Start triangulation")
+    print("Start triangulation")
     print("Start triangulation")
     refined_rec = triangulate_model(
         sfm_dir, 
@@ -394,11 +394,11 @@ def refine_dataset(
         arkit_precomputed=arkit_precomputed
     )
     refined_rec.write(sfm_dir)
-    logger.info("Finished triangulation")
+    print("Finished triangulation")
     print("Finished triangulation")
 
     reproj_error = refined_rec.compute_mean_reprojection_error()
-    logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
+    print(f'After triangulation, the mean reprojection error is {reproj_error}')
 
     logging.info("Now save adjusted QR code poses")
     stitched_qr_detections = get_world_space_qr_codes(refined_rec, detections_per_qr, image_ids_per_qr)
@@ -409,18 +409,18 @@ def refine_dataset(
         logging.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
 
     if remove_outputs:
-        shared_logger.info('Remove output directory')
+        print('Remove output directory')
         shutil.rmtree(outputs)
     
-    logger.info('Finished local refinement!')
-    logger.info('========================================================================')
-    logger.info('')
-    logger.info('========================================================================')
+    print('Finished local refinement!')
+    print('========================================================================')
+    print('')
+    print('========================================================================')
 
-    shared_logger.info(f'Successful run on {str(scan_folder_path.name)}')
-    shared_logger.info('========================================================================')
-    shared_logger.info('')
-    shared_logger.info('========================================================================')
+    print(f'Successful run on {str(scan_folder_path.name)}')
+    print('========================================================================')
+    print('')
+    print('========================================================================')
 
    
     return refined_rec, rec

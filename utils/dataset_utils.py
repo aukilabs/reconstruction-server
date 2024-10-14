@@ -691,7 +691,7 @@ def stitching_helper(
 
     # Creating an object
     logger = logging.getLogger()
-    logger.info(f'Working on {str(parent_dir.name)}')
+    print(f'Working on {str(parent_dir.name)}')
 
 
     # init
@@ -724,7 +724,7 @@ def stitching_helper(
         if dataset_path.suffix.lower() == ".zip":
                 unzip_folder = Path(os.path.join(dataset_dir, scan_name))
                 if not unzip_folder.exists():
-                    logger.info(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
+                    print(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
                     with zipfile.ZipFile(dataset_path, 'r') as zip_ref:
                         zip_ref.extractall(dataset_dir)
         else:
@@ -735,19 +735,19 @@ def stitching_helper(
         partial_rec_dir = None
 
         if use_refined_outputs:
-            logger.info("Looking for local refined outputs")
+            print("Looking for local refined outputs")
             refined_scan_dir = refined_group_dir / "local" / scan_name
             refined_scan_path = refined_scan_dir / "reconstruction_refined_x1.zip"
             if refined_scan_path.exists():
-                logger.info(f"Found {str(refined_scan_path)}")
+                print(f"Found {str(refined_scan_path)}")
                 partial_rec_dir = Path(f"/content/partial_rec/{scan_name}")
                 with zipfile.ZipFile(refined_scan_path, 'r') as zip_ref:
                     zip_ref.extractall(partial_rec_dir)
             else:
-                logger.info(f"Found {str(refined_scan_dir)}")
+                print(f"Found {str(refined_scan_dir)}")
                 partial_rec_dir = refined_scan_dir / 'sfm'
 
-        logger.info(f"Loading partial scan: {unzip_folder}")
+        print(f"Loading partial scan: {unzip_folder}")
 
         try:
             next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
@@ -770,31 +770,31 @@ def stitching_helper(
                 all_poses=all_poses,
                 with_3dpoints=with_3dpoints
             )
-            logger.info('========================================================================')
-            logger.info(f"Loaded {str(unzip_folder.stem)}")
-            logger.info('========================================================================')
+            print('========================================================================')
+            print(f"Loaded {str(unzip_folder.stem)}")
+            print('========================================================================')
             consecutive_alignment_fails = 0
             datasets_already_aligned.append(unzip_folder)
-            logger.info(f"Already aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} left")
+            print(f"Already aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} left")
 
         except NoOverlapException:
             # If the dataset didn't have any overlap, add back to queue and retry again later,
             # since it may overlap with other chunks which have not yet been added.
             datasets_to_align.append(dataset_path)
-            logger.info(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
+            print(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
 
             # However, if all chunks in the queue have failed, it means none of them can be aligned
             consecutive_alignment_fails += 1
-            logger.info(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
+            print(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
             if consecutive_alignment_fails >= len(datasets_to_align):
                 err = "One or more chunks failed to align since none of them overlap with the already placed chunks."
-                logger.info(f"ERROR! {err}")
-                logger.info(f"{len(datasets_already_aligned)} already aligned chunks:")
-                logger.info('\n'.join(str(path) for path in datasets_already_aligned))
-                logger.info(f"{len(datasets_to_align)} remaining chunks:")
-                logger.info('\n'.join(str(path) for path in datasets_to_align))
-                logger.info(f"{len(placed_portal)} QR codes already placed:")
-                logger.info('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
+                print(f"ERROR! {err}")
+                print(f"{len(datasets_already_aligned)} already aligned chunks:")
+                print('\n'.join(str(path) for path in datasets_already_aligned))
+                print(f"{len(datasets_to_align)} remaining chunks:")
+                print('\n'.join(str(path) for path in datasets_to_align))
+                print(f"{len(placed_portal)} QR codes already placed:")
+                print('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
                 #raise NoOverlapException(err)
                 break
 
@@ -810,25 +810,25 @@ def stitching_helper(
 
     unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
-    logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (basic stitch):")
-    logger.info('========================================================================')
+    print('========================================================================')
+    print("ALL DETECTIONS (basic stitch):")
+    print('========================================================================')
     unstitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
     for qr_id, pose in unstitched_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
-        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+        print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
 
     align_reconstruction_chunks(combined_rec, chunks_image_ids, detections_per_qr, image_ids_per_qr, with_scale=False)
 
     unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
-    logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (se3 opt stitch):")
-    logger.info('========================================================================')
+    print('========================================================================')
+    print("ALL DETECTIONS (se3 opt stitch):")
+    print('========================================================================')
     stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
     for qr_id, pose in stitched_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
-        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+        print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
     if with_3dpoints:
         # unrefined_sfm_dir = dataset_dir / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
@@ -839,17 +839,17 @@ def stitching_helper(
         point_cloud_path = refined_group_dir / 'global' / "UnrefinedPointCloud.ply"
         print(f"Saving unrefined point cloud as PLY to: {point_cloud_path}")
         combined_rec.export_PLY(point_cloud_path)
-        logger.info(f'...Saved')
+        print(f'...Saved')
 
     if basic_stitch_only:
-        logger.info("Basic stitch only!")
+        print("Basic stitch only!")
         if truth_portal_poses:
             compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
-        logger.info('Finished Global Merge!')
-        logger.info('========================================================================')
-        logger.info('')
-        logger.info('========================================================================')
+        print('Finished Global Merge!')
+        print('========================================================================')
+        print('')
+        print('========================================================================')
 
         return (
             combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
@@ -870,14 +870,14 @@ def stitching_helper(
         global_ba=True
     )
 
-    logger.info('========================================================================')
-    logger.info('ALL DETECTIONS (bundle adjusted):')
-    logger.info('========================================================================')
+    print('========================================================================')
+    print('ALL DETECTIONS (bundle adjusted):')
+    print('========================================================================')
     stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items()}
     for qr_id, pose in stitched_mean_qr_poses.items():
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
-        logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
+        print(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
 
 
     manifest_out_path = output_path / 'refined_manifest.json'
@@ -892,16 +892,16 @@ def stitching_helper(
         point_cloud_path = output_path / "RefinedPointCloud.ply"
         print(f"Saving point cloud as PLY to: {point_cloud_path}")
         stitched_rec.export_PLY(point_cloud_path)
-        logger.info(f'...Saved')
+        print(f'...Saved')
 
     if truth_portal_poses:
         compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
-    logger.info('========================================================================')
-    logger.info('Finished Global refinement!')
-    logger.info('========================================================================')
-    logger.info('')
-    logger.info('========================================================================')
+    print('========================================================================')
+    print('Finished Global refinement!')
+    print('========================================================================')
+    print('')
+    print('========================================================================')
 
     return (
         combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
