@@ -40,7 +40,7 @@ def global_main_wrapper(args):
         all_observations=True,
         all_poses=True,
         use_refined_outputs=True,
-        add_3dpoints=True, #False,
+        add_3dpoints=True,
         basic_stitch_only=False
     )
     global_main(global_args)
@@ -67,11 +67,11 @@ def local_and_global_main_wrapper(args):
     global_main(stitch_args)
     """
     
-    ply_output_path = args.output_path / "RefinedPointCloud.ply"
+    ply_output_path = Path(args.job_root_path) / "refined" / "global" / "RefinedPointCloud.ply"
     if ply_output_path.exists():
         print(f"Refined point cloud created! {ply_output_path}")
     else:
-        print("Point cloud wasn't created, expected at: {ply_output_path}")
+        print(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)

@@ -512,16 +512,8 @@ func executeJob(j *job) {
 
 	startTime := time.Now()
 	cmd := exec.Command("python3", params...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Printf("job %s failed to create stdout pipe: %s", j.ID, err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		log.Printf("job %s failed to create stderr pipe: %s", j.ID, err)
-	}
-
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	log.Println("job " + j.ID + " started")
 
 	// Run the refinement python
@@ -531,15 +523,8 @@ func executeJob(j *job) {
 		return
 	}
 
-	multi := io.MultiReader(stdout, stderr)
-	in := bufio.NewScanner(multi)
-
-	for in.Scan() {
-		log.Println(in.Text())
-	}
-
-	if err := in.Err(); err != nil {
-		log.Printf("job %s failed: %s, %s", j.ID, err, stderr)
+	if err := cmd.Wait(); err != nil {
+		log.Printf("job %s failed: %s", j.ID, err)
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
@@ -563,7 +548,7 @@ func executeJob(j *job) {
 	}
 	*/
 
-	log.Printf("job %s succeeded: %s", j.ID, stdout)
+	log.Printf("job %s succeeded", j.ID)
 	jobs.UpdateJob(j.ID, "succeeded")
 }
 

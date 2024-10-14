@@ -61,10 +61,11 @@ def run_triangulation(
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = True
     ba_options.solver_options.max_num_iterations = 150
-    ba_options.solver_options.gradient_tolerance = 1.0
+    #ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
-    #ba_options.num_threads = 16
+    ba_options.solver_options.num_threads = 16
+    #ba_options.min_num_residuals_for_multi_threading = 1000000000 # Put very high to avoid threading. Gets stuck on cloud (both on Akash and google colab, not sure why)
 
     num_ba_iterations_total = 5
 
@@ -113,6 +114,7 @@ def run_triangulation(
 
         summary = pyceres.SolverSummary()
         pyceres.solve(solver_options, bundle_adjuster.problem, summary)
+        print("Solved!")
 
         final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 

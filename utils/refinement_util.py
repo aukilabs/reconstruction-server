@@ -63,23 +63,28 @@ def refine_dataset(
     matches = sfm_dir / 'matches.h5'
 
 
-    #feature_conf = extract_features.confs["superpoint_max"]
-    #feature_conf["output"] = features
+    feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf["model"]["max_keypoints"] = 512
+    feature_conf["model"]["nms_radius"] = 4
+    feature_conf["preprocessing"]["resize_max"] = 1024
+    feature_conf["output"] = features
 
+    """
     feature_conf = {
         "output": features,
         "model": {
             "name": "disk",
-            "max_keypoints": 1024,
+            "max_keypoints": 512,
         },
         "preprocessing": {
             "grayscale": False,
             "resize_max": 1024,
         },
     }
+    """
     print("Feature conf: ", feature_conf)
-    #matcher_conf = match_features.confs["superpoint+lightglue"]
-    matcher_conf = match_features.confs["disk+lightglue"]
+    matcher_conf = match_features.confs["superpoint+lightglue"]
+    #matcher_conf = match_features.confs["disk+lightglue"]
 
     ############################
     # LOAD DATASET
@@ -279,7 +284,7 @@ def refine_dataset(
     # IMAGE PAIRS
     ############################
     print("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 10, rotation_threshold=360)
+    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 5, rotation_threshold=360)
 
     ############################
     # FEATURE POINTS
