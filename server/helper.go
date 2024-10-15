@@ -154,25 +154,25 @@ func UploadDomainDataToDomain(j *job) error {
 		//	name:     "unrefined_portal_poses",
 		//	dataType: "dmt_portals_csv",
 		//},
-		"refined_cam_poses.csv": {
-			name:     "refined_camera_poses",
-			dataType: "dmt_arposes_csv",
-		},
-		"unrefined_cam_poses.csv": {
-			name:     "unrefined_camera_poses",
-			dataType: "dmt_arposes_csv",
-		},
+		//"refined_cam_poses.csv": {
+		//	name:     "refined_camera_poses",
+		//	dataType: "dmt_arposes_csv",
+		//},
+		//"unrefined_cam_poses.csv": {
+		//	name:     "unrefined_camera_poses",
+		//	dataType: "dmt_arposes_csv",
+		//},
 		"refined_manifest.json": {
 			name:     "refined_manifest",
 			dataType: "refined_manifest_json",
 		},
 		"RefinedPointCloud.ply": {
 			name:     "refined_pointcloud",
-			dataType: "dmt_pointcloud_ply",
+			dataType: "refined_pointcloud_ply",
 		},
 		"UnrefinedPointCloud.ply": {
 			name:     "unrefined_pointcloud",
-			dataType: "dmt_pointcloud_ply",
+			dataType: "unrefined_pointcloud_ply",
 		},
 	}
 
