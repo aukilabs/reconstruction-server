@@ -3,3 +3,4 @@
 /build
 /.vscode
 /utils/__pycache__
+/jobs
