@@ -21,7 +21,6 @@ def run_triangulation(
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger("logger")
-
     mapper_options = pycolmap.IncrementalMapperOptions(options)
 
     database = pycolmap.Database(database_path)
@@ -30,8 +29,15 @@ def run_triangulation(
     ignore_watermarks = True
     image_names = set()
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+    #reconstruction = deepcopy(reference_model)
 
-    reconstruction = deepcopy(reference_model)
+    reconstruction = pycolmap.Reconstruction()
+    for img in reference_model.images.values():
+        if database_cache.exists_image(img.image_id):
+            reconstruction.add_image(img)
+    for cam in reference_model.cameras.values():
+        if database_cache.exists_camera(cam.camera_id):
+            reconstruction.add_camera(cam)
 
     clear_points = True
     if clear_points:
