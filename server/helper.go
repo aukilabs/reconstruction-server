@@ -146,22 +146,6 @@ func UploadDomainDataToDomain(j *job) error {
 		name     string
 		dataType string
 	}{
-		//"refined_portal_poses.csv": {
-		//	name:     "refined_portal_poses",
-		//	dataType: "dmt_portals_csv",
-		//},
-		//"unrefined_portal_poses.csv": {
-		//	name:     "unrefined_portal_poses",
-		//	dataType: "dmt_portals_csv",
-		//},
-		//"refined_cam_poses.csv": {
-		//	name:     "refined_camera_poses",
-		//	dataType: "dmt_arposes_csv",
-		//},
-		//"unrefined_cam_poses.csv": {
-		//	name:     "unrefined_camera_poses",
-		//	dataType: "dmt_arposes_csv",
-		//},
 		"refined_manifest.json": {
 			name:     "refined_manifest",
 			dataType: "refined_manifest_json",
@@ -495,6 +479,7 @@ func executeJob(j *job) {
 
 	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
 	outputPath := path.Join(j.JobPath, "refined")
+	logFilePath := path.Join(j.JobPath, "log.txt")
 
 	params := []string{refinementPython, j.ProcessingType, jobRootPath, outputPath}
 
@@ -512,9 +497,22 @@ func executeJob(j *job) {
 
 	startTime := time.Now()
 	cmd := exec.Command("python3", params...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	log.Println("job " + j.ID + " started")
+	// Create log file
+	logFile, err := os.Create(logFilePath)
+	if err != nil {
+		log.Printf("job %s failed to create log file: %s", j.ID, err)
+		jobs.UpdateJob(j.ID, "failed")
+		return
+	}
+	defer logFile.Close()
+
+	// Write to both log file and stdout/stderr
+	stdoutWriter := io.MultiWriter(logFile, os.Stdout)
+	stderrWriter := io.MultiWriter(logFile, os.Stderr)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+
+	log.Printf("job %s started, logging to %s", j.ID, logFilePath)
 
 	// Run the refinement python
 	if err := cmd.Start(); err != nil {
@@ -529,11 +527,11 @@ func executeJob(j *job) {
 		return
 	}
 
-	log.Println("Refinement python script for job " + j.ID + " finished.")
+	log.Printf("Refinement python script for job %s finished.", j.ID)
 	timeTaken := time.Since(startTime)
 	log.Printf("Refinement algorithm took %s", timeTaken)
 
-	log.Println("Going to upload results to domain " + j.DomainID)
+	log.Printf("Going to upload results to domain %s", j.DomainID)
 
 	if err := UploadDomainDataToDomain(j); err != nil {
 		log.Printf("job %s failed to upload data: %s", j.ID, err)
@@ -548,7 +546,7 @@ func executeJob(j *job) {
 	}
 	*/
 
-	log.Printf("job %s succeeded", j.ID)
+	log.Printf("job %s succeeded!", j.ID)
 	jobs.UpdateJob(j.ID, "succeeded")
 }
 
