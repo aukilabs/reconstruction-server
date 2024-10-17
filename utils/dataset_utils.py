@@ -73,7 +73,13 @@ def load_partial(
         print("Frames mp4 found, unpacking into", images)
         if not images.exists():
             images.mkdir()
-        mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+
+        matching_unpacked_count = len(list(images.glob(f"{experiment_name}_*.jpg")))
+        if matching_unpacked_count == 0:
+            mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        else:
+            print(f"Frames folder contains {matching_unpacked_count} matching jpg files already")
+            print("Already unpacked! Skipping mp4 to frames (to save time)")
         use_frames_from_video = True
 
 
