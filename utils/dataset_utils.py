@@ -8,7 +8,7 @@ import csv
 import numpy as np 
 from numpy.linalg import norm
 import logging
-
+from src.ply_export import export_ply_text
 
 from evo.main_ape import ape as evo_ape
 from evo.core.trajectory import PosePath3D
@@ -838,7 +838,9 @@ def stitching_helper(
         combined_rec.write(unrefined_sfm_dir)
         point_cloud_path = refined_group_dir / 'global' / "UnrefinedPointCloud.ply"
         print(f"Saving unrefined point cloud as PLY to: {point_cloud_path}")
-        combined_rec.export_PLY(point_cloud_path)
+        #combined_rec.export_PLY(point_cloud_path)
+        # As text for now, as mobile DMT doesn't work with binary domain data blobs
+        export_ply_text(combined_rec, point_cloud_path)
         print(f'...Saved')
 
     if basic_stitch_only:
@@ -891,7 +893,8 @@ def stitching_helper(
         stitched_rec.write(refined_sfm_dir)
         point_cloud_path = output_path / "RefinedPointCloud.ply"
         print(f"Saving point cloud as PLY to: {point_cloud_path}")
-        stitched_rec.export_PLY(point_cloud_path)
+        #stitched_rec.export_PLY(point_cloud_path)
+        export_ply_text(stitched_rec, point_cloud_path)
         print(f'...Saved')
 
     if truth_portal_poses:
