@@ -350,10 +350,9 @@ def export_rec_as_ply(rec, path, convert_to_opengl=True):
         x,y,z = point.xyz
         if convert_to_opengl:
             x,y,z = y,x,-z
-        rec_openGL.add_point3D(np.array([x,y,z]), point.track, point.color)
-    export_ply_text(rec_openGL, path)
+        _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
+    export_ply_text(rec_openGL, str(path))
     print(f"PLY export done")
-        
 
 
 def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
