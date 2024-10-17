@@ -8,7 +8,6 @@ import csv
 import numpy as np 
 from numpy.linalg import norm
 import logging
-from src.ply_export import export_ply_text
 
 from evo.main_ape import ape as evo_ape
 from evo.core.trajectory import PosePath3D
@@ -25,7 +24,8 @@ from utils.data_utils import (
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
-    save_manifest_json
+    save_manifest_json,
+    export_rec_as_ply
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 
@@ -837,10 +837,7 @@ def stitching_helper(
         Path.mkdir(unrefined_sfm_dir, parents=True, exist_ok=True)
         combined_rec.write(unrefined_sfm_dir)
         point_cloud_path = refined_group_dir / 'global' / "UnrefinedPointCloud.ply"
-        print(f"Saving unrefined point cloud as PLY to: {point_cloud_path}")
-        #combined_rec.export_PLY(point_cloud_path)
-        # As text for now, as mobile DMT doesn't work with binary domain data blobs
-        export_ply_text(combined_rec, point_cloud_path)
+        export_rec_as_ply(combined_rec, point_cloud_path)
         print(f'...Saved')
 
     if basic_stitch_only:
@@ -892,9 +889,7 @@ def stitching_helper(
         Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
         stitched_rec.write(refined_sfm_dir)
         point_cloud_path = output_path / "RefinedPointCloud.ply"
-        print(f"Saving point cloud as PLY to: {point_cloud_path}")
-        #stitched_rec.export_PLY(point_cloud_path)
-        export_ply_text(stitched_rec, point_cloud_path)
+        export_rec_as_ply(stitched_rec, point_cloud_path)
         print(f'...Saved')
 
     if truth_portal_poses:
