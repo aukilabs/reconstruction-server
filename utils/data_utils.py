@@ -10,6 +10,9 @@ import logging
 import cv2
 from src.ply_export import export_ply_text
 
+floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
+floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
+
 def convert_pose_opengl_to_colmap(position, quaternion):
     
     position = np.array([
@@ -26,6 +29,23 @@ def convert_pose_opengl_to_colmap(position, quaternion):
 
     return position, quaternion
 
+
+def rectify_floor_portal(qr_pose):
+    pos = qr_pose.translation
+    rot3d = qr_pose.rotation
+
+    world_forward = rot3d.matrix() @ np.array([0.0, 0.0, 1.0])
+    if world_forward[0] < -0.9:
+        rot3d = rot3d * floor_rotation
+        rot3d.quat = flatten_quaternion(rot3d.quat)
+        rot3d = rot3d * floor_rotation_inv
+        
+        # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
+        if np.abs(pos[0]) < 0.5:
+            pos = pos.copy() # avoid modifying input pose
+            pos[0] = 0.0
+
+    return pycolmap.Rigid3d(rot3d, pos)
 
 def load_portals_json(file_path):
     portal_poses = {}
@@ -125,8 +145,10 @@ def load_qr_detections_csv(csv_path):
 
             pos, quat = convert_pose_opengl_to_colmap(pos, quat)
 
+            rot3d = pycolmap.Rotation3d(np.array(quat))
+
             qr_pose = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quat)),
+                rot3d,
                 np.array(pos)
             )
 

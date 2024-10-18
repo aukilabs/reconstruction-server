@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from utils.data_utils import (
     load_qr_detections_csv, 
     mean_pose,
+    rectify_floor_portal,
     mp4_to_frames,
     flatten_quaternion, 
     convert_pose_opengl_to_colmap, 
@@ -261,7 +262,7 @@ def load_partial(
 
     is_first_chunk = len(placed_portal) == 0
     print(f"Portals already placed: {len(placed_portal)}.",
-          "FIRST CHUNK -> put origin portal" if is_first_chunk else "NOT FIRST -> align based on ovelapping portals.")
+          "FIRST CHUNK -> put origin portal" if is_first_chunk else "NOT FIRST -> align based on overlapping portals.")
 
     if not has_overlap and not is_first_chunk:
         raise NoOverlapException  # handled outside, to retry again after other chunks are added
@@ -292,15 +293,19 @@ def load_partial(
         print(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
         print(alignment_transform)
 
+    if alignment_transform is not None:
+        # Align around up vector only, since ARKit gives already a good gravity vector
+        alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
 
     for qr_id, pose in this_chunk_mean_qr_poses.items():
         if alignment_transform is not None:
             pose = alignment_transform * pose
-        placed_portal[qr_id] = pose
+        placed_portal[qr_id] = rectify_floor_portal(pose)
 
     if alignment_transform is not None:
         for timestamp, detection in qr_detections_per_timestamp.items():
             detection["pose"] = alignment_transform * detection["pose"]
+            detection["pose"] = rectify_floor_portal(detection["pose"])
 
 
     #----------------------
@@ -350,7 +355,6 @@ def load_partial(
             })
 
     image_timestamps_with_detection = [mapping["image_timestamp"] for mapping in timestamp_mappings_image_detection]
-    print("image_timestamps_with_detection: ", image_timestamps_with_detection)
 
     image_name_per_timestamp = {timestamp: image_name for image_name, timestamp in timestamp_per_image.items()}
     image_per_timestamp = {}
@@ -376,7 +380,6 @@ def load_partial(
         image_id = next_image_id
         camera_id = image_id # always 1-to-1 for us
 
-        print("Camera id: ", camera_id)
 
         if loaded_rec:
             matching_cams = [c for c in loaded_rec.cameras.values() if loaded_rec.images[c.camera_id].name == image_filename]
@@ -424,7 +427,7 @@ def load_partial(
 
         cam_from_world = cam_to_world.inverse() # TODO tgus should be rename to world_to_cam?
 
-        print(f"{timestampNs} @ Cam {camera_id}: {cam.width}x{cam.height}, {cam.model} params {cam.params} at pos=({cam_to_world.translation}) rot=({cam_to_world.rotation.quat})")
+        # print(f"{timestampNs} @ Cam {camera_id}: {cam.width}x{cam.height}, {cam.model} params {cam.params} at pos=({cam_to_world.translation}) rot=({cam_to_world.rotation.quat})")
 
         arkit_world_from_cam_transform = arkit_world_from_cam(timestampNs)
         if alignment_transform is not None:
