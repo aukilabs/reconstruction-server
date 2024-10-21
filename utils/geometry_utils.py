@@ -4,6 +4,7 @@ import numpy as np
 import pycolmap
 import pyceres
 from pathlib import Path
+import open3d as o3d
 
 from utils.data_utils import get_world_space_qr_codes, save_qr_poses_csv
 from utils.bundle_adjuster import PyBundleAdjuster
@@ -244,3 +245,16 @@ def align_reconstruction_chunks(
             detections_per_qr[qr_id][det_idx].translation *= t_local_chunks[chunk_id].scale
 
     return
+
+
+def voxelise(pcd, voxel_size):
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=voxel_size)
+
+    # Extract voxel centroids as a point cloud
+    voxel_centroids = []
+    for voxel in voxel_grid.get_voxels():
+        voxel_centroids.append(voxel.grid_index * voxel_size + voxel_grid.origin)  # Transform grid index to world coordinates
+
+    voxel_pcd = o3d.geometry.PointCloud()
+    voxel_pcd.points = o3d.utility.Vector3dVector(np.array(voxel_centroids))
+    return voxel_pcd
