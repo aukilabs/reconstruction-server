@@ -438,6 +438,29 @@ class Model:
         # add geometries to visualizer
         for i in frames:
             self.__vis.add_geometry(i)
+    
+    def get_points(self, min_track_len=3, remove_statistical_outlier=True):
+        pcd = open3d.geometry.PointCloud()
+
+        xyz = []
+        rgb = []
+        for point3D in self.points3D.values():
+            track_len = len(point3D.point2D_idxs)
+            if track_len < min_track_len:
+                continue
+            xyz.append(point3D.xyz)
+            rgb.append(point3D.rgb / 255)
+
+        pcd.points = open3d.utility.Vector3dVector(xyz)
+        pcd.colors = open3d.utility.Vector3dVector(rgb)
+
+        # remove obvious outliers
+        if remove_statistical_outlier:
+            [pcd, _] = pcd.remove_statistical_outlier(
+                nb_neighbors=20, std_ratio=2.0
+            )
+
+        return pcd
 
     def create_window(self):
         self.__vis = open3d.visualization.Visualizer()
