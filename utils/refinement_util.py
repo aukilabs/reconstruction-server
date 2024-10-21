@@ -64,9 +64,9 @@ def refine_dataset(
 
 
     feature_conf = extract_features.confs["superpoint_max"]
-    feature_conf["model"]["max_keypoints"] = 512
+    feature_conf["model"]["max_keypoints"] = 1024
     #feature_conf["model"]["nms_radius"] = 4
-    feature_conf["preprocessing"]["resize_max"] = 1024
+    #feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = features
 
     """
