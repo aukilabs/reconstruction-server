@@ -8,8 +8,15 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"reflect"
+	"sync"
 
 	"github.com/go-chi/chi"
+)
+
+// Add a global variable to track if a job is in progress
+var (
+	jobInProgress bool
+	jobMutex      sync.Mutex
 )
 
 func main() {
@@ -42,11 +49,25 @@ func main() {
 			}
 		}
 
+		// Check if a job is already in progress
+		jobMutex.Lock()
+		if jobInProgress {
+			jobMutex.Unlock()
+			log.Println("Job already in progress, rejecting incoming job request.")
+			http.Error(w, "Reconstruction server is busy processing another job", http.StatusConflict)
+			return
+		}
+		jobInProgress = true
+		jobMutex.Unlock()
+
 		reqBodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Print("Failed to read request body for job request")
 			log.Print(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			jobMutex.Lock()
+			jobInProgress = false
+			jobMutex.Unlock()
 			return
 		}
 
@@ -57,9 +78,18 @@ func main() {
 		if err != nil {
 			log.Print("Job creation failed with error: ", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			jobMutex.Lock()
+			jobInProgress = false
+			jobMutex.Unlock()
 			return
 		}
+
 		go func(j job) {
+			defer func() {
+				jobMutex.Lock()
+				jobInProgress = false
+				jobMutex.Unlock()
+			}()
 			executeJob(&j)
 		}(*j)
 
