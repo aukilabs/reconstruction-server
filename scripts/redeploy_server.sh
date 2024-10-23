@@ -2,6 +2,13 @@ HOST="provider.hurricane.akash.pub"
 PORT=32717
 API_KEY="kaffekopp123"
 
+# Script to redeploy changes in the go code without redeploying the entire docker image.
+# WARNING this interrupts any ongoing jobs. Only for development.
+
+# 1. Rebuild the server binary inside a docker build container (same as full image build)
+# 2. Copy the binary to cloud via ssh
+# 3. Restart the server process
+
 docker build --platform linux/amd64 -f Dockerfile_GO . -t temp-go-build && \
     ( \
         docker cp $(docker create --rm temp-go-build):/app/reconstruction ./reconstruction && \
