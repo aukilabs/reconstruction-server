@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"io"
@@ -61,11 +60,6 @@ func main() {
 			return
 		}
 		go func(j job) {
-			if err := DownloadDomainDataFromDomain(context.Background(), &j, j.DataIDs...); err != nil {
-				log.Printf("Data download failed for job %s: %v", j.ID, err)
-				jobs.UpdateJob(j.ID, "failed")
-				return
-			}
 			executeJob(&j)
 		}(*j)
 

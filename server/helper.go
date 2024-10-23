@@ -43,7 +43,7 @@ func (js *jobList) AddJob(j *job) {
 	js.list[j.ID] = *j
 }
 
-func UpdateJobManifestFile(j *job, status string) {
+func WriteJobManifestFile(j *job, status string) {
 	if status == "failed" {
 		outputCount, err := UploadRefinedOutputsToDomain(j)
 		if err != nil {
@@ -55,7 +55,7 @@ func UpdateJobManifestFile(j *job, status string) {
 		}
 	} else if status == "processing" {
 		progress := 0
-		WriteJobManifestFile(j, status, progress, "Request received by reconstruction server")
+		WriteJobManifestFileHelper(j, status, progress, "Request received by reconstruction server")
 	} else {
 		return
 	}
@@ -72,7 +72,7 @@ func (js *jobList) UpdateJob(id string, status string) {
 	js.lock.Unlock()
 
 	if ok {
-		UpdateJobManifestFile(&j, status)
+		WriteJobManifestFile(&j, status)
 	}
 }
 
@@ -178,7 +178,7 @@ save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + errorMessa
 	return cmd.Run()
 }
 
-func WriteJobManifestFile(j *job, status string, progress int, statusDetails string) error {
+func WriteJobManifestFileHelper(j *job, status string, progress int, statusDetails string) error {
 	pythonSnippet := `
 from utils.data_utils import save_manifest_json;
 save_manifest_json({},
@@ -209,7 +209,7 @@ func UploadJobManifestToDomain(j *job) error {
 }
 
 func UploadRefinedOutputsToDomain(j *job) (int, error) {
-	refinedOutput := path.Join(j.JobPath, "global", "refined")
+	refinedOutput := path.Join("refined", "global")
 	expectedOutputs := []ExpectedOutput{
 		{
 			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
@@ -560,6 +560,18 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 }
 
 func executeJob(j *job) {
+
+	// Write in_progress manifest as soon as job starts.
+	// DMT uses this to show job status to the user.
+	WriteJobManifestFile(j, "processing")
+
+	// Download domain data first
+	if err := DownloadDomainDataFromDomain(context.Background(), j, j.DataIDs...); err != nil {
+		log.Printf("Data download failed for job %s: %v", j.ID, err)
+		jobs.UpdateJob(j.ID, "failed")
+		return
+	}
+
 	refinementPython := "main.py"
 
 	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
