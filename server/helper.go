@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-
-	//"errors"
 	"io"
 	"log"
 	"mime"
@@ -18,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/jwt"
 )
+
+type ExpectedOutput struct {
+	FilePath string // relative to job folder
+	Name     string
+	DataType string
+}
 
 type jobList struct {
 	lock sync.RWMutex
@@ -38,13 +43,36 @@ func (js *jobList) AddJob(j *job) {
 	js.list[j.ID] = *j
 }
 
+func UpdateJobManifestFile(j *job, status string) {
+	if status == "failed" {
+		outputCount, err := UploadRefinedOutputsToDomain(j)
+		if err != nil {
+			log.Printf("job %s failed inside 'UpdateJobManifestFile', couldn't upload refined outputs: %s", j.ID, err)
+		}
+		if outputCount == 0 {
+			log.Printf("job %s python produced no refined outputs. Upload basic failed manifest instead.", j.ID)
+			WriteFailedJobManifestFile(j, "Refinement python script failed to start")
+		}
+	} else if status == "processing" {
+		progress := 0
+		WriteJobManifestFile(j, status, progress, "Request received by reconstruction server")
+	} else {
+		return
+	}
+	UploadJobManifestToDomain(j)
+}
+
 func (js *jobList) UpdateJob(id string, status string) {
 	js.lock.Lock()
-	defer js.lock.Unlock()
-
-	if j, ok := js.list[id]; ok {
+	j, ok := js.list[id]
+	if ok {
 		j.Status = status
 		js.list[id] = j
+	}
+	js.lock.Unlock()
+
+	if ok {
+		UpdateJobManifestFile(&j, status)
 	}
 }
 
@@ -115,6 +143,7 @@ var MaxBytesError = &http.MaxBytesError{}
 func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
+
 func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Type", "application/octet-stream")
@@ -135,37 +164,99 @@ func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 	return err
 }
 
-func UploadDomainDataToDomain(j *job) error {
-	// upload all files from j.OutputPath to the domain server
-	outputPath := path.Join(j.JobPath, "refined", "global")
-	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
-		return err
+func WriteFailedJobManifestFile(j *job, errorMessage string) error {
+	pythonSnippet := `
+from utils.data_utils import save_failed_manifest_json; 
+save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + errorMessage + `')
+`
+	log.Println("Writing failed manifest for job ", j.ID, ", with error message: ", errorMessage)
+
+	cmd := exec.Command("python3", "-c", pythonSnippet)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+func WriteJobManifestFile(j *job, status string, progress int, statusDetails string) error {
+	pythonSnippet := `
+from utils.data_utils import save_manifest_json;
+save_manifest_json({},
+	'` + j.JobPath + `/job_manifest.json',
+	jobStatus='` + status + `',
+	jobProgress=` + strconv.Itoa(progress) + `,
+	jobStatusDetails='` + statusDetails + `'
+)`
+
+	log.Println("Writing manifest for job ", j.ID, ", with status: ", status, ", progress: ", progress, ", status details: ", statusDetails)
+
+	cmd := exec.Command("python3", "-c", pythonSnippet)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+func UploadJobManifestToDomain(j *job) error {
+	expectedOutputs := []ExpectedOutput{
+		{
+			FilePath: "job_manifest.json",
+			Name:     "refined_manifest",
+			DataType: "refined_manifest_json",
+		},
+	}
+	return UploadOutputsToDomain(j, expectedOutputs)
+}
+
+func UploadRefinedOutputsToDomain(j *job) (int, error) {
+	refinedOutput := path.Join(j.JobPath, "global", "refined")
+	expectedOutputs := []ExpectedOutput{
+		{
+			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
+			Name:     "refined_manifest",
+			DataType: "refined_manifest_json",
+		},
+		{
+			FilePath: path.Join(refinedOutput, "RefinedPointCloud.ply"),
+			Name:     "refined_pointcloud",
+			DataType: "refined_pointcloud_ply",
+		},
+		{
+			// The unrefined point cloud after just basic stitch from overlap QR codes
+			// Not really useful to apps, but for debugging the refinement
+			FilePath: path.Join(refinedOutput, "BasicStitchPointCloud.ply"),
+			Name:     "unrefined_pointcloud",
+			DataType: "unrefined_pointcloud_ply",
+		},
 	}
 
-	expected_outputs := map[string]struct {
-		name     string
-		dataType string
-	}{
-		"refined_manifest.json": {
-			name:     "refined_manifest",
-			dataType: "refined_manifest_json",
-		},
-		"RefinedPointCloud.ply": {
-			name:     "refined_pointcloud",
-			dataType: "refined_pointcloud_ply",
-		},
-		"UnrefinedPointCloud.ply": {
-			name:     "unrefined_pointcloud",
-			dataType: "unrefined_pointcloud_ply",
-		},
+	outputCount := 0
+	for _, output := range expectedOutputs {
+		if _, err := os.Stat(path.Join(j.JobPath, output.FilePath)); !os.IsNotExist(err) {
+			outputCount++
+		}
+	}
+
+	err := UploadOutputsToDomain(j, expectedOutputs)
+	if err != nil {
+		log.Printf("job %s failed to upload refined outputs to domain: %s", j.ID, err)
+	}
+
+	return outputCount, err
+}
+
+func UploadOutputsToDomain(j *job, expectedOutputs []ExpectedOutput) error {
+	outputPath := j.JobPath
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return err
 	}
 
 	r, w := io.Pipe()
 	mw := multipart.NewWriter(w)
 	go func() {
 		defer w.Close()
-		for outputFile, outputData := range expected_outputs {
-			f, err := os.Open(path.Join(outputPath, outputFile))
+		for _, output := range expectedOutputs {
+			f, err := os.Open(path.Join(outputPath, output.FilePath))
 			if err != nil {
 				log.Print(err)
 				continue
@@ -175,8 +266,8 @@ func UploadDomainDataToDomain(j *job) error {
 			if err := WriteDomainData(mw, &DomainData{
 				DomainDataMetadata: DomainDataMetadata{
 					EditableDomainDataMetadata: EditableDomainDataMetadata{
-						Name:     outputData.name + "_" + nameSuffix,
-						DataType: outputData.dataType,
+						Name:     output.Name + "_" + nameSuffix,
+						DataType: output.DataType,
 					},
 					DomainID: j.DomainID,
 				},
@@ -388,7 +479,7 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 	return &jobRequest, nil
 }
 
-func CreateJob(dirPath string, requestJson string) (*job, error) {
+func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 
 	log.Println("Will mkdir path ", dirPath)
 	if err := os.MkdirAll(dirPath, 0750); err != nil {
@@ -461,12 +552,6 @@ func CreateJob(dirPath string, requestJson string) (*job, error) {
 	//	return nil, err
 	//}
 
-	log.Println("Downloading data from domain")
-	if err := DownloadDomainDataFromDomain(context.Background(), &j, jobRequest.DataIDs...); err != nil {
-		return nil, err
-	}
-	log.Println("Download succeeded")
-
 	log.Println("Adding job to job list")
 	jobs.AddJob(&j)
 	log.Println("Job added to job list")
@@ -533,7 +618,7 @@ func executeJob(j *job) {
 
 	log.Printf("Going to upload results to domain %s", j.DomainID)
 
-	if err := UploadDomainDataToDomain(j); err != nil {
+	if _, err := UploadRefinedOutputsToDomain(j); err != nil {
 		log.Printf("job %s failed to upload data: %s", j.ID, err)
 		jobs.UpdateJob(j.ID, "failed")
 		return
@@ -549,58 +634,3 @@ func executeJob(j *job) {
 	log.Printf("job %s succeeded!", j.ID)
 	jobs.UpdateJob(j.ID, "succeeded")
 }
-
-// unzipFile unzips a file to a destination directory
-/*
-func unzipFile(zipPath, destDir string) (string, error) {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return "", err
-	}
-	destPath := ""
-	zipReader, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return destPath, err
-	}
-	defer zipReader.Close()
-
-	if len(zipReader.File) == 0 {
-		return destPath, fmt.Errorf("zip file is empty")
-	}
-
-	destPath = path.Join(destDir, path.Base(path.Dir(zipReader.File[0].Name)))
-
-	for _, file := range zipReader.File {
-		filePath := filepath.Join(destDir, file.Name)
-		if file.FileInfo().IsDir() { // if the file is a directory, create it
-			os.MkdirAll(destPath, os.ModePerm)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-			return destPath, err
-		}
-
-		destFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
-		if err != nil {
-			return destPath, err
-		}
-
-		srcFile, err := file.Open()
-		if err != nil {
-			destFile.Close()
-			return destPath, err
-		}
-
-		if _, err := io.Copy(destFile, srcFile); err != nil {
-			destFile.Close()
-			srcFile.Close()
-			return destPath, err
-		}
-
-		destFile.Close()
-		srcFile.Close()
-	}
-
-	return destPath, nil
-}
-*/

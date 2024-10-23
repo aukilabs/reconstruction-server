@@ -4,7 +4,7 @@ import argparse
 
 from local_main import main as local_main
 from global_main import main as global_main
-from utils.dataset_utils import save_manifest_json
+from utils.data_utils import save_failed_manifest_json
 
 def local_main_wrapper(args):
     scans = args.scans
@@ -100,7 +100,7 @@ def main(args):
         print(f"Refinement failed with exception: {e}")
         manifest_out_path =  args.output_path / "refined_manifest.json"
         print(f"Saving 'failed' manifest to: {manifest_out_path}")
-        save_manifest_json({}, manifest_out_path, jobStatus="failed", jobProgress=100, jobStatusDetails=str(e))
+        save_failed_manifest_json(manifest_out_path, str(e))
         raise e
 
 def parse_args():

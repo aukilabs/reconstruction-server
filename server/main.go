@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"io"
@@ -53,13 +54,18 @@ func main() {
 		reqBodyString := string(reqBodyBytes)
 		log.Printf("Request body: %s", reqBodyString)
 
-		j, err := CreateJob("jobs", reqBodyString)
+		j, err := CreateJobMetadata("jobs", reqBodyString)
 		if err != nil {
-			log.Print("Job failed with error: ", err.Error())
+			log.Print("Job creation failed with error: ", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		go func(j job) {
+			if err := DownloadDomainDataFromDomain(context.Background(), &j, j.DataIDs...); err != nil {
+				log.Printf("Data download failed for job %s: %v", j.ID, err)
+				jobs.UpdateJob(j.ID, "failed")
+				return
+			}
 			executeJob(&j)
 		}(*j)
 

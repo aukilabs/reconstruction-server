@@ -827,6 +827,14 @@ def stitching_helper(
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(basic_stitch_qr_detections[qr_id])
         print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
 
+    if with_3dpoints:
+        basic_stitch_ply_path = refined_group_dir / 'global' / "BasicStitchPointCloud.ply"
+        export_rec_as_ply(combined_rec, basic_stitch_ply_path)
+
+
+    ####################
+    # Optimize stitch!
+    ####################
     align_reconstruction_chunks(combined_rec, chunks_image_ids, detections_per_qr, image_ids_per_qr, with_scale=False)
 
     optimized_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
@@ -839,7 +847,7 @@ def stitching_helper(
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
         print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
-    optimized_stitch_ply_path = refined_group_dir / 'global' / "StitchedPointCloud.ply"
+    optimized_stitch_ply_path = refined_group_dir / 'global' / "OptimizedStitchPointCloud.ply"
     refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
 
     if with_3dpoints:
@@ -848,7 +856,6 @@ def stitching_helper(
         Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
         combined_rec.write(optimized_stitch_sfm)
         export_rec_as_ply(combined_rec, optimized_stitch_ply_path)
-        print(f'...Saved')
 
     if basic_stitch_only:
         print("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
@@ -908,7 +915,6 @@ def stitching_helper(
         Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
         bundle_adjusted_rec.write(refined_sfm_dir)
         export_rec_as_ply(bundle_adjusted_rec, refined_ply_path)
-        print(f'...Saved')
 
     if truth_portal_poses:
         compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)

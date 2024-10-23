@@ -274,6 +274,10 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 
+def save_failed_manifest_json(csv_path, jobStatusDetails):
+    save_manifest_json({}, csv_path, jobStatus="failed", jobProgress=100, jobStatusDetails=jobStatusDetails)
+
+
 def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
     manifest_data = {
         "portals": [],
