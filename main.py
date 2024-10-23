@@ -41,7 +41,7 @@ def global_main_wrapper(args):
         all_poses=True,
         use_refined_outputs=True,
         add_3dpoints=True,
-        basic_stitch_only=False
+        basic_stitch_only=True
     )
     global_main(global_args)
     print("Done with global refinement")

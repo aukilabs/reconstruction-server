@@ -817,58 +817,68 @@ def stitching_helper(
         rmse_dev = np.sqrt(np.mean(np.power(deviations_dist, 2)))
         return min_dev, avg_dev, med_dev, max_dev, rmse_dev
 
-    unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
+    basic_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
     print('========================================================================')
     print("ALL DETECTIONS (basic stitch):")
     print('========================================================================')
-    unstitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
-    for qr_id, pose in unstitched_mean_qr_poses.items():
-        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
+    basic_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in basic_stitch_qr_detections.items()}
+    for qr_id, pose in basic_stitch_mean_qr_poses.items():
+        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(basic_stitch_qr_detections[qr_id])
         print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
 
     align_reconstruction_chunks(combined_rec, chunks_image_ids, detections_per_qr, image_ids_per_qr, with_scale=False)
 
-    unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
+    optimized_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
     print('========================================================================')
-    print("ALL DETECTIONS (se3 opt stitch):")
+    print("ALL DETECTIONS (optimized stitch):")
     print('========================================================================')
-    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
-    for qr_id, pose in stitched_mean_qr_poses.items():
-        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
+    optimized_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in optimized_stitch_qr_detections.items()}
+    for qr_id, pose in optimized_stitch_mean_qr_poses.items():
+        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
         print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
+    optimized_stitch_ply_path = refined_group_dir / 'global' / "StitchedPointCloud.ply"
+    refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
+
     if with_3dpoints:
-        # unrefined_sfm_dir = dataset_dir / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
-        unrefined_sfm_dir = refined_group_dir / 'global' / 'unrefined_sfm_combined'
-        print(f"Saving unrefined sfm to: {unrefined_sfm_dir}")
-        Path.mkdir(unrefined_sfm_dir, parents=True, exist_ok=True)
-        combined_rec.write(unrefined_sfm_dir)
-        point_cloud_path = refined_group_dir / 'global' / "UnrefinedPointCloud.ply"
-        export_rec_as_ply(combined_rec, point_cloud_path)
+        optimized_stitch_sfm = refined_group_dir / 'global' / 'optimized_stitch_sfm'
+        print(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
+        Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
+        combined_rec.write(optimized_stitch_sfm)
+        export_rec_as_ply(combined_rec, optimized_stitch_ply_path)
         print(f'...Saved')
 
     if basic_stitch_only:
-        print("Basic stitch only!")
+        print("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
         if truth_portal_poses:
-            compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+            compare_portals(basic_stitch_mean_qr_poses, optimized_stitch_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
         print('Finished Global Merge!')
         print('========================================================================')
         print('')
         print('========================================================================')
 
+        if with_3dpoints:
+            print(f"Running with 'basic stitch only' mode. Copy stitched point cloud to use as refined.")
+            print(f"Copying PLY from {optimized_stitch_ply_path} to {refined_ply_path}")
+            shutil.copy(optimized_stitch_ply_path, refined_ply_path)
+
+        manifest_out_path = output_path / 'refined_manifest.json'
+        print(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
+        save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+
         return (
-            combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
-            combined_rec, unstitched_qr_detections, stitched_mean_qr_poses,
+            combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
+            combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
             detections_per_qr, image_ids_per_qr
         )
 
     sorted_image_ids = list(combined_rec.images.keys())
     sorted_image_ids.sort()
 
-    stitched_rec, stitched_qr_detections = run_stitching(
+    bundle_adjusted_rec, bundle_adjusted_qr_detections = run_stitching(
         detections_per_qr,
         image_ids_per_qr,
         timestamp_per_image,
@@ -881,28 +891,27 @@ def stitching_helper(
     print('========================================================================')
     print('ALL DETECTIONS (bundle adjusted):')
     print('========================================================================')
-    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items()}
-    for qr_id, pose in stitched_mean_qr_poses.items():
-        deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
+    bundle_adjusted_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in bundle_adjusted_qr_detections.items()}
+    for qr_id, pose in bundle_adjusted_mean_qr_poses.items():
+        deviation = np.std([det.translation for det in bundle_adjusted_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
         print(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
 
 
     manifest_out_path = output_path / 'refined_manifest.json'
-    print(f"Saving refined manifest with {len(stitched_qr_detections)} detections, to: {manifest_out_path}")
-    save_manifest_json(stitched_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+    print(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
+    save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"
         print(f"Saving refined sfm to: {refined_sfm_dir}")
         Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
-        stitched_rec.write(refined_sfm_dir)
-        point_cloud_path = output_path / "RefinedPointCloud.ply"
-        export_rec_as_ply(stitched_rec, point_cloud_path)
+        bundle_adjusted_rec.write(refined_sfm_dir)
+        export_rec_as_ply(bundle_adjusted_rec, refined_ply_path)
         print(f'...Saved')
 
     if truth_portal_poses:
-        compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+        compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
     print('========================================================================')
     print('Finished Global refinement!')
@@ -911,7 +920,7 @@ def stitching_helper(
     print('========================================================================')
 
     return (
-        combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
-        stitched_rec, stitched_qr_detections, stitched_mean_qr_poses,
+        combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
+        bundle_adjusted_rec, bundle_adjusted_qr_detections, bundle_adjusted_mean_qr_poses,
         detections_per_qr, image_ids_per_qr
     )
