@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,11 @@ func WriteJobManifestFile(j *job, status string) {
 	} else {
 		return
 	}
-	UploadJobManifestToDomain(j)
+
+	err := UploadJobManifestToDomain(j)
+	if err != nil {
+		log.Printf("job %s failed to upload job manifest to domain: %s", j.ID, err)
+	}
 }
 
 func (js *jobList) UpdateJob(id string, status string) {
@@ -99,16 +104,17 @@ var jobs = jobList{
 }
 
 type job struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	DataIDs         []string  `json:"data_ids"`
-	DomainID        string    `json:"domain_id"`
-	JobPath         string    `json:"job_path"`
-	ProcessingType  string    `json:"processing_type"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	AccessToken     string    `json:"-"`
-	DomainServerURL string    `json:"domain_server_url"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	DataIDs         []string          `json:"data_ids"`
+	DomainID        string            `json:"domain_id"`
+	JobPath         string            `json:"job_path"`
+	ProcessingType  string            `json:"processing_type"`
+	Status          string            `json:"status"`
+	UploadedDataIDs map[string]string `json:"-"`
+	CreatedAt       time.Time         `json:"created_at"`
+	AccessToken     string            `json:"-"`
+	DomainServerURL string            `json:"domain_server_url"`
 }
 
 type JobRequestData struct {
@@ -122,7 +128,6 @@ type JobRequestData struct {
 type DomainDataMetadata struct {
 	ID       string `json:"id"`
 	DomainID string `json:"domain_id"`
-	Token    string `json:"token"`
 	EditableDomainDataMetadata
 }
 
@@ -134,6 +139,10 @@ type EditableDomainDataMetadata struct {
 type DomainData struct {
 	DomainDataMetadata ``
 	Data               io.ReadCloser `json:"-"`
+}
+
+type PostDomainDataResponse struct {
+	Data []DomainDataMetadata `json:"data"`
 }
 
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
@@ -198,14 +207,14 @@ save_manifest_json({},
 }
 
 func UploadJobManifestToDomain(j *job) error {
-	expectedOutputs := []ExpectedOutput{
-		{
-			FilePath: "job_manifest.json",
-			Name:     "refined_manifest",
-			DataType: "refined_manifest_json",
-		},
+	log.Printf("Upload job manifest to domain, for job %s", j.ID)
+	output := ExpectedOutput{
+		FilePath: "job_manifest.json",
+		Name:     "refined_manifest",
+		DataType: "refined_manifest_json",
 	}
-	return UploadOutputsToDomain(j, expectedOutputs)
+
+	return UploadOutputToDomain(j, output)
 }
 
 func UploadRefinedOutputsToDomain(j *job) (int, error) {
@@ -237,53 +246,83 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 		}
 	}
 
-	err := UploadOutputsToDomain(j, expectedOutputs)
-	if err != nil {
-		log.Printf("job %s failed to upload refined outputs to domain: %s", j.ID, err)
+	// Upload manifest using PUT since it already exists from start of the job
+	if err := UploadOutputToDomain(j, expectedOutputs[0]); err != nil {
+		log.Printf("job %s failed to upload refined manifest to domain: %s", j.ID, err)
+		return outputCount, err
 	}
 
-	return outputCount, err
+	if err := UploadOutputsToDomain(j, expectedOutputs[1:]); err != nil {
+		log.Printf("job %s failed to upload refined outputs to domain: %s", j.ID, err)
+		return outputCount, err
+	}
+
+	return outputCount, nil
 }
 
 func UploadOutputsToDomain(j *job, expectedOutputs []ExpectedOutput) error {
+	firstErr := error(nil)
+	for _, output := range expectedOutputs {
+		if err := UploadOutputToDomain(j, output); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+func UploadOutputToDomain(j *job, output ExpectedOutput) error {
 	outputPath := j.JobPath
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 		return err
 	}
 
-	r, w := io.Pipe()
-	mw := multipart.NewWriter(w)
-	go func() {
-		defer w.Close()
-		for _, output := range expectedOutputs {
-			f, err := os.Open(path.Join(outputPath, output.FilePath))
-			if err != nil {
-				log.Print(err)
-				continue
-			}
+	f, err := os.Open(path.Join(outputPath, output.FilePath))
+	if err != nil {
+		log.Printf("job %s failed to open output file %s: %s", j.ID, output.FilePath, err)
+		return err
+	}
+	defer f.Close()
 
-			nameSuffix := j.CreatedAt.Format("2006-01-02_15-04-05")
-			if err := WriteDomainData(mw, &DomainData{
-				DomainDataMetadata: DomainDataMetadata{
-					EditableDomainDataMetadata: EditableDomainDataMetadata{
-						Name:     output.Name + "_" + nameSuffix,
-						DataType: output.DataType,
-					},
-					DomainID: j.DomainID,
-				},
-				Data: f,
-			}); err != nil {
-				log.Print(err)
-			}
-		}
-		mw.Close()
-	}()
+	nameSuffix := j.CreatedAt.Format("2006-01-02_15-04-05")
+	domainData := DomainData{
+		DomainDataMetadata: DomainDataMetadata{
+			EditableDomainDataMetadata: EditableDomainDataMetadata{
+				Name:     output.Name + "_" + nameSuffix,
+				DataType: output.DataType,
+			},
+			DomainID: j.DomainID,
+		},
+		Data: f,
+	}
 
-	req, err := http.NewRequest(http.MethodPost, j.DomainServerURL+"/api/v1/domains/"+j.DomainID+"/data", r)
+	httpMethod := http.MethodPost
+	alreadyUploadedID := j.UploadedDataIDs[output.Name+"."+output.DataType]
+	if alreadyUploadedID != "" {
+		log.Printf("%s.%s already uploaded. Updating it instead.", output.Name, output.DataType)
+		domainData.ID = alreadyUploadedID
+		httpMethod = http.MethodPut
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if err := WriteDomainData(writer, &domainData); err != nil {
+		log.Print(err)
+		return err
+	}
+
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	reqUrl := j.DomainServerURL + "/api/v1/domains/" + j.DomainID + "/data"
+	req, err := http.NewRequest(httpMethod, reqUrl, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+j.AccessToken)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -295,6 +334,18 @@ func UploadOutputsToDomain(j *job, expectedOutputs []ExpectedOutput) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("domain server returned status %d", resp.StatusCode)
 	}
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	log.Printf("Uploaded domain data! response: %s", string(responseBody))
+	var parsedResp PostDomainDataResponse
+	if err := json.Unmarshal(responseBody, &parsedResp); err != nil {
+		return err
+	}
+	log.Printf("Uploaded domain data! parsed response: %+v", parsedResp)
+	j.UploadedDataIDs[output.Name+"."+output.DataType] = parsedResp.Data[0].ID
 	return nil
 }
 
@@ -457,7 +508,6 @@ func ReadDomainDataMetadata(part *multipart.Part) (*DomainDataMetadata, error) {
 			DataType: dispositionParams["data-type"],
 		},
 		DomainID: dispositionParams["domain-id"],
-		Token:    dispositionParams["access-token"],
 	}, nil
 }
 
@@ -526,6 +576,7 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 		Status:          "started",
 		DomainServerURL: domainServerURL,
 		AccessToken:     jobRequest.AccessToken,
+		UploadedDataIDs: map[string]string{},
 	}
 	j.JobPath = path.Join(dirPath, jobRequest.DomainID, jobName)
 
@@ -561,7 +612,7 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 
 func executeJob(j *job) {
 
-	// Write in_progress manifest as soon as job starts.
+	// Write in-progress manifest as soon as job starts.
 	// DMT uses this to show job status to the user.
 	WriteJobManifestFile(j, "processing")
 
