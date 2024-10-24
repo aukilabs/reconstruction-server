@@ -1,5 +1,23 @@
-HOST="provider.hurricane.akash.pub"
-PORT=32717
+#! /bin/bash
+
+SFTP_CONFIG_JSON=".vscode/sftp.json"
+if [ $# -eq 2 ]; then
+    HOST=$1
+    PORT=$2
+    echo "Using provided HOST and PORT:"
+    echo "HOST: $HOST"
+    echo "PORT: $PORT"
+elif [ -f "$SFTP_CONFIG_JSON" ]; then
+    HOST=$(cat $SFTP_CONFIG_JSON | jq -r '.host')
+    PORT=$(cat $SFTP_CONFIG_JSON | jq -r '.port')
+    echo "Using SFTP config from $SFTP_CONFIG_JSON:"
+    echo "HOST: $HOST"
+    echo "PORT: $PORT"
+else
+    echo "Usage: $0 [HOST] [PORT]"
+    exit 1
+fi
+
 API_KEY="kaffekopp123"
 
 # Script to redeploy changes in the go code without redeploying the entire docker image.
