@@ -121,8 +121,9 @@ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDP
 
 COPY utils /app/utils
 RUN chmod 755 /app/utils
-COPY local_main.py global_main.py main.py /app/
+COPY local_main.py global_main.py main.py start_server.sh /app/
 RUN chmod 755 /app/*.py
+RUN chmod 755 /app/start_server.sh
 
 # Run reconstruction server as separate user, not root
 #RUN adduser --disabled-password --gecos "" reconstruction-server
