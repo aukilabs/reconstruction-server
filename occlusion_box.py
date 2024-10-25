@@ -1,8 +1,5 @@
 import open3d as o3d
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation as R
-import random
 import argparse
 import datetime
 import time
