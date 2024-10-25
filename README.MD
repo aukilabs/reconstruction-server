@@ -67,3 +67,11 @@ global_main \
 --add_3dpoints \
 --basic_stitch_only
 ```
+
+## Occlusion box generation
+Modify [default.yaml](/config/occlusion_box/default.yaml) to change source file and output path.
+```
+docker run \
+occlusion_box.py \
+--config ./config/occlusion_box/default.yaml
+```
