@@ -3,6 +3,7 @@ import os
 import collections
 import struct
 import open3d 
+import yaml
 
 
 CameraModel = collections.namedtuple(
@@ -536,3 +537,15 @@ def draw_camera(K, R, t, w, h, scale=1, color=[0.8, 0.2, 0.8]):
 
     # return as list in Open3D format
     return [axis, plane, line_set]
+
+
+def load_yaml(filepath):
+    with open(filepath, 'r') as file:
+        return yaml.safe_load(file)
+
+
+def save_to_yaml(data):
+    filename = os.path.join(data['output_dir'], 'config.yaml')
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, 'w') as yaml_file:
+        yaml.dump(data, yaml_file, default_flow_style=False)
