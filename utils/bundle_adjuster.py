@@ -4,7 +4,7 @@ import numpy as np
 from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle
-from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
+from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction, IntrinsicsPriorCostFunction
 from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction
 
 
@@ -437,6 +437,12 @@ class PyBundleAdjuster(object):
                 self.problem.set_parameter_block_constant(prev_pose.translation)
 
             self.camera_ids.add(image.camera_id)
+
+        # Add intrinsics prior cost function
+        if not self.config.has_constant_cam_intrinsics(camera.camera_id):
+            intrinsics_weight = self.refinement_config.get('intrinsics_prior_weight', 1.0)
+            cost = IntrinsicsPriorCostFunction(camera.params, intrinsics_weight)
+            self.add_residual_block("IntrinsicsPrior", cost, None, [camera.params], image_id)
 
     def add_qr_detections_to_problem(self, reconstruction, detections_per_image_id, qr_world_points_per_image_id=None, debugging=False):
 

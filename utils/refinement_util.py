@@ -241,11 +241,11 @@ def refine_dataset(
         fx, fy, cx, cy, w, h = intrinsics
 
         if fx == fy:
-            model = 'SIMPLE_PINHOLE'
-            params = [fx, cx, cy]
+            model = 'SIMPLE_RADIAL'
+            params = [fx, cx, cy, 0.0]
         else:
-            model = 'PINHOLE'
-            params = [fx, fy, cx, cy]
+            model = 'RADIAL'
+            params = [fx, fy, cx, cy, 0.0]
         cam = pycolmap.Camera(
             model=model, width=w, height=h, params=params, camera_id=camera_id
         )

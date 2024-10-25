@@ -153,6 +153,15 @@ def run_triangulation(
             print(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
 
+            # After improving triangulation, refine intrinsics too for the last rounds.
+            # This seems to improve the accuracy since ARKit intrinsics are slightly off.
+            # Up to around 1 degree wrong field of view and slightly wrong on the distortion too,
+            # based on experimental results.
+            # The difference is more noticable on areas with fewer images covering.
+            # Can see for example some walls leaning a bit into the room sometimes without this fix.
+            ba_options.refine_extra_params = True
+            ba_options.refine_focal_length = True
+
             # make sure there are at least two more BA iterations after retriangulation
             # (to finish loop closure + filter outliers)
             additional_iterations = max(0, 2 - ba_iterations_remaining)
