@@ -54,7 +54,7 @@ func main() {
 		if jobInProgress {
 			jobMutex.Unlock()
 			log.Println("Job already in progress, rejecting incoming job request.")
-			http.Error(w, "Reconstruction server is busy processing another job", http.StatusConflict)
+			http.Error(w, "Reconstruction server is busy processing another job", http.StatusServiceUnavailable)
 			return
 		}
 		jobInProgress = true
