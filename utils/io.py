@@ -4,7 +4,8 @@ import collections
 import struct
 import open3d 
 import yaml
-
+import trimesh
+import uuid
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"]
@@ -549,3 +550,35 @@ def save_to_yaml(data):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, 'w') as yaml_file:
         yaml.dump(data, yaml_file, default_flow_style=False)
+
+def save_meshes_obj(meshes, filename):
+    # Initialize lists to accumulate lines and vertex offset for OBJ indexing
+    lines = []
+    vertex_offset = 0
+    lines.append(f'g ParentGroup')
+
+    for mesh in meshes:
+        trimesh_obj = trimesh.Trimesh(np.asarray(mesh.vertices), np.asarray(mesh.triangles))
+        mesh_obj = trimesh.exchange.obj.export_obj(trimesh_obj)
+            # Split lines and add a group name at the top
+        mesh_lines = mesh_obj.splitlines()
+        
+        lines.append(f'o {str(uuid.uuid4())}:0')
+        # Update vertex indices to account for previous vertices
+        for i, line in enumerate(mesh_lines):
+            if line.startswith('v '):
+                lines.append(line)
+            elif line.startswith('f '):  # Face definitions need updated indices
+                parts = line.split()
+                parts[1:] = [str(int(index) + vertex_offset) for index in parts[1:]]
+                mesh_lines[i] = ' '.join(parts)
+                lines.append(mesh_lines[i])
+        
+        # Append updated lines to main list and update vertex offset
+        # lines.extend(mesh_lines)
+        vertex_offset += len([line for line in mesh_lines if line.startswith('v ')])
+
+    # Save the combined lines to an OBJ file
+    with open(filename, 'w') as f:
+        f.write('\n'.join(lines))
+    return

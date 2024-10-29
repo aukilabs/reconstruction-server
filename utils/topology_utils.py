@@ -7,9 +7,6 @@ from collections import defaultdict
 import random
 import matplotlib.pyplot as plt
 import alphashape
-import trimesh
-import uuid
-from pathlib import Path
 
 from shapely.geometry import Polygon, GeometryCollection
 from scipy.spatial import ConvexHull

@@ -7,7 +7,7 @@ import os
 import yaml
 
 
-from utils.io import Model, load_yaml, save_to_yaml
+from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
 from utils.topology_utils import (
     voxelise, 
     floor_removal, 
@@ -211,6 +211,9 @@ def main(config):
     result['Number of Points'] = num_points
     with open(os.path.join(config['output_dir'], 'result.yaml'), 'w') as yaml_file:
         yaml.dump(result, yaml_file, default_flow_style=False)
+
+    # Save Mesh
+    save_meshes_obj(meshes, os.path.join(config['output_dir'], 'meshes.obj'))
 
     # If Display
     if config['display']:
