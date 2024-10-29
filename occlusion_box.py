@@ -8,7 +8,7 @@ import yaml
 
 
 from utils.io import Model, load_yaml, save_to_yaml
-from utils.geometry_utils import (
+from utils.topology_utils import (
     voxelise, 
     floor_removal, 
     group_points_by_xy, 
@@ -126,6 +126,7 @@ def main(config):
     # Step 5: Create bounding boxes for each cluster and set them to black
     print("[Step 5] Extract Occlusion Volume")
     geo = []
+    meshes = []
 
     if config['occlusion_method'] not in SUPPORTED_OCCLUSION_METHOD:
         print(f"{config['occlusion_method']} not supported, switching to default aabb")
@@ -145,20 +146,32 @@ def main(config):
                 bbox.color = [0, 0, 0]  # Set bounding box color to black
                 geo.append(bbox)
 
+                min_bound = bbox.min_bound
+                max_bound = bbox.max_bound
+                box_size = max_bound - min_bound
+                box_mesh = o3d.geometry.TriangleMesh.create_box(
+                    width=box_size[0],
+                    height=box_size[1],
+                    depth=box_size[2]
+                )
+                meshes.append(box_mesh)
+
             elif config['occlusion_method'] == 'alphashape':
                 # Alphashape
                 success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2])
                 if success:
-                    occ_pcd, occ_box = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
+                    occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
                     geo.append(occ_pcd)
+                    meshes.append(mesh)
             elif config['occlusion_method'] == 'convexhull':
                  # Convexhull
                 success, qpoints = find_best_fit_convexhull(cluster_np_points[:, :2])
                 if success:
-                    occ_pcd, occ_box = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
+                    occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
                     geo.append(occ_pcd)
+                    meshes.append(mesh)
 
     time5 = time.time()
     time_spent["Occlusion Volume"] = time5 - time4
