@@ -479,15 +479,20 @@ def pycolmap_to_batch_matrix(
     return points3D, extrinsics, intrinsics, extra_params
 
 
-def setup_logger(name, log_file, level=logging.INFO):
+def setup_logger(name, log_file, console_out=True, level=logging.INFO):
     """To setup as many loggers as you want"""
-
-    handler = logging.FileHandler(log_file)   
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')     
-    handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.addHandler(handler)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')   
+
+    file_handler = logging.FileHandler(log_file)     
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    if console_out:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger

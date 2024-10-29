@@ -4,21 +4,21 @@ import argparse
 
 from local_main import main as local_main
 from global_main import main as global_main
-from utils.data_utils import save_failed_manifest_json
+from utils.data_utils import save_failed_manifest_json, setup_logger
 
-def local_main_wrapper(args):
+def local_main_wrapper(args, logger):
     scans = args.scans
     job_root_path = args.job_root_path
     output_path = args.output_path
-    print("--------------------------------")
-    print(f"Running local refinement on {len(scans)} scans")
-    print(f"Job root path: {job_root_path}")
-    print(f"Output path: {output_path}")
-    print(f"Scans: {scans}")
-    print("--------------------------------")
+    logger.info("--------------------------------")
+    logger.info(f"Running local refinement on {len(scans)} scans")
+    logger.info(f"Job root path: {job_root_path}")
+    logger.info(f"Output path: {output_path}")
+    logger.info(f"Scans: {scans}")
+    logger.info("--------------------------------")
 
     for scan in scans:
-        print(f"Refining scan {scan}...")
+        logger.info(f"Refining scan {scan}...")
         local_args = argparse.Namespace(
             dataset_path=Path(job_root_path) / 'datasets' / scan,
             output_path=args.output_path,
@@ -26,13 +26,13 @@ def local_main_wrapper(args):
             remove_outputs=False
         )
         local_main(local_args)
-        print(f"Done refining scan {scan}")
+        logger.info(f"Done refining scan {scan}")
 
 
-def global_main_wrapper(args):
+def global_main_wrapper(args, logger):
     scans = args.scans
-    print("--------------------------------")
-    print(f"Running global refinement with {len(scans)} scans")
+    logger.info("--------------------------------")
+    logger.info(f"Running global refinement with {len(scans)} scans")
 
     global_args = argparse.Namespace(
         data_dir=Path(args.job_root_path) / "datasets",
@@ -44,14 +44,14 @@ def global_main_wrapper(args):
         basic_stitch_only=True
     )
     global_main(global_args)
-    print("Done with global refinement")
-    print("--------------------------------")
+    logger.info("Done with global refinement")
+    logger.info("--------------------------------")
 
-def local_and_global_main_wrapper(args):
+def local_and_global_main_wrapper(args, logger):
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
-    local_main_wrapper(local_args)
-    global_main_wrapper(args)
+    local_main_wrapper(local_args, logger)
+    global_main_wrapper(args, logger)
 
     """
     # output stitched point cloud
@@ -69,13 +69,15 @@ def local_and_global_main_wrapper(args):
     
     ply_output_path = Path(args.job_root_path) / "refined" / "global" / "RefinedPointCloud.ply"
     if ply_output_path.exists():
-        print(f"Refined point cloud created! {ply_output_path}")
+        logger.info(f"Refined point cloud created! {ply_output_path}")
     else:
-        print(f"Point cloud wasn't created, expected at: {ply_output_path}")
+        logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
-def main(args):
+def main(args, logger):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
+
+    logger = setup_logger('main', args.job_root_path / 'log.txt')
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     args.scans = []
@@ -87,19 +89,19 @@ def main(args):
         if args.mode == "local_refinement":
             if not args.output_path:
                 args.output_path = args.job_root_path / "refined" / "local"
-            local_main_wrapper(args)
+            local_main_wrapper(args, logger)
         elif args.mode == "global_refinement":
             if not args.output_path:
                 args.output_path = args.job_root_path / "refined" / "global"
-            global_main_wrapper(args)
+            global_main_wrapper(args, logger)
         elif args.mode == "local_and_global_refinement":
             if not args.output_path:
                 args.output_path = args.job_root_path / "refined" / "global"
-            local_and_global_main_wrapper(args)
+            local_and_global_main_wrapper(args, logger)
     except Exception as e:
-        print(f"Refinement failed with exception: {e}")
+        logger.error(f"Refinement failed with exception: {e}")
         manifest_out_path =  args.output_path / "refined_manifest.json"
-        print(f"Saving 'failed' manifest to: {manifest_out_path}")
+        logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
         save_failed_manifest_json(manifest_out_path, str(e))
         raise e
 
