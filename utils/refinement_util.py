@@ -82,7 +82,7 @@ def refine_dataset(
         },
     }
     """
-    logger.info("Feature conf: ", feature_conf)
+    logger.info(f"Feature conf: {feature_conf}")
     matcher_conf = match_features.confs["superpoint+lightglue"]
     #matcher_conf = match_features.confs["disk+lightglue"]
 
@@ -95,10 +95,10 @@ def refine_dataset(
 
 
     frames_mp4 = dataset / 'Frames.mp4'
-    logger.info("Looking for mp4 encoded frames: ", frames_mp4)
+    logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
     use_frames_from_video = False
     if frames_mp4.exists():
-        logger.info("Frames mp4 found, unpacking into", images)
+        logger.info(f"Frames mp4 found, unpacking into {images}")
         if not images.exists():
             images.mkdir()
         mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
@@ -336,8 +336,8 @@ def refine_dataset(
 
     detections_per_qr = {}
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
-    logger.info("valid timestamps: ", len(valid_timestamps))
-    logger.info("count of qr detections: ", len(qr_detections_per_timestamp))
+    logger.info(f"valid timestamps: {len(valid_timestamps)}")
+    logger.info(f"count of qr detections: {len(qr_detections_per_timestamp)}")
     for timestamp, detection in qr_detections_per_timestamp.items():
         id = detection["short_id"]
 
