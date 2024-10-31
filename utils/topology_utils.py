@@ -204,18 +204,18 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
         for geom in alpha_shape.geoms:
             surfaces.append(geom)
 
-    # Bottom face triangles
+    # Bottom/top face triangles
     top_offset = len(quad_points)
     for simplex in tri.simplices:
         triangle = Polygon(quad_points[simplex])
         if any(surface.contains(triangle.centroid) for surface in surfaces):
             triangles.append([simplex[0], simplex[1], simplex[2]])
-            triangles.append([simplex[0] + top_offset, simplex[1] + top_offset, simplex[2] + top_offset])
+            triangles.append([simplex[0] + top_offset, simplex[2] + top_offset, simplex[1] + top_offset])
 
     # Side Triangles
     for i in range(num_points):
-        triangles.append([i, (i + 1) % num_points, (i + 1) % num_points + num_points])
-        triangles.append([i, (i + 1) % num_points + num_points, i + num_points])
+        triangles.append([i, (i + 1) % num_points + num_points], (i + 1) % num_points)
+        triangles.append([i, i + num_points, (i + 1) % num_points + num_points])
 
     # Create the mesh
     mesh = o3d.geometry.TriangleMesh()
