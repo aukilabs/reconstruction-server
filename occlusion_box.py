@@ -213,6 +213,9 @@ def main(config):
         yaml.dump(result, yaml_file, default_flow_style=False)
 
     # Save Mesh
+    colmap_to_opengl_rot_mat = pcd.get_rotation_matrix_from_axis_angle([np.pi / 2, 0, 0])  # 90 degrees = π/2 radians
+    for mesh in meshes:
+        mesh = mesh.rotate(colmap_to_opengl_rot_mat, center=(0, 0, 0))
     save_meshes_obj(meshes, os.path.join(config['output_dir'], 'meshes.obj'))
 
     # If Display
