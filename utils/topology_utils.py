@@ -214,7 +214,7 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
 
     # Side Triangles
     for i in range(num_points):
-        triangles.append([i, (i + 1) % num_points + num_points], (i + 1) % num_points)
+        triangles.append([i, (i + 1) % num_points + num_points, (i + 1) % num_points])
         triangles.append([i, i + num_points, (i + 1) % num_points + num_points])
 
     # Create the mesh
