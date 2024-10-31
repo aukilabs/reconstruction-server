@@ -21,7 +21,6 @@ def run_triangulation(
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger("logger")
-
     mapper_options = pycolmap.IncrementalMapperOptions(options)
 
     database = pycolmap.Database(database_path)
@@ -30,8 +29,15 @@ def run_triangulation(
     ignore_watermarks = True
     image_names = set()
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+    #reconstruction = deepcopy(reference_model)
 
-    reconstruction = deepcopy(reference_model)
+    reconstruction = pycolmap.Reconstruction()
+    for img in reference_model.images.values():
+        if database_cache.exists_image(img.image_id):
+            reconstruction.add_image(img)
+    for cam in reference_model.cameras.values():
+        if database_cache.exists_camera(cam.camera_id):
+            reconstruction.add_camera(cam)
 
     clear_points = True
     if clear_points:
@@ -60,10 +66,12 @@ def run_triangulation(
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 150
-    ba_options.solver_options.gradient_tolerance = 1.0
+    ba_options.solver_options.max_num_iterations = 100
+    #ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
+    ba_options.solver_options.num_threads = 16
+    #ba_options.min_num_residuals_for_multi_threading = 1000000000 # Put very high to avoid threading. Gets stuck on cloud (both on Akash and google colab, not sure why)
 
     num_ba_iterations_total = 5
 
@@ -112,6 +120,7 @@ def run_triangulation(
 
         summary = pyceres.SolverSummary()
         pyceres.solve(solver_options, bundle_adjuster.problem, summary)
+        logger.info("Solved!")
 
         final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
@@ -143,6 +152,15 @@ def run_triangulation(
             num_retriangulated = mapper.retriangulate(tri_options)
             logger.info(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
+
+            # After improving triangulation, refine intrinsics too for the last rounds.
+            # This seems to improve the accuracy since ARKit intrinsics are slightly off.
+            # Up to around 1 degree wrong field of view and slightly wrong on the distortion too,
+            # based on experimental results.
+            # The difference is more noticable on areas with fewer images covering.
+            # Can see for example some walls leaning a bit into the room sometimes without this fix.
+            ba_options.refine_extra_params = True
+            ba_options.refine_focal_length = True
 
             # make sure there are at least two more BA iterations after retriangulation
             # (to finish loop closure + filter outliers)

@@ -25,8 +25,9 @@ docker run \
 --gpus all \
 --shm-size=512m \
 -v /path/to/jobs/:/path/to/jobs/ \
+--entrypoint /usr/bin/python3 \
 -it auki-archive:latest \
-local_main \
+local_main.py \
 --dataset_path /path/to/jobs/my_domain_job/datasets/dmt_scan_2024-06-26_10-29-57 \
 --output_path /path/to/jobs/my_domain_job/refined/local \
 --every_nth_image 2 \
@@ -44,8 +45,9 @@ bash ./scripts/local_run_all.sh
 docker run \
 --gpus all \
 -v /path/to/jobs/:/path/to/jobs/ \
+--entrypoint /usr/bin/python3 \
 -it auki-archive:latest \
-global_main \
+global_main.py \
 --data_dir ./datasets \
 --all_poses \
 --all_observations \
@@ -58,8 +60,9 @@ global_main \
 docker run \
 --gpus all \
 -v /path/to/jobs/:/path/to/jobs/ \
+--entrypoint /usr/bin/python3 \
 -it auki-archive:latest \
-global_main \
+global_main.py \
 --data_dir ./datasets \
 --all_poses \
 --all_observations \

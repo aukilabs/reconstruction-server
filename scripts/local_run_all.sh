@@ -18,8 +18,9 @@ for dir in $SUB_DIRS; do
         --shm-size=512m \
         -v /path/to/jobs/:/path/to/jobs/ \
         -it \
+        --entrypoint /usr/bin/python3 \
         auki-archive:latest \
-        local_main \
+        local_main.py \
         --dataset_path "$dir" \
         --output_path /path/to/jobs/my_domain_job/refined/local/ \
         --every_nth_image 2 

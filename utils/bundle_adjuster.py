@@ -4,7 +4,7 @@ import numpy as np
 from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle
-from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
+from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction, IntrinsicsPriorCostFunction
 from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction
 
 
@@ -77,34 +77,34 @@ class PyBundleAdjuster(object):
 
                             qr_detections_by_image_id[image_id].append(detection)
 
-                            if image_id not in qr_world_points_per_image_id.keys():
-                                qr_world_points_per_image_id[image_id] = []
+                            #if image_id not in qr_world_points_per_image_id.keys():
+                            #    qr_world_points_per_image_id[image_id] = []
 
-                            qr_center_imgspace = camera.img_from_cam(qr_center_camspace)
+                            #qr_center_imgspace = camera.img_from_cam(qr_center_camspace)
 
                             # Don't do world point distance scaling for visually unreliable images
-                            if image.camera_id not in self.featureless_camera_ids:
-                                pixel_radius = 70 # TODO calculate this better, or maybe check in world-space instead
-
-                                # Find list of 3D feature points on the floor around the QR code
-                                for point2D in image.points2D:
-                                    if not point2D.has_point3D():
-                                        continue
-
-                                    pixel_offset = norm(point2D.xy - qr_center_imgspace)
-                                    if pixel_offset > pixel_radius:
-                                        continue
-
-                                    point3D = reconstruction.points3D[point2D.point3D_id]
-                                    qr_world_points_per_image_id[image_id].append(point3D)
-
-                            if debug_this_qr:
-                                print(f"QR {qr_id} in",
-                                    f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
-                                    qr_center_imgspace, ", Cam-space center: ", qr_center_camspace,
-                                    f", {len(qr_world_points_per_image_id[image_id])} 3D features with height deviation",
-                                    f"{np.std([point.xyz[0] for point in qr_world_points_per_image_id[image_id]]):.6f}",
-                                    ", pose: ", detection)
+                            #if image.camera_id not in self.featureless_camera_ids:
+                            #    pixel_radius = 70 # TODO calculate this better, or maybe check in world-space instead
+                            #
+                            #    # Find list of 3D feature points on the floor around the QR code
+                            #    for point2D in image.points2D:
+                            #        if not point2D.has_point3D():
+                            #            continue
+                            #
+                            #        pixel_offset = norm(point2D.xy - qr_center_imgspace)
+                            #        if pixel_offset > pixel_radius:
+                            #            continue
+                            #
+                            #        point3D = reconstruction.points3D[point2D.point3D_id]
+                            #        qr_world_points_per_image_id[image_id].append(point3D)
+                            #
+                            #if debug_this_qr:
+                            #    print(f"QR {qr_id} in",
+                            #        f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
+                            #        qr_center_imgspace, ", Cam-space center: ", qr_center_camspace,
+                            #        f", {len(qr_world_points_per_image_id[image_id])} 3D features with height deviation",
+                            #        f"{np.std([point.xyz[0] for point in qr_world_points_per_image_id[image_id]]):.6f}",
+                            #        ", pose: ", detection)
 
 
                     added = self.add_qr_detections_to_problem_upd(reconstruction,
@@ -321,15 +321,22 @@ class PyBundleAdjuster(object):
 
         constant_cam_pose = self.is_constant_cam_pose(image.image_id)
 
+        min_track_length = self.refinement_config.get('min_point3d_track_length', None)
+        if min_track_length is None or min_track_length <= 2:
+            min_track_length = 2
+
         num_observations = 0
         for point2D in image.points2D:
             if not point2D.has_point3D():
                 continue
+            point3D = reconstruction.points3D[point2D.point3D_id]
+            if point3D.track.length() < min_track_length:
+                continue
+
             num_observations += 1
             if point2D.point3D_id not in self.point3D_num_observations:
                 self.point3D_num_observations[point2D.point3D_id] = 0
             self.point3D_num_observations[point2D.point3D_id] += 1
-            point3D = reconstruction.points3D[point2D.point3D_id]
             assert point3D.track.length() > 1
             if constant_cam_pose:
                 cost = pycolmap.cost_functions.ReprojErrorCost(
@@ -430,6 +437,12 @@ class PyBundleAdjuster(object):
                 self.problem.set_parameter_block_constant(prev_pose.translation)
 
             self.camera_ids.add(image.camera_id)
+
+        # Add intrinsics prior cost function
+        if not self.config.has_constant_cam_intrinsics(camera.camera_id):
+            intrinsics_weight = self.refinement_config.get('intrinsics_prior_weight', 1.0)
+            cost = IntrinsicsPriorCostFunction(camera.params, intrinsics_weight)
+            self.add_residual_block("IntrinsicsPrior", cost, None, [camera.params], image_id)
 
     def add_qr_detections_to_problem(self, reconstruction, detections_per_image_id, qr_world_points_per_image_id=None, debugging=False):
 
@@ -586,7 +599,8 @@ class PyBundleAdjuster(object):
             if not self.options.refine_principal_point:
                 const_camera_params.extend(camera.principal_point_idxs())
             if not self.options.refine_extra_params:
-                const_camera_params.extend(camera.extra_point_idxs())
+                if hasattr(camera, 'extra_params_idxs'):
+                    const_camera_params.extend(camera.extra_params_idxs())
             if len(const_camera_params) > 0 and camera_id not in self.featureless_camera_ids:
                 self.problem.set_manifold(
                     camera.params,

@@ -9,7 +9,6 @@ import numpy as np
 from numpy.linalg import norm
 import logging
 
-
 from evo.main_ape import ape as evo_ape
 from evo.core.trajectory import PosePath3D
 from evo.core.trajectory import geometry
@@ -19,11 +18,15 @@ import matplotlib.pyplot as plt
 
 from utils.data_utils import (
     load_qr_detections_csv, 
-    mean_pose, 
+    mean_pose,
+    rectify_floor_portal,
+    mp4_to_frames,
     flatten_quaternion, 
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets, 
-    get_world_space_qr_codes
+    get_world_space_qr_codes,
+    save_manifest_json,
+    export_rec_as_ply
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 
@@ -61,7 +64,25 @@ def load_partial(
     experiment_name = unzip_folder.name
 
     dataset = unzip_folder # TODO will remove this as we can use scan_folder_path all along
+
     images = unzip_folder / 'Frames/'
+    
+    frames_mp4 = unzip_folder / 'Frames.mp4'
+    print("Looking for mp4 encoded frames: ", frames_mp4)
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        print("Frames mp4 found, unpacking into", images)
+        if not images.exists():
+            images.mkdir()
+
+        matching_unpacked_count = len(list(images.glob(f"{experiment_name}_*.jpg")))
+        if matching_unpacked_count == 0:
+            mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        else:
+            print(f"Frames folder contains {matching_unpacked_count} matching jpg files already")
+            print("Already unpacked! Skipping mp4 to frames (to save time)")
+        use_frames_from_video = True
+
 
     outputs = Path(os.path.join(dataset_dir.parent, "refined/global"))
     if dataset_group is not None:
@@ -99,10 +120,15 @@ def load_partial(
     # Read and process the CSV file
     timestamp_per_image_chunk = {}
     with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
         csv_reader = csv.reader(csvfile)
         for row in csv_reader:
             timestamp = round(float(row[0]) * 1e9) # s to ns
-            filename = row[1]
+            if use_frames_from_video:
+                filename = f"{experiment_name}_{frame_index:06d}.jpg" # Match with how frames are unpacked to images, by mp4_to_frames
+            else:
+                filename = row[1]
+            frame_index += 1
 
             timestamp_per_image_chunk[filename] = timestamp
     print(len(timestamp_per_image_chunk), "frame timestamps loaded")
@@ -157,8 +183,12 @@ def load_partial(
 
     #--------------------
     # QR detections
-    qr_detections_csv_path = str(dataset / "Observations.csv")
-
+    qr_detections_csv_path = dataset / "PortalDetections.csv"
+    if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
+        qr_detections_csv_path = dataset / "Observations.csv"
+        print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
+    qr_detections_csv_path = str(qr_detections_csv_path)
+    
     print("Loading QR detections from", qr_detections_csv_path, "...")
 
     # Read and process the CSV file
@@ -232,7 +262,7 @@ def load_partial(
 
     is_first_chunk = len(placed_portal) == 0
     print(f"Portals already placed: {len(placed_portal)}.",
-          "FIRST CHUNK -> put origin portal" if is_first_chunk else "NOT FIRST -> align based on ovelapping portals.")
+          "FIRST CHUNK -> put origin portal" if is_first_chunk else "NOT FIRST -> align based on overlapping portals.")
 
     if not has_overlap and not is_first_chunk:
         raise NoOverlapException  # handled outside, to retry again after other chunks are added
@@ -263,15 +293,19 @@ def load_partial(
         print(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
         print(alignment_transform)
 
+    if alignment_transform is not None:
+        # Align around up vector only, since ARKit gives already a good gravity vector
+        alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
 
     for qr_id, pose in this_chunk_mean_qr_poses.items():
         if alignment_transform is not None:
             pose = alignment_transform * pose
-        placed_portal[qr_id] = pose
+        placed_portal[qr_id] = rectify_floor_portal(pose)
 
     if alignment_transform is not None:
         for timestamp, detection in qr_detections_per_timestamp.items():
             detection["pose"] = alignment_transform * detection["pose"]
+            detection["pose"] = rectify_floor_portal(detection["pose"])
 
 
     #----------------------
@@ -321,7 +355,6 @@ def load_partial(
             })
 
     image_timestamps_with_detection = [mapping["image_timestamp"] for mapping in timestamp_mappings_image_detection]
-    print("image_timestamps_with_detection: ", image_timestamps_with_detection)
 
     image_name_per_timestamp = {timestamp: image_name for image_name, timestamp in timestamp_per_image.items()}
     image_per_timestamp = {}
@@ -347,7 +380,6 @@ def load_partial(
         image_id = next_image_id
         camera_id = image_id # always 1-to-1 for us
 
-        print("Camera id: ", camera_id)
 
         if loaded_rec:
             matching_cams = [c for c in loaded_rec.cameras.values() if loaded_rec.images[c.camera_id].name == image_filename]
@@ -373,11 +405,11 @@ def load_partial(
             fx, fy, cx, cy, w, h = intrinsics
 
             if fx == fy: # TODO What about simple radial?
-                model = 'SIMPLE_PINHOLE'
-                params = [fx, cx, cy]
+                model = 'SIMPLE_RADIAL'
+                params = [fx, cx, cy, 0.0]
             else:
-                model = 'PINHOLE'
-                params = [fx, fy, cx, cy]
+                model = 'RADIAL'
+                params = [fx, fy, cx, cy, 0.0]
 
             cam = pycolmap.Camera(model=model, width=w, height=h, params=params, camera_id=camera_id)
 
@@ -395,7 +427,7 @@ def load_partial(
 
         cam_from_world = cam_to_world.inverse() # TODO tgus should be rename to world_to_cam?
 
-        print(f"{timestampNs} @ Cam {camera_id}: {cam.width}x{cam.height}, {cam.model} params {cam.params} at pos=({cam_to_world.translation}) rot=({cam_to_world.rotation.quat})")
+        # print(f"{timestampNs} @ Cam {camera_id}: {cam.width}x{cam.height}, {cam.model} params {cam.params} at pos=({cam_to_world.translation}) rot=({cam_to_world.rotation.quat})")
 
         arkit_world_from_cam_transform = arkit_world_from_cam(timestampNs)
         if alignment_transform is not None:
@@ -704,6 +736,8 @@ def stitching_helper(
                     logger.info(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
                     with zipfile.ZipFile(dataset_path, 'r') as zip_ref:
                         zip_ref.extractall(dataset_dir)
+        else:
+            unzip_folder = dataset_path
 
     
         refined_portals_csv = None
@@ -756,20 +790,20 @@ def stitching_helper(
             # If the dataset didn't have any overlap, add back to queue and retry again later,
             # since it may overlap with other chunks which have not yet been added.
             datasets_to_align.append(dataset_path)
-            logger.info(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
+            logger.warn(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
 
             # However, if all chunks in the queue have failed, it means none of them can be aligned
             consecutive_alignment_fails += 1
-            logger.info(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
+            logger.warn(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
             if consecutive_alignment_fails >= len(datasets_to_align):
                 err = "One or more chunks failed to align since none of them overlap with the already placed chunks."
-                logger.info(f"ERROR! {err}")
-                logger.info(f"{len(datasets_already_aligned)} already aligned chunks:")
-                logger.info('\n'.join(str(path) for path in datasets_already_aligned))
-                logger.info(f"{len(datasets_to_align)} remaining chunks:")
-                logger.info('\n'.join(str(path) for path in datasets_to_align))
-                logger.info(f"{len(placed_portal)} QR codes already placed:")
-                logger.info('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
+                logger.error(f"ERROR! {err}")
+                logger.error(f"{len(datasets_already_aligned)} already aligned chunks:")
+                logger.error('\n'.join(str(path) for path in datasets_already_aligned))
+                logger.error(f"{len(datasets_to_align)} remaining chunks:")
+                logger.error('\n'.join(str(path) for path in datasets_to_align))
+                logger.error(f"{len(placed_portal)} QR codes already placed:")
+                logger.error('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
                 #raise NoOverlapException(err)
                 break
 
@@ -783,55 +817,75 @@ def stitching_helper(
         rmse_dev = np.sqrt(np.mean(np.power(deviations_dist, 2)))
         return min_dev, avg_dev, med_dev, max_dev, rmse_dev
 
-    unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
+    basic_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
-    logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (basic stitch):")
-    logger.info('========================================================================')
-    unstitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
-    for qr_id, pose in unstitched_mean_qr_poses.items():
-        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
-        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+    print('========================================================================')
+    print("ALL DETECTIONS (basic stitch):")
+    print('========================================================================')
+    basic_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in basic_stitch_qr_detections.items()}
+    for qr_id, pose in basic_stitch_mean_qr_poses.items():
+        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(basic_stitch_qr_detections[qr_id])
+        print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
 
+    if with_3dpoints:
+        basic_stitch_ply_path = refined_group_dir / 'global' / "BasicStitchPointCloud.ply"
+        export_rec_as_ply(combined_rec, basic_stitch_ply_path)
+
+
+    ####################
+    # Optimize stitch!
+    ####################
     align_reconstruction_chunks(combined_rec, chunks_image_ids, detections_per_qr, image_ids_per_qr, with_scale=False)
 
-    unstitched_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
+    optimized_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
     logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (se3 opt stitch):")
+    logger.info("ALL DETECTIONS (optimized stitch):")
     logger.info('========================================================================')
-    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unstitched_qr_detections.items()}
-    for qr_id, pose in stitched_mean_qr_poses.items():
-        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(unstitched_qr_detections[qr_id])
+    optimized_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in optimized_stitch_qr_detections.items()}
+    for qr_id, pose in optimized_stitch_mean_qr_poses.items():
+        min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
         logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
+    optimized_stitch_ply_path = refined_group_dir / 'global' / "OptimizedStitchPointCloud.ply"
+    refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
+
     if with_3dpoints:
-        # unrefined_sfm_dir = dataset_dir / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
-        unrefined_sfm_dir = refined_group_dir / 'global' / 'outputs' / (dataset_group if dataset_group is not None else '') / 'unrefined_sfm_combined'
-        Path.mkdir(unrefined_sfm_dir, parents=True, exist_ok=True)
-        combined_rec.write(unrefined_sfm_dir)
-        logger.info(f'...Saved basic stitch results to {unrefined_sfm_dir}')
+        optimized_stitch_sfm = refined_group_dir / 'global' / 'optimized_stitch_sfm'
+        logger.info(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
+        Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
+        combined_rec.write(optimized_stitch_sfm)
+        export_rec_as_ply(combined_rec, optimized_stitch_ply_path)
 
     if basic_stitch_only:
-        logger.info("Basic stitch only!")
+        logger.info("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
         if truth_portal_poses:
-            compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+            compare_portals(basic_stitch_mean_qr_poses, optimized_stitch_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
         logger.info('Finished Global Merge!')
         logger.info('========================================================================')
         logger.info('')
         logger.info('========================================================================')
 
+        if with_3dpoints:
+            logger.info(f"Running with 'basic stitch only' mode. Copy stitched point cloud to use as refined.")
+            logger.info(f"Copying PLY from {optimized_stitch_ply_path} to {refined_ply_path}")
+            shutil.copy(optimized_stitch_ply_path, refined_ply_path)
+
+        manifest_out_path = output_path / 'refined_manifest.json'
+        logger.info(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
+        save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+
         return (
-            combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
-            combined_rec, unstitched_qr_detections, stitched_mean_qr_poses,
+            combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
+            combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
             detections_per_qr, image_ids_per_qr
         )
 
     sorted_image_ids = list(combined_rec.images.keys())
     sorted_image_ids.sort()
 
-    stitched_rec, stitched_qr_detections = run_stitching(
+    bundle_adjusted_rec, bundle_adjusted_qr_detections = run_stitching(
         detections_per_qr,
         image_ids_per_qr,
         timestamp_per_image,
@@ -842,16 +896,28 @@ def stitching_helper(
     )
 
     logger.info('========================================================================')
-    logger.info("ALL DETECTIONS (bundle adjusted):")
+    logger.info('ALL DETECTIONS (bundle adjusted):')
     logger.info('========================================================================')
-    stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items()}
-    for qr_id, pose in stitched_mean_qr_poses.items():
-        deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
+    bundle_adjusted_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in bundle_adjusted_qr_detections.items()}
+    for qr_id, pose in bundle_adjusted_mean_qr_poses.items():
+        deviation = np.std([det.translation for det in bundle_adjusted_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
         logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
 
+
+    manifest_out_path = output_path / 'refined_manifest.json'
+    logger.info(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
+    save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+
+    if with_3dpoints:
+        refined_sfm_dir = output_path / "refined_sfm_combined"
+        logger.info(f"Saving refined sfm to: {refined_sfm_dir}")
+        Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
+        bundle_adjusted_rec.write(refined_sfm_dir)
+        export_rec_as_ply(bundle_adjusted_rec, refined_ply_path)
+
     if truth_portal_poses:
-        compare_portals(unstitched_mean_qr_poses, stitched_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+        compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
     logger.info('========================================================================')
     logger.info('Finished Global refinement!')
@@ -860,7 +926,7 @@ def stitching_helper(
     logger.info('========================================================================')
 
     return (
-        combined_rec, unstitched_qr_detections, unstitched_mean_qr_poses,
-        stitched_rec, stitched_qr_detections, stitched_mean_qr_poses,
+        combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
+        bundle_adjusted_rec, bundle_adjusted_qr_detections, bundle_adjusted_mean_qr_poses,
         detections_per_qr, image_ids_per_qr
     )
