@@ -700,7 +700,7 @@ def stitching_helper(
 
     # Creating an object
     logger = logging.getLogger()
-    print(f'Working on {str(parent_dir.name)}')
+    logger.info(f'Working on {str(parent_dir.name)}')
 
 
     # init
@@ -733,7 +733,7 @@ def stitching_helper(
         if dataset_path.suffix.lower() == ".zip":
                 unzip_folder = Path(os.path.join(dataset_dir, scan_name))
                 if not unzip_folder.exists():
-                    print(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
+                    logger.info(f"{unzip_folder} not existed... Unzipping dataset: {dataset_path}")
                     with zipfile.ZipFile(dataset_path, 'r') as zip_ref:
                         zip_ref.extractall(dataset_dir)
         else:
@@ -744,19 +744,19 @@ def stitching_helper(
         partial_rec_dir = None
 
         if use_refined_outputs:
-            print("Looking for local refined outputs")
+            logger.info("Looking for local refined outputs")
             refined_scan_dir = refined_group_dir / "local" / scan_name
             refined_scan_path = refined_scan_dir / "reconstruction_refined_x1.zip"
             if refined_scan_path.exists():
-                print(f"Found {str(refined_scan_path)}")
+                logger.info(f"Found {str(refined_scan_path)}")
                 partial_rec_dir = Path(f"/content/partial_rec/{scan_name}")
                 with zipfile.ZipFile(refined_scan_path, 'r') as zip_ref:
                     zip_ref.extractall(partial_rec_dir)
             else:
-                print(f"Found {str(refined_scan_dir)}")
+                logger.info(f"Found {str(refined_scan_dir)}")
                 partial_rec_dir = refined_scan_dir / 'sfm'
 
-        print(f"Loading partial scan: {unzip_folder}")
+        logger.info(f"Loading partial scan: {unzip_folder}")
 
         try:
             next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
@@ -779,31 +779,31 @@ def stitching_helper(
                 all_poses=all_poses,
                 with_3dpoints=with_3dpoints
             )
-            print('========================================================================')
-            print(f"Loaded {str(unzip_folder.stem)}")
-            print('========================================================================')
+            logger.info('========================================================================')
+            logger.info(f"Loaded {str(unzip_folder.stem)}")
+            logger.info('========================================================================')
             consecutive_alignment_fails = 0
             datasets_already_aligned.append(unzip_folder)
-            print(f"Already aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} left")
+            logger.info(f"Already aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} left")
 
         except NoOverlapException:
             # If the dataset didn't have any overlap, add back to queue and retry again later,
             # since it may overlap with other chunks which have not yet been added.
             datasets_to_align.append(dataset_path)
-            print(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
+            logger.warn(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
 
             # However, if all chunks in the queue have failed, it means none of them can be aligned
             consecutive_alignment_fails += 1
-            print(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
+            logger.warn(f"Number of consecutive alignment fails: {consecutive_alignment_fails}")
             if consecutive_alignment_fails >= len(datasets_to_align):
                 err = "One or more chunks failed to align since none of them overlap with the already placed chunks."
-                print(f"ERROR! {err}")
-                print(f"{len(datasets_already_aligned)} already aligned chunks:")
-                print('\n'.join(str(path) for path in datasets_already_aligned))
-                print(f"{len(datasets_to_align)} remaining chunks:")
-                print('\n'.join(str(path) for path in datasets_to_align))
-                print(f"{len(placed_portal)} QR codes already placed:")
-                print('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
+                logger.error(f"ERROR! {err}")
+                logger.error(f"{len(datasets_already_aligned)} already aligned chunks:")
+                logger.error('\n'.join(str(path) for path in datasets_already_aligned))
+                logger.error(f"{len(datasets_to_align)} remaining chunks:")
+                logger.error('\n'.join(str(path) for path in datasets_to_align))
+                logger.error(f"{len(placed_portal)} QR codes already placed:")
+                logger.error('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
                 #raise NoOverlapException(err)
                 break
 
@@ -839,41 +839,41 @@ def stitching_helper(
 
     optimized_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
-    print('========================================================================')
-    print("ALL DETECTIONS (optimized stitch):")
-    print('========================================================================')
+    logger.info('========================================================================')
+    logger.info("ALL DETECTIONS (optimized stitch):")
+    logger.info('========================================================================')
     optimized_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in optimized_stitch_qr_detections.items()}
     for qr_id, pose in optimized_stitch_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
-        print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
     optimized_stitch_ply_path = refined_group_dir / 'global' / "OptimizedStitchPointCloud.ply"
     refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
 
     if with_3dpoints:
         optimized_stitch_sfm = refined_group_dir / 'global' / 'optimized_stitch_sfm'
-        print(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
+        logger.info(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
         Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
         combined_rec.write(optimized_stitch_sfm)
         export_rec_as_ply(combined_rec, optimized_stitch_ply_path)
 
     if basic_stitch_only:
-        print("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
+        logger.info("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
         if truth_portal_poses:
             compare_portals(basic_stitch_mean_qr_poses, optimized_stitch_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
-        print('Finished Global Merge!')
-        print('========================================================================')
-        print('')
-        print('========================================================================')
+        logger.info('Finished Global Merge!')
+        logger.info('========================================================================')
+        logger.info('')
+        logger.info('========================================================================')
 
         if with_3dpoints:
-            print(f"Running with 'basic stitch only' mode. Copy stitched point cloud to use as refined.")
-            print(f"Copying PLY from {optimized_stitch_ply_path} to {refined_ply_path}")
+            logger.info(f"Running with 'basic stitch only' mode. Copy stitched point cloud to use as refined.")
+            logger.info(f"Copying PLY from {optimized_stitch_ply_path} to {refined_ply_path}")
             shutil.copy(optimized_stitch_ply_path, refined_ply_path)
 
         manifest_out_path = output_path / 'refined_manifest.json'
-        print(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
+        logger.info(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
         save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
 
         return (
@@ -895,23 +895,23 @@ def stitching_helper(
         global_ba=True
     )
 
-    print('========================================================================')
-    print('ALL DETECTIONS (bundle adjusted):')
-    print('========================================================================')
+    logger.info('========================================================================')
+    logger.info('ALL DETECTIONS (bundle adjusted):')
+    logger.info('========================================================================')
     bundle_adjusted_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in bundle_adjusted_qr_detections.items()}
     for qr_id, pose in bundle_adjusted_mean_qr_poses.items():
         deviation = np.std([det.translation for det in bundle_adjusted_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
-        print(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
+        logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
 
 
     manifest_out_path = output_path / 'refined_manifest.json'
-    print(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
+    logger.info(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
     save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"
-        print(f"Saving refined sfm to: {refined_sfm_dir}")
+        logger.info(f"Saving refined sfm to: {refined_sfm_dir}")
         Path.mkdir(refined_sfm_dir, parents=True, exist_ok=True)
         bundle_adjusted_rec.write(refined_sfm_dir)
         export_rec_as_ply(bundle_adjusted_rec, refined_ply_path)
@@ -919,11 +919,11 @@ def stitching_helper(
     if truth_portal_poses:
         compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
 
-    print('========================================================================')
-    print('Finished Global refinement!')
-    print('========================================================================')
-    print('')
-    print('========================================================================')
+    logger.info('========================================================================')
+    logger.info('Finished Global refinement!')
+    logger.info('========================================================================')
+    logger.info('')
+    logger.info('========================================================================')
 
     return (
         combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,

@@ -56,7 +56,7 @@ def run_triangulation(
         image = reconstruction.images[image_id]
         num_existing_points = image.num_points3D
         mapper.triangulate_image(tri_options, image_id)
-        print(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
+        logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
 
     mapper.complete_and_merge_tracks(tri_options)
 
@@ -84,7 +84,7 @@ def run_triangulation(
 
         num_observations = reconstruction.compute_num_observations()
 
-        print(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
+        logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
 
         ba_config = pycolmap.BundleAdjustmentConfig()
 
@@ -120,37 +120,37 @@ def run_triangulation(
 
         summary = pyceres.SolverSummary()
         pyceres.solve(solver_options, bundle_adjuster.problem, summary)
-        print("Solved!")
+        logger.info("Solved!")
 
         final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
-        print("------------")
-        print("INITIAL LOSS BREAKDOWN:")
+        logger.info("------------")
+        logger.info("INITIAL LOSS BREAKDOWN:")
         for category, loss in initial_loss_breakdown.items():
-            print(f"{category}: {loss}")
-        print("------------")
-        print("FINAL LOSS BREAKDOWN:")
+            logger.info(f"{category}: {loss}")
+        logger.info("------------")
+        logger.info("FINAL LOSS BREAKDOWN:")
         for category, loss in final_loss_breakdown.items():
-            print(f"{category}: {loss}")
-        print("------------")
+            logger.info(f"{category}: {loss}")
+        logger.info("------------")
 
-        # print("\n".join(summary.FullReport().split(",")))
-        print(f"{summary.FullReport()}")
+        # logger.info("\n".join(summary.FullReport().split(",")))
+        logger.info(f"{summary.FullReport()}")
 
         num_changed_observations = 0
         num_changed_observations += mapper.complete_and_merge_tracks(tri_options)
         num_changed_observations += mapper.filter_points(mapper_options)
 
         changed = num_changed_observations / num_observations
-        print(f'Changed observations: {changed}')
+        logger.info(f'Changed observations: {changed}')
 
         ba_iterations_remaining -= 1
 
         # Retriangulate underreconstructed image pairs after first BA success
         if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
-            print('Retriangulating...')
+            logger.info('Retriangulating...')
             num_retriangulated = mapper.retriangulate(tri_options)
-            print(f'Retriangulated {num_retriangulated} observations')
+            logger.info(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
 
             # After improving triangulation, refine intrinsics too for the last rounds.
@@ -169,7 +169,7 @@ def run_triangulation(
             ba_iterations_remaining += additional_iterations
 
 
-    print('Extracting colors...')
+    logger.info('Extracting colors...')
     reconstruction.extract_colors_for_all_images(image_dir)
 
     mapper.end_reconstruction(False)
@@ -220,5 +220,5 @@ def triangulate_model(
     )
     # Grab logger by name
     shared_logger = logging.getLogger("shared_logger")
-    print(f"Finished the triangulation with statistics: {reconstruction.summary()}")
+    shared_logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction
