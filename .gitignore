@@ -1,1 +1,7 @@
 .DS_Store
+/__pycache__
+/build
+/.vscode
+/utils/__pycache__
+/jobs
+reconstruction

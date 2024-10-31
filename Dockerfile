@@ -1,3 +1,16 @@
+##
+## Go build for server
+##
+FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
+RUN mkdir -p /app
+WORKDIR /app
+ADD server /app
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
+
+
 # FROM nvidia/cuda:12.4.1-devel-ubuntu20.04
 FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
@@ -90,6 +103,8 @@ RUN git clone https://github.com/colmap/colmap.git && \
 
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
+    sed -i 's/num_workers=5, batch_size=1/num_workers=1, batch_size=1/' hloc/match_features.py && \
+    sed -i 's/match_path=match_path), 5)/match_path=match_path), 1)/' hloc/match_features.py && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
@@ -97,8 +112,32 @@ RUN python3 -m pip install enlighten evo
 
 WORKDIR /app
 
-COPY . /app/
-
+COPY k8s-config /app/k8s-config
+COPY scripts /app/scripts
+COPY src /app/src
+RUN chmod 755 /app/src
+COPY CMakeLists.txt /app/
 RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
 
-ENTRYPOINT [ "python3", "-m" ]
+COPY utils /app/utils
+RUN chmod 755 /app/utils
+COPY local_main.py global_main.py main.py start_server.sh /app/
+RUN chmod 755 /app/*.py
+RUN chmod 755 /app/start_server.sh
+
+# Run reconstruction server as separate user, not root
+#RUN adduser --disabled-password --gecos "" reconstruction-server
+#RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
+RUN mkdir -p /app/jobs
+
+# temporary for remote editing easier
+#RUN chown -R reconstruction-server:reconstruction-server /app/utils 
+#RUN chown -R reconstruction-server:reconstruction-server /app/*.py
+
+#USER reconstruction-server
+COPY --from=go-build /app/reconstruction ./reconstruction
+ENTRYPOINT ["./reconstruction"]
+
+# Overridable using 'docker run ... image_name -api-key <your-api-key>'
+# TODO: we probably don't need api key, or make it optional. Just check domain token.
+CMD ["-api-key", "kaffekopp123"]

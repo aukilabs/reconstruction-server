@@ -7,7 +7,11 @@ from numpy.linalg import norm
 from numpy import arccos, rad2deg
 import torch
 import logging
+import cv2
+from src.ply_export import export_ply_text
 
+floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
+floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
 
 def convert_pose_opengl_to_colmap(position, quaternion):
     
@@ -25,6 +29,23 @@ def convert_pose_opengl_to_colmap(position, quaternion):
 
     return position, quaternion
 
+
+def rectify_floor_portal(qr_pose):
+    pos = qr_pose.translation
+    rot3d = qr_pose.rotation
+
+    world_forward = rot3d.matrix() @ np.array([0.0, 0.0, 1.0])
+    if world_forward[0] < -0.9:
+        rot3d = rot3d * floor_rotation
+        rot3d.quat = flatten_quaternion(rot3d.quat)
+        rot3d = rot3d * floor_rotation_inv
+        
+        # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
+        if np.abs(pos[0]) < 0.5:
+            pos = pos.copy() # avoid modifying input pose
+            pos[0] = 0.0
+
+    return pycolmap.Rigid3d(rot3d, pos)
 
 def load_portals_json(file_path):
     portal_poses = {}
@@ -80,18 +101,36 @@ def get_data_paths(group_folder):
         "dmt_scan_2024-06-26_14-18-11.zip"
     ]
 
-    dataset_zip_paths = []
+    dataset_paths = []
+    zip_count = 0
+    unwanted_count = 0
     for file in zip_list:
         if file.name not in unwanted_files:
-            dataset_zip_paths.append(file)   
+            dataset_paths.append(file)
+            zip_count += 1
+        else:
+            unwanted_count += 1
+    print(f"Found {zip_count} valid zip files, {unwanted_count} unwanted zip files skipped")
 
-    print(f"Using dataset from {group_folder.name}")   
+    subfolder_count = 0
+    for subfolder in group_folder.iterdir():
+        if subfolder.is_dir() and (
+            subfolder.name.startswith("dmt_scan_")
+            or subfolder.name.startswith("20")
+        ):
+            dataset_paths.append(subfolder)
+            subfolder_count += 1
+    print(f"Found {subfolder_count} scan subfolders (not zip)")
+
+    print(f"Using in total {len(dataset_paths)} scans from folder '{group_folder.name}'")
+    
     if truth_portal_poses:
         print(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
         print("\n".join(f"{id}: {value}" for id, value in truth_portal_poses.items()))
-    print(f"Found {len(dataset_zip_paths)} zip files")
+    else:
+        print("No truth provided (portals.json). Will skip comparison with ground truth.")
 
-    return truth_portal_poses, dataset_zip_paths
+    return truth_portal_poses, dataset_paths
 
 
 def load_qr_detections_csv(csv_path):
@@ -106,8 +145,10 @@ def load_qr_detections_csv(csv_path):
 
             pos, quat = convert_pose_opengl_to_colmap(pos, quat)
 
+            rot3d = pycolmap.Rotation3d(np.array(quat))
+
             qr_pose = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quat)),
+                rot3d,
                 np.array(pos)
             )
 
@@ -233,6 +274,61 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 
+def save_failed_manifest_json(csv_path, jobStatusDetails):
+    save_manifest_json({}, csv_path, jobStatus="failed", jobProgress=100, jobStatusDetails=jobStatusDetails)
+
+
+def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
+    manifest_data = {
+        "portals": [],
+        "reconstructionServerVersion": "0.1",
+        "jobStatus": jobStatus if jobStatus is not None else "unknown",
+        "jobProgress": jobProgress if jobProgress is not None else 0,
+        "jobStatusDetails": jobStatusDetails if jobStatusDetails is not None else ""
+    }
+
+    # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
+    # For now we just take the first
+    for short_id, poses_for_qr in portal_poses.items():
+
+        pose = poses_for_qr[0]
+        pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+
+        manifest_data["portals"].append({
+            "shortId": short_id,
+            "pose": {
+                "position": {
+                    "x": pos[0],
+                    "y": pos[1],
+                    "z": pos[2],
+                },
+                "rotation": {
+                    "x": quat[0],
+                    "y": quat[1],
+                    "z": quat[2],
+                    "w": quat[3],
+                }
+            },
+            "averagePose": {
+                "position": {
+                    "x": pos[0],
+                    "y": pos[1],
+                    "z": pos[2],
+                },
+                "rotation": {
+                    "x": quat[0],
+                    "y": quat[1],
+                    "z": quat[2],
+                    "w": quat[3],
+                }
+            },
+            "physicalSize": 0.15 #TODO: use actual value from Manifest.csv
+        })
+
+    with open(csv_path, 'w') as json_file:
+        json.dump(manifest_data, json_file, indent=4)
+
+
 def vec3_angle(v, w):
     value = v.dot(w)/(norm(v)*norm(w))
 
@@ -254,6 +350,35 @@ def get_sorted_images(images):
     sorted_images = list(images)
     sorted_images.sort(key=sorting_key)
     return sorted_images
+
+
+def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
+    capture = cv2.VideoCapture(mp4_path)
+    frame_count = 0
+    print("Unpacking mp4 to frames:", mp4_path, "->", frames_path)
+    while capture.isOpened():
+        ret, frame = capture.read()
+        if not ret:
+            break
+        cv2.imwrite(f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg", frame)
+        frame_count += 1
+    print(f"Unpacked {frame_count} frames from mp4")
+    capture.release()
+
+
+def export_rec_as_ply(rec, path, convert_to_opengl=True):
+    print(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
+    print(f"convert_to_opengl = {convert_to_opengl}")
+    print("...")
+    # As text for now, as mobile DMT doesn't work with binary domain data blobs
+    rec_openGL = pycolmap.Reconstruction()
+    for point in rec.points3D.values():
+        x,y,z = point.xyz
+        if convert_to_opengl:
+            x,y,z = y,x,-z
+        _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
+    export_ply_text(rec_openGL, str(path))
+    print(f"PLY export done")
 
 
 def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
@@ -354,15 +479,20 @@ def pycolmap_to_batch_matrix(
     return points3D, extrinsics, intrinsics, extra_params
 
 
-def setup_logger(name, log_file, level=logging.INFO):
+def setup_logger(name, log_file, console_out=True, level=logging.INFO):
     """To setup as many loggers as you want"""
-
-    handler = logging.FileHandler(log_file)   
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')     
-    handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.addHandler(handler)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')   
+
+    file_handler = logging.FileHandler(log_file)     
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    if console_out:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger

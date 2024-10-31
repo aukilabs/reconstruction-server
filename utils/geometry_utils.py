@@ -15,7 +15,7 @@ from shapely.geometry import Polygon
 from scipy.spatial import ConvexHull
 from scipy.spatial._qhull import QhullError
 
-from utils.data_utils import get_world_space_qr_codes, save_qr_poses_csv
+from utils.data_utils import get_world_space_qr_codes
 from utils.bundle_adjuster import PyBundleAdjuster
 
 from src.cost_functions import RelativeTransformationSim3CostFunction
@@ -32,7 +32,8 @@ def dmt_global_stitching(detections_per_qr,
     refinement_config = {
         'add_rel_constraints': True,
         'use_arkit_relposes': False,
-        'use_arkit_centerdist': False
+        'use_arkit_centerdist': False,
+        #'min_point3d_track_length': 20, # Only add cost terms for 3D points with long tracks
     }
 
     bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config)
@@ -101,10 +102,8 @@ def run_stitching(detections_per_qr,
         ba_options.refine_focal_length = False
         ba_options.refine_extra_params = False
         ba_options.refine_principal_point = False
-        ba_options.solver_options.max_num_iterations = 1000
-        # ba_options.min_num_residuals_for_multi_threading = 10000 # Put very high to avoid threading. Crashes on google colab.
-        ba_options.min_num_residuals_for_multi_threading = 1000000000 # Put very high to avoid threading. Crashes on google colab.
-        #ba_options.verbose = True
+        ba_options.solver_options.max_num_iterations = 150
+        ba_options.solver_options.num_threads = 16
 
         # Configure bundle adjustment
         ba_config = pycolmap.BundleAdjustmentConfig()
@@ -140,8 +139,8 @@ def run_stitching(detections_per_qr,
     combined_rec.write(combined_out_dir)
 
     combined_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
-    save_qr_poses_csv(combined_detections, combined_out_dir / "portal_poses.csv")
-
+    #save_qr_poses_csv(combined_detections, combined_out_dir / "refined_portal_poses.csv")
+    
     print("\n-------------\n")
 
     return combined_rec, combined_detections
@@ -222,7 +221,7 @@ def align_reconstruction_chunks(
     solver_options.minimizer_progress_to_stdout = True
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
-    solver_options.max_num_iterations = 100
+    solver_options.max_num_iterations = 500
     solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
 
     summary = pyceres.SolverSummary()

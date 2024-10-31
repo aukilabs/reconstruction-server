@@ -14,7 +14,8 @@ from utils.data_utils import (
     precompute_arkit_offsets,
     get_world_space_qr_codes,
     mean_pose,
-    setup_logger
+    setup_logger,
+    mp4_to_frames
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -63,8 +64,27 @@ def refine_dataset(
 
 
     feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf["model"]["max_keypoints"] = 1024
+    #feature_conf["model"]["nms_radius"] = 4
+    #feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = features
+
+    """
+    feature_conf = {
+        "output": features,
+        "model": {
+            "name": "disk",
+            "max_keypoints": 512,
+        },
+        "preprocessing": {
+            "grayscale": False,
+            "resize_max": 1024,
+        },
+    }
+    """
+    logger.info("Feature conf: ", feature_conf)
     matcher_conf = match_features.confs["superpoint+lightglue"]
+    #matcher_conf = match_features.confs["disk+lightglue"]
 
     ############################
     # LOAD DATASET
@@ -72,6 +92,17 @@ def refine_dataset(
 
     #--------------------
     # RGB Frames
+
+
+    frames_mp4 = dataset / 'Frames.mp4'
+    logger.info("Looking for mp4 encoded frames: ", frames_mp4)
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        logger.info("Frames mp4 found, unpacking into", images)
+        if not images.exists():
+            images.mkdir()
+        mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        use_frames_from_video = True
 
     references = [str(p.relative_to(images)) for p in (images).iterdir()]
     original_image_count = len(references)
@@ -94,10 +125,15 @@ def refine_dataset(
 
     # Read and process the CSV file
     with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
         csv_reader = csv.reader(csvfile)
         for row in csv_reader:
             timestamp = round(float(row[0]) * 1e9) # s to ns
-            filename = row[1]
+            if use_frames_from_video:
+                filename = f"{experiment_name}_{frame_index:06d}.jpg" # Match with how frames are unpacked to images, by mp4_to_frames
+            else:
+                filename = row[1]
+            frame_index += 1
             timestamps_per_image[filename] = timestamp
 
     # Display the result
@@ -153,7 +189,11 @@ def refine_dataset(
     #--------------------
     # QR detections
 
-    qr_detections_csv_path = str(dataset / "Observations.csv")
+    qr_detections_csv_path = dataset / "PortalDetections.csv"
+    if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
+        qr_detections_csv_path = dataset / "Observations.csv"
+        logger.info("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
+    qr_detections_csv_path = str(qr_detections_csv_path)
 
     logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
     # Initialize the dictionary
@@ -201,11 +241,11 @@ def refine_dataset(
         fx, fy, cx, cy, w, h = intrinsics
 
         if fx == fy:
-            model = 'SIMPLE_PINHOLE'
-            params = [fx, cx, cy]
+            model = 'SIMPLE_RADIAL'
+            params = [fx, cx, cy, 0.0]
         else:
-            model = 'PINHOLE'
-            params = [fx, fy, cx, cy]
+            model = 'RADIAL'
+            params = [fx, fy, cx, cy, 0.0]
         cam = pycolmap.Camera(
             model=model, width=w, height=h, params=params, camera_id=camera_id
         )
@@ -216,7 +256,7 @@ def refine_dataset(
 
         rec.add_camera(cam)
 
-        # logger.info(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
+        # print(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
 
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
 
@@ -244,7 +284,7 @@ def refine_dataset(
     # IMAGE PAIRS
     ############################
     logger.info("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
+    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 5, rotation_threshold=360)
 
     ############################
     # FEATURE POINTS
@@ -257,13 +297,16 @@ def refine_dataset(
         images, 
         outputs, 
         feature_path=features, 
-        as_half=True, 
+        as_half=True,
         image_list=references
     )
 
     # Feature Matching
     logger.info("Feature matching")
+    logger.info("Start feature matching")
+    logger.info("Matcher conf: " + str(matcher_conf))
     match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
+    logger.info("Finished feature matching")
 
     ############################
     # PRE-PROCESSING
@@ -293,6 +336,8 @@ def refine_dataset(
 
     detections_per_qr = {}
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
+    logger.info("valid timestamps: ", len(valid_timestamps))
+    logger.info("count of qr detections: ", len(qr_detections_per_timestamp))
     for timestamp, detection in qr_detections_per_timestamp.items():
         id = detection["short_id"]
 
@@ -354,6 +399,7 @@ def refine_dataset(
     )
     refined_rec.write(sfm_dir)
     logger.info("Finished triangulation")
+
     reproj_error = refined_rec.compute_mean_reprojection_error()
     logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
 
@@ -366,14 +412,14 @@ def refine_dataset(
         logging.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
 
     if remove_outputs:
-        shared_logger.info('Remove output directory')
+        logger.info('Remove output directory')
         shutil.rmtree(outputs)
     
     logger.info('Finished local refinement!')
     logger.info('========================================================================')
     logger.info('')
     logger.info('========================================================================')
-
+    
     shared_logger.info(f'Successful run on {str(scan_folder_path.name)}')
     shared_logger.info('========================================================================')
     shared_logger.info('')

@@ -273,3 +273,20 @@ class CustomLoopClosureCostFunction(pyceres.CostFunction):
             print("LoopClosure Jacobians:", jacobians)
 
         return True
+
+class IntrinsicsPriorCostFunction(pyceres.CostFunction):
+    def __init__(self, initial_params, weight):
+        super().__init__()
+        self.initial_params = np.array(initial_params)
+        self.weight = weight
+        self.set_num_residuals(len(initial_params))
+        self.set_parameter_block_sizes([len(initial_params)])
+
+    def Evaluate(self, parameters, residuals, jacobians):
+        current_params = np.array(parameters[0])
+        diff = (current_params - self.initial_params) * self.weight
+        residuals[:] = diff
+
+        if jacobians is not None:
+            jacobians[0][:] = (np.eye(len(self.initial_params)) * self.weight).flatten()
+        return True
