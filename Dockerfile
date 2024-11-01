@@ -110,18 +110,21 @@ RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
 
 RUN python3 -m pip install enlighten evo
 
+RUN python3 -m pip install open3d trimesh alphashape
+
 WORKDIR /app
 
 COPY k8s-config /app/k8s-config
 COPY scripts /app/scripts
 COPY src /app/src
+COPY config /app/config
 RUN chmod 755 /app/src
 COPY CMakeLists.txt /app/
 RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all
 
 COPY utils /app/utils
 RUN chmod 755 /app/utils
-COPY local_main.py global_main.py main.py start_server.sh /app/
+COPY local_main.py global_main.py occlusion_box.py main.py start_server.sh /app/
 RUN chmod 755 /app/*.py
 RUN chmod 755 /app/start_server.sh
 
