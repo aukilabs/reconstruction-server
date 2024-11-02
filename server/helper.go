@@ -237,6 +237,11 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 			Name:     "unrefined_pointcloud",
 			DataType: "unrefined_pointcloud_ply",
 		},
+		{
+			FilePath: path.Join(refinedOutput, "occlusion", "meshes.obj"),
+			Name:     "occlusionmesh_v1",
+			DataType: "obj",
+		},
 	}
 
 	outputCount := 0

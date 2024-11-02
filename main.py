@@ -81,11 +81,11 @@ def local_and_global_main_wrapper(args, logger):
     else:
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
-    #occlusion_args = argparse.Namespace(
-    #    path=global_out_folder / "optimized_stitch_sfm", # Colmap reconstruction folder with .bin files
-    #    output_dir=global_out_folder / "occlusion"
-    #)
-    #occlusion_box_wrapper(occlusion_args, logger)
+    occlusion_args = argparse.Namespace(
+        path=str(global_out_folder / "optimized_stitch_sfm"), # Colmap reconstruction folder with .bin files
+        output_dir=str(global_out_folder / "occlusion")
+    )
+    occlusion_box_wrapper(occlusion_args, logger)
 
 # For triggering manually via SSH on server, to retrigger again on previous global refinement
 def occlusion_debug_helper():
