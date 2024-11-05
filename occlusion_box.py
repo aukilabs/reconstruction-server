@@ -15,6 +15,7 @@ from utils.topology_utils import (
     dbscan_clustering_2d,
     assign_cluster_colors,
     find_best_fit_alphashape,
+    find_best_fit_alphashape_2,
     find_best_fit_convexhull,
     draw_box_from_poly
 )
@@ -133,8 +134,7 @@ def main(config):
         config['occlusion_method'] = "aabb"
 
     for i in range(actual_labels.max() + 1):
-        if i < 1:
-            continue
+
         cluster_indices = np.where(actual_labels == i)[0]
         if len(cluster_indices) >= 4:
             cluster = pcd_clusters.select_by_index(cluster_indices)
@@ -158,12 +158,13 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape_2(cluster_np_points[:, :2])
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
                     geo.append(occ_pcd)
                     meshes.append(mesh)
+
             elif config['occlusion_method'] == 'convexhull':
                  # Convexhull
                 success, qpoints = find_best_fit_convexhull(cluster_np_points[:, :2])
