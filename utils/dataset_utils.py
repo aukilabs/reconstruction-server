@@ -19,9 +19,9 @@ import matplotlib.pyplot as plt
 from utils.data_utils import (
     load_qr_detections_csv, 
     mean_pose,
-    rectify_floor_portal,
+    #rectify_floor_portal,
     mp4_to_frames,
-    flatten_quaternion, 
+    #flatten_quaternion, 
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
@@ -293,19 +293,20 @@ def load_partial(
         print(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
         print(alignment_transform)
 
-    if alignment_transform is not None:
-        # Align around up vector only, since ARKit gives already a good gravity vector
-        alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
+    #if alignment_transform is not None:
+    #    # Align around up vector only, since ARKit gives already a good gravity vector
+    #    alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
 
     for qr_id, pose in this_chunk_mean_qr_poses.items():
         if alignment_transform is not None:
             pose = alignment_transform * pose
-        placed_portal[qr_id] = rectify_floor_portal(pose)
+        #placed_portal[qr_id] = rectify_floor_portal(pose)
+        placed_portal[qr_id] = pose
 
     if alignment_transform is not None:
         for timestamp, detection in qr_detections_per_timestamp.items():
             detection["pose"] = alignment_transform * detection["pose"]
-            detection["pose"] = rectify_floor_portal(detection["pose"])
+            #detection["pose"] = rectify_floor_portal(detection["pose"])
 
 
     #----------------------
@@ -405,11 +406,11 @@ def load_partial(
             fx, fy, cx, cy, w, h = intrinsics
 
             if fx == fy: # TODO What about simple radial?
-                model = 'SIMPLE_RADIAL'
-                params = [fx, cx, cy, 0.0]
+                model = 'SIMPLE_PINHOLE'
+                params = [fx, cx, cy]
             else:
-                model = 'RADIAL'
-                params = [fx, fy, cx, cy, 0.0]
+                model = 'PINHOLE'
+                params = [fx, fy, cx, cy]
 
             cam = pycolmap.Camera(model=model, width=w, height=h, params=params, camera_id=camera_id)
 

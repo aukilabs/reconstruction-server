@@ -64,9 +64,6 @@ def refine_dataset(
 
 
     feature_conf = extract_features.confs["superpoint_max"]
-    feature_conf["model"]["max_keypoints"] = 1024
-    #feature_conf["model"]["nms_radius"] = 4
-    #feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = features
 
     """
@@ -84,7 +81,6 @@ def refine_dataset(
     """
     logger.info(f"Feature conf: {feature_conf}")
     matcher_conf = match_features.confs["superpoint+lightglue"]
-    #matcher_conf = match_features.confs["disk+lightglue"]
 
     ############################
     # LOAD DATASET
@@ -241,11 +237,11 @@ def refine_dataset(
         fx, fy, cx, cy, w, h = intrinsics
 
         if fx == fy:
-            model = 'SIMPLE_RADIAL'
-            params = [fx, cx, cy, 0.0]
+            model = 'SIMPLE_PINHOLE'
+            params = [fx, cx, cy]
         else:
-            model = 'RADIAL'
-            params = [fx, fy, cx, cy, 0.0]
+            model = 'PINHOLE'
+            params = [fx, fy, cx, cy]
         cam = pycolmap.Camera(
             model=model, width=w, height=h, params=params, camera_id=camera_id
         )
@@ -256,7 +252,7 @@ def refine_dataset(
 
         rec.add_camera(cam)
 
-        # print(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
+        # logger.info(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
 
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
 
@@ -284,7 +280,7 @@ def refine_dataset(
     # IMAGE PAIRS
     ############################
     logger.info("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 5, rotation_threshold=360)
+    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
 
     ############################
     # FEATURE POINTS
@@ -303,10 +299,7 @@ def refine_dataset(
 
     # Feature Matching
     logger.info("Feature matching")
-    logger.info("Start feature matching")
-    logger.info("Matcher conf: " + str(matcher_conf))
     match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
-    logger.info("Finished feature matching")
 
     ############################
     # PRE-PROCESSING
@@ -399,7 +392,6 @@ def refine_dataset(
     )
     refined_rec.write(sfm_dir)
     logger.info("Finished triangulation")
-
     reproj_error = refined_rec.compute_mean_reprojection_error()
     logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
 
