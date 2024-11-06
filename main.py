@@ -16,6 +16,11 @@ def occlusion_box_wrapper(args, logger):
     if args.output_dir:
         config['output_dir'] = args.output_dir
 
+    # When refining through main.py the point cloud is already converted back to OpenGL
+    # Override setting in the default config
+    config['opengl'] = True
+    config['display'] = False
+
     logger.info(f"Running occlusion box with config contents:")
     for key, value in config.items():
         logger.info(f"{key}: {value}")
