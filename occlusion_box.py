@@ -15,13 +15,13 @@ from utils.topology_utils import (
     dbscan_clustering_2d,
     assign_cluster_colors,
     find_best_fit_alphashape,
-    find_best_fit_alphashape_2,
+    find_best_fit_alphashape_optimized,
     find_best_fit_convexhull,
     draw_box_from_poly
 )
 
 
-SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "convexhull"]
+SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "alphashape_optimized", "convexhull"]
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Occlusion boxes extraction script")
@@ -158,7 +158,16 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape_2(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2])
+                if success:
+                    occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
+                    geo.append(occ_box)
+                    geo.append(occ_pcd)
+                    meshes.append(mesh)
+
+            elif config['occlusion_method'] == 'alphashape_optimized':
+                # Alphashape
+                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2])
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)

@@ -141,7 +141,7 @@ def find_best_fit_alphashape(points, alpha=0.5):
         return False, None
     return True, exterior_coords
 
-def find_best_fit_alphashape_2(points, alpha=2.0):
+def find_best_fit_alphashape_optimized(points, alpha=2.0):
     x_arr = points[:, 0]
     y_arr = points[:, 1]
     if len(np.unique(x_arr)) < 2 or len(np.unique(y_arr)) < 2:
