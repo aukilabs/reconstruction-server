@@ -281,7 +281,7 @@ def save_failed_manifest_json(csv_path, jobStatusDetails):
 def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
     manifest_data = {
         "portals": [],
-        "reconstructionServerVersion": "0.1",
+        "reconstructionServerVersion": "0.1.27",
         "jobStatus": jobStatus if jobStatus is not None else "unknown",
         "jobProgress": jobProgress if jobProgress is not None else 0,
         "jobStatusDetails": jobStatusDetails if jobStatusDetails is not None else ""
