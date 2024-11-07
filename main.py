@@ -10,7 +10,7 @@ from utils.io import load_yaml, save_to_yaml
 
 
 def occlusion_box_wrapper(args, logger):
-    config = load_yaml('config/occlusion_box/server_default.yaml')
+    config = load_yaml('config/occlusion_box/default.yaml')
     if args.path:
         config['path'] = args.path
     if args.output_dir:
@@ -87,7 +87,7 @@ def local_and_global_main_wrapper(args, logger):
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
     occlusion_args = argparse.Namespace(
-        path=str(global_out_folder / "optimized_stitch_sfm"), # Colmap reconstruction folder with .bin files
+        path=str(global_out_folder / "RefinedPointCloud.ply"), # point cloud in OpenGL coords
         output_dir=str(global_out_folder / "occlusion")
     )
     occlusion_box_wrapper(occlusion_args, logger)
@@ -98,7 +98,7 @@ def occlusion_debug_helper():
 
     global_out_folder = Path('/app/jobs/981b9726-0574-4ee8-9f29-f72fbdbfd0e2/job_d00ca0ba-3d19-4f95-b8ea-a32a1e0ac3ab/refined/global')
     occlusion_args = argparse.Namespace(
-        path=str(global_out_folder / "optimized_stitch_sfm"), # Colmap reconstruction folder with .bin files
+        path=str(global_out_folder / "RefinedPointCloud.ply"), # point cloud in OpenGL coords
         output_dir=str(global_out_folder / "occlusion")
     )
     occlusion_box_wrapper(occlusion_args, logger)

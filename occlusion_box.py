@@ -6,7 +6,6 @@ import time
 import os
 import yaml
 
-
 from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
 from utils.topology_utils import (
     voxelise, 
@@ -47,15 +46,17 @@ def main(config):
     num_points = {}
     
     # Model init
-    model = Model()
-    model.read_model(path=config['path'], ext='.bin')
+    if config['path'].endswith('.ply'):
+        # Load point cloud
+        pcd = o3d.io.read_point_cloud(config['path'])
+    else: # colmap reconstruction folder
+        model = Model()
+        model.read_model(path=config['path'], ext='.bin')
+        print("num_cameras:", len(model.cameras))
+        print("num_images:", len(model.images))
+        print("num_points3D:", len(model.points3D))
+        pcd = model.get_points()
 
-    print("num_cameras:", len(model.cameras))
-    print("num_images:", len(model.images))
-    print("num_points3D:", len(model.points3D))
-
-    # Load point cloud
-    pcd = model.get_points()
     num_points['Original'] = len(pcd.points)
 
     # Step 0: fix coordinate
