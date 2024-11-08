@@ -32,9 +32,7 @@ def floor_removal(pcd, hard_offset_threshold):
     X, Z = extract_xyz_from_point_cloud(pcd_only_floor)
     # Fit linear regression to find the slope and intercept
     a, b, c = fit_linear_regression(X, Z)
-    # return z_axis_slope_offset(pcd, a, b, c)
-    return z_axis_hard_offset(pcd, hard_offset_threshold)
-
+    return z_axis_slope_offset(pcd, a, b, c)
 
 def z_axis_hard_offset(pcd, floor_height_threshold):
     pcd_np = np.asarray(pcd.points)
