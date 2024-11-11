@@ -668,12 +668,61 @@ func executeJob(j *job) {
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
+	// Monitor progress in a separate goroutine
+	progressDone := make(chan bool)
+	go func() {
+		datasetsPath := path.Join(jobRootPath, "datasets")
+		refinedPath := path.Join(jobRootPath, "refined", "local")
+
+		for {
+			select {
+			case <-progressDone:
+				return
+			default:
+				time.Sleep(10 * time.Second)
+
+				// Get total number of datasets
+				datasetFolders, err := os.ReadDir(datasetsPath)
+				if err != nil {
+					log.Printf("Error reading datasets directory for job %s: %s", j.ID, err)
+					return
+				}
+				totalCount := len(datasetFolders)
+
+				// Check number of completed datasets by matching dataset names
+				refinedCount := 0
+				for _, dataset := range datasetFolders {
+					if _, err := os.Stat(path.Join(refinedPath, dataset.Name())); err == nil {
+						refinedCount++
+					}
+				}
+				refinedCount-- // Last folder created is still refining, remove it
+				if refinedCount < 0 {
+					refinedCount = 0 // Just in case
+				}
+				progress := int((float64(refinedCount) / float64(totalCount)) * 100)
+				if progress > 100 {
+					progress = 100
+				}
+
+				// Update manifest with current progress
+				statusText := fmt.Sprintf("Processed %d of %d scans", refinedCount, totalCount)
+				log.Printf("job %s progress: %d%% - %s", j.ID, progress, statusText)
+				WriteJobManifestFileHelper(j, "processing", progress, statusText)
+				UploadJobManifestToDomain(j)
+
+				time.Sleep(10 * time.Second)
+			}
+		}
+	}()
 
 	if err := cmd.Wait(); err != nil {
+		progressDone <- true
 		log.Printf("job %s failed: %s", j.ID, err)
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
+	progressDone <- true
 
 	log.Printf("Refinement python script for job %s finished.", j.ID)
 	timeTaken := time.Since(startTime)
