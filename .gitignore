@@ -5,4 +5,5 @@ output/**
 /.vscode
 /jobs
 reconstruction
+.venv
 /venv
