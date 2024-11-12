@@ -73,7 +73,7 @@ def local_and_global_main_wrapper(args, logger):
     else:
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
-def main(args, logger):
+def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
 
