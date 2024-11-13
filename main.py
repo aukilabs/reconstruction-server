@@ -4,7 +4,27 @@ import argparse
 
 from local_main import main as local_main
 from global_main import main as global_main
+from occlusion_box import main as occlusion_box_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.io import load_yaml, save_to_yaml
+
+
+def occlusion_box_wrapper(args, logger):
+    config = load_yaml('config/occlusion_box/server_default.yaml')
+    if args.path:
+        config['path'] = args.path
+    if args.output_dir:
+        config['output_dir'] = args.output_dir
+
+    logger.info(f"Running occlusion box with config contents:")
+    for key, value in config.items():
+        logger.info(f"{key}: {value}")
+
+    save_to_yaml(config)
+
+    logger.info("Starting occlusion box extraction...")
+    occlusion_box_main(config)
+    logger.info("Done with occlusion box extraction!")
 
 def local_main_wrapper(args, logger):
     scans = args.scans
@@ -53,27 +73,32 @@ def local_and_global_main_wrapper(args, logger):
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
 
-    """
-    # output stitched point cloud
-    stitch_args = argparse.Namespace(
-        data_dir=Path(args.job_root_path) / "datasets",
-        dataset_group=None,
-        all_observations=True,
-        all_poses=True,
-        use_refined_outputs=True,
-        add_3dpoints=True,
-        basic_stitch_only=True
-    )
-    global_main(stitch_args)
-    """
-    
-    ply_output_path = Path(args.job_root_path) / "refined" / "global" / "RefinedPointCloud.ply"
+    global_out_folder = Path(args.job_root_path) / "refined" / "global"
+
+    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
     if ply_output_path.exists():
         logger.info(f"Refined point cloud created! {ply_output_path}")
     else:
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
-def main(args, logger):
+    occlusion_args = argparse.Namespace(
+        path=str(global_out_folder / "optimized_stitch_sfm"), # Colmap reconstruction folder with .bin files
+        output_dir=str(global_out_folder / "occlusion")
+    )
+    occlusion_box_wrapper(occlusion_args, logger)
+
+# For triggering manually via SSH on server, to retrigger again on previous global refinement
+def occlusion_debug_helper():
+    logger = setup_logger('occlusion_main', 'occlusion_test_log.txt')
+
+    global_out_folder = Path('/app/jobs/981b9726-0574-4ee8-9f29-f72fbdbfd0e2/job_d00ca0ba-3d19-4f95-b8ea-a32a1e0ac3ab/refined/global')
+    occlusion_args = argparse.Namespace(
+        path=str(global_out_folder / "optimized_stitch_sfm"), # Colmap reconstruction folder with .bin files
+        output_dir=str(global_out_folder / "occlusion")
+    )
+    occlusion_box_wrapper(occlusion_args, logger)
+
+def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
 
