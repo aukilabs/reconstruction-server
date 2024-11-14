@@ -8,19 +8,20 @@ import yaml
 
 
 from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
-from utils.topology_utils import (
+from utils.occlusion_box_utils import (
     voxelise, 
     floor_removal, 
     group_points_by_xy, 
     dbscan_clustering_2d,
     assign_cluster_colors,
     find_best_fit_alphashape,
+    find_best_fit_alphashape_optimized,
     find_best_fit_convexhull,
     draw_box_from_poly
 )
 
 
-SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "convexhull"]
+SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "alphashape_optimized", "convexhull"]
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Occlusion boxes extraction script")
@@ -133,8 +134,7 @@ def main(config):
         config['occlusion_method'] = "aabb"
 
     for i in range(actual_labels.max() + 1):
-        if i < 1:
-            continue
+
         cluster_indices = np.where(actual_labels == i)[0]
         if len(cluster_indices) >= 4:
             cluster = pcd_clusters.select_by_index(cluster_indices)
@@ -164,6 +164,16 @@ def main(config):
                     geo.append(occ_box)
                     geo.append(occ_pcd)
                     meshes.append(mesh)
+
+            elif config['occlusion_method'] == 'alphashape_optimized':
+                # Alphashape
+                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2])
+                if success:
+                    occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
+                    geo.append(occ_box)
+                    geo.append(occ_pcd)
+                    meshes.append(mesh)
+
             elif config['occlusion_method'] == 'convexhull':
                  # Convexhull
                 success, qpoints = find_best_fit_convexhull(cluster_np_points[:, :2])
