@@ -2,7 +2,7 @@ cluster_eps: 0.2
 cluster_min_points: 6
 display: true
 height_threshold: -0.6
-occlusion_method: alphashape
+occlusion_method: alphashape_optimized
 opengl: false
 outlier_min_points: 6
 outlier_radius: 0.2
