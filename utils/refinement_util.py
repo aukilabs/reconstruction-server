@@ -249,7 +249,7 @@ def refine_dataset(
         nearest_image_timestamp = np.max(all_timestamps_before)
 
         for filename, ts in timestamps_per_image.items():
-            if ts == nearest_image_timestamp:
+            if ts == nearest_image_timestamp and filename not in references:
                 logger.debug(filename)
                 references.append(filename)
 
