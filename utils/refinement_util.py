@@ -245,7 +245,7 @@ def refine_dataset(
         if any(in_ref):
             continue
 
-        all_timestamps_before = [t for t in image_ts_list if t <= timestamps[1]]
+        all_timestamps_before = [t for t in image_ts_list if t <= timestamps[0]]
         nearest_image_timestamp = np.max(all_timestamps_before)
 
         for filename, ts in timestamps_per_image.items():
