@@ -92,7 +92,6 @@ def run_stitching(detections_per_qr,
         ba_options.refine_extra_params = False
         ba_options.refine_principal_point = False
         ba_options.solver_options.max_num_iterations = 1000
-        #ba_options.min_num_residuals_for_multi_threading = 1000000000 # Put very high to avoid threading. Crashes on google colab.
         #ba_options.verbose = True
 
         # Configure bundle adjustment

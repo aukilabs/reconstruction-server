@@ -219,6 +219,42 @@ def refine_dataset(
     # Display the result
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
 
+    #----------------------
+    # Check if each qr detection has at least one image within [references] array
+    this_chunk_detections_per_qr = {}
+    for ts, detection in qr_detections_per_timestamp.items():
+        id = detection["short_id"]
+
+        if id not in this_chunk_detections_per_qr.keys():
+            this_chunk_detections_per_qr[id] = [ts]
+        else:
+            this_chunk_detections_per_qr[id].append(ts)
+
+    image_ts_list = list(timestamps_per_image.values())
+    reference_ts = [ timestamps_per_image[ref] for ref in references]
+    logger.debug("timestamps length: ", len(image_ts_list))
+    logger.debug("references length: ", len(references))
+    for qr_id, timestamps in this_chunk_detections_per_qr.items():
+
+        in_ref = [a in reference_ts for a in timestamps]
+        logger.debug(qr_id)
+        logger.debug(in_ref)
+        logger.debug(timestamps)
+
+        # If the reference ts contain any qr detection image, skip
+        if any(in_ref):
+            continue
+
+        all_timestamps_before = [t for t in image_ts_list if t <= timestamps[0]]
+        nearest_image_timestamp = np.max(all_timestamps_before)
+
+        for filename, ts in timestamps_per_image.items():
+            if ts == nearest_image_timestamp and filename not in references:
+                logger.debug(filename)
+                references.append(filename)
+
+    references = sorted(references)
+    logger.debug(len(references))
 
     #----------------------
     # Init unrefined Reconstruction

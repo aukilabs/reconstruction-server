@@ -34,7 +34,6 @@ def floor_removal(pcd, hard_offset_threshold):
     a, b, c = fit_linear_regression(X, Z)
     return z_axis_slope_offset(pcd, a, b, c)
 
-
 def z_axis_hard_offset(pcd, floor_height_threshold):
     pcd_np = np.asarray(pcd.points)
     # Keep points above the threshold (floor height)
@@ -141,6 +140,40 @@ def find_best_fit_alphashape(points, alpha=0.5):
         return False, None
     return True, exterior_coords
 
+def find_best_fit_alphashape_optimized(points, alpha=2.0):
+    x_arr = points[:, 0]
+    y_arr = points[:, 1]
+    if len(np.unique(x_arr)) < 2 or len(np.unique(y_arr)) < 2:
+        print("not enough points")
+        return False, None
+    try:
+        alpha_shape = alphashape.alphashape(points, alpha)
+    except:
+        print(f"failed to extract alpha shape")
+        return False, None
+    # Check if the result is a Polygon, MultiPolygon, or GeometryCollection
+    if isinstance(alpha_shape, Polygon):
+        # If it's a single Polygon, extract the exterior
+        envelop = alpha_shape.oriented_envelope
+        intersection_area = alpha_shape.intersection(envelop).area
+        if (intersection_area / envelop.area < 0.5):
+            # print("retangle is too big, using alpha shape")
+            shapehshape = alpha_shape.simplify(0.2, preserve_topology=True)
+        else:
+            # print("fitted well, using retangle")
+            shapehshape = envelop
+
+        x, y = shapehshape.exterior.xy
+        exterior_coords = np.column_stack([x, y])
+    elif isinstance(alpha_shape, GeometryCollection):
+        for geom in alpha_shape.geoms:
+            print(type(geom))
+        return False, None
+    else:
+        # For other cases (like GeometryCollection), handle them appropriately
+        print(type(alpha_shape))
+        return False, None
+    return True, exterior_coords
 
 def find_best_fit_convexhull(points):
     x_arr = points[:, 0]

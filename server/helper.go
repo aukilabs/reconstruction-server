@@ -621,11 +621,20 @@ func executeJob(j *job) {
 	// DMT uses this to show job status to the user.
 	WriteJobManifestFile(j, "processing")
 
-	// Download domain data first
-	if err := DownloadDomainDataFromDomain(context.Background(), j, j.DataIDs...); err != nil {
-		log.Printf("Data download failed for job %s: %v", j.ID, err)
-		jobs.UpdateJob(j.ID, "failed")
-		return
+	// Download domain data in batches of 20 ids
+	batchSize := 20
+	for i := 0; i < len(j.DataIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(j.DataIDs) {
+			end = len(j.DataIDs)
+		}
+		batch := j.DataIDs[i:end]
+
+		if err := DownloadDomainDataFromDomain(context.Background(), j, batch...); err != nil {
+			log.Printf("Data download failed for job %s batch %d-%d: %v", j.ID, i, end, err)
+			jobs.UpdateJob(j.ID, "failed")
+			return
+		}
 	}
 
 	refinementPython := "main.py"
