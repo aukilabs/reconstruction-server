@@ -92,7 +92,6 @@ def run_stitching(detections_per_qr,
         ba_options.refine_extra_params = False
         ba_options.refine_principal_point = False
         ba_options.solver_options.max_num_iterations = 1000
-        #ba_options.verbose = True
 
         # Configure bundle adjustment
         ba_config = pycolmap.BundleAdjustmentConfig()
