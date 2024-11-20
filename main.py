@@ -9,12 +9,10 @@ from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
 
-def occlusion_box_wrapper(args, logger):
+def occlusion_box_wrapper(path, output_dir, logger):
     config = load_yaml('config/occlusion_box/default.yaml')
-    if args.path:
-        config['path'] = args.path
-    if args.output_dir:
-        config['output_dir'] = args.output_dir
+    config['path'] = str(path)
+    config['output_dir'] = str(output_dir)
 
     # When refining through main.py the point cloud is already converted back to OpenGL
     # Override setting in the default config
@@ -87,24 +85,16 @@ def local_and_global_main_wrapper(args, logger):
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
     # TODO: needs some fixing and testing before re-enabling
-    """
-    occlusion_args = argparse.Namespace(
-        path=str(ply_output_path), # point cloud in OpenGL coords
-        output_dir=str(global_out_folder / "occlusion")
-    )
-    occlusion_box_wrapper(occlusion_args, logger)
-    """
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger) 
 
 # For triggering manually via SSH on server, to retrigger again on previous global refinement
 def occlusion_debug_helper():
     logger = setup_logger('occlusion_main', 'occlusion_test_log.txt')
 
     global_out_folder = Path('/app/jobs/981b9726-0574-4ee8-9f29-f72fbdbfd0e2/job_d00ca0ba-3d19-4f95-b8ea-a32a1e0ac3ab/refined/global')
-    occlusion_args = argparse.Namespace(
-        path=str(global_out_folder / "RefinedPointCloud.ply"), # point cloud in OpenGL coords
-        output_dir=str(global_out_folder / "occlusion")
-    )
-    occlusion_box_wrapper(occlusion_args, logger)
+    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
+
+    occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
