@@ -132,6 +132,9 @@ def refine_dataset(
             frame_index += 1
             timestamps_per_image[filename] = timestamp
 
+    if len(timestamps_per_image) != original_image_count:
+        raise Exception("Mismatching number of Frames and Timestamps. "
+                        f"{original_image_count} images {len(timestamps_per_image)} timestamps")
     # Display the result
     logger.info(f'{len(timestamps_per_image)}, frame timestamps loaded')
 
@@ -157,6 +160,9 @@ def refine_dataset(
                 int(row[5]), int(row[6])      # resolution (w, h)
             ]
 
+    if len(intrinsics_per_timestamp) != original_image_count:
+        raise Exception("Mismatching number of Frames and Camera Intrinsics. "
+                        f"{original_image_count} images {len(intrinsics_per_timestamp)} intrinsics")
     # Display the result
     logger.info(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
 
@@ -178,6 +184,9 @@ def refine_dataset(
             timestamp = round(float(row[0]) * 1e9) # s to ns
             ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]] # px, py, pz, rx, ry, rz, rw
 
+    if len(ar_poses_per_timestamp) != original_image_count:
+        raise Exception("Mismatching number of Frames and Poses. "
+                        f"{original_image_count} images {len(ar_poses_per_timestamp)} poses")
     # Display the result
     logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
 

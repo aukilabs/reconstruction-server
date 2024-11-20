@@ -95,6 +95,7 @@ def load_partial(
     #--------------------
     # RGB Frames
     references = [str(p.relative_to(images)) for p in (images).iterdir()]
+    original_image_count = len(references)
     references = sorted(references) # Assume file name is time stamp, to get chronological sequence
 
     print(len(references), "frames selected")
@@ -129,8 +130,12 @@ def load_partial(
             else:
                 filename = row[1]
             frame_index += 1
-
             timestamp_per_image_chunk[filename] = timestamp
+
+    if len(timestamp_per_image_chunk) != original_image_count:
+        raise Exception("Mismatching number of Frames and Timestamps. "
+                        f"{original_image_count} images {len(timestamp_per_image_chunk)} timestamps")
+
     print(len(timestamp_per_image_chunk), "frame timestamps loaded")
 
 
@@ -152,6 +157,9 @@ def load_partial(
                 float(row[3]), float(row[4]), # principal point (cx, cy)
                 int(row[5]), int(row[6])      # image resolution (w, h)
             ]
+    if len(intrinsics_per_timestamp) != original_image_count:
+        raise Exception("Mismatching number of Frames and Camera Intrinsics. "
+                        f"{original_image_count} images {len(intrinsics_per_timestamp)} intrinsics")
     print(len(intrinsics_per_timestamp), "camera frame intrinsics loaded")
 
 
@@ -170,6 +178,10 @@ def load_partial(
             timestamp = round(float(row[0]) * 1e9) # s to ns
             # px, py, pz, rx, ry, rz, rw
             ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]] 
+
+    if len(ar_poses_per_timestamp) != original_image_count:
+        raise Exception("Mismatching number of Frames and Poses. "
+                        f"{original_image_count} images {len(ar_poses_per_timestamp)} poses")
     print(len(ar_poses_per_timestamp), "AR poses loaded")
 
 
