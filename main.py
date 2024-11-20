@@ -89,7 +89,7 @@ def local_and_global_main_wrapper(args, logger):
     # TODO: needs some fixing and testing before re-enabling
     """
     occlusion_args = argparse.Namespace(
-        path=str(global_out_folder / "RefinedPointCloud.ply"), # point cloud in OpenGL coords
+        path=str(ply_output_path), # point cloud in OpenGL coords
         output_dir=str(global_out_folder / "occlusion")
     )
     occlusion_box_wrapper(occlusion_args, logger)
