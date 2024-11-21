@@ -1,9 +1,8 @@
 cluster_eps: 0.2
 cluster_min_points: 6
-display: true
-height_threshold: -0.6
+display: false
+height_threshold: 1.2
 occlusion_method: alphashape_optimized
-opengl: false
 outlier_min_points: 6
 outlier_radius: 0.2
 output_dir: ./output/occlusion_box
@@ -11,3 +10,5 @@ path: /path/to/jobs/my_domain_job/refined/global/sam
 viewpoint_dir: ./view_points
 voxel_size: 0.1
 xy_plane_clustering: false
+debug: true
+debug_ply: ''
