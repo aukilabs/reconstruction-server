@@ -1,5 +1,4 @@
 from pathlib import Path
-import sys
 import argparse
 
 from local_main import main as local_main
@@ -28,6 +27,7 @@ def occlusion_box_wrapper(path, output_dir, logger):
     logger.info("Starting occlusion box extraction...")
     occlusion_box_main(config)
     logger.info("Done with occlusion box extraction!")
+
 
 def local_main_wrapper(args, logger):
     scans = args.scans
@@ -70,6 +70,7 @@ def global_main_wrapper(args, logger):
     logger.info("Done with global refinement")
     logger.info("--------------------------------")
 
+
 def local_and_global_main_wrapper(args, logger):
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
@@ -87,6 +88,7 @@ def local_and_global_main_wrapper(args, logger):
     # TODO: needs some fixing and testing before re-enabling
     #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger) 
 
+
 # For triggering manually via SSH on server, to retrigger again on previous global refinement
 def occlusion_debug_helper():
     logger = setup_logger('occlusion_main', 'occlusion_test_log.txt')
@@ -95,6 +97,7 @@ def occlusion_debug_helper():
     ply_output_path = global_out_folder / "RefinedPointCloud.ply"
 
     occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
@@ -128,6 +131,7 @@ def main(args):
         save_failed_manifest_json(manifest_out_path, str(e))
         raise e
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="SfM refinement script")
     parser.add_argument("mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
@@ -135,6 +139,7 @@ def parse_args():
     parser.add_argument("output_path", type=Path, help="Path for output")
     parser.add_argument("scans", nargs="+", help="List of scans to process")
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = parse_args()
