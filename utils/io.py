@@ -464,15 +464,13 @@ class Model:
 
         # convert to opengl coordinate 
         if in_opengl:
-            pcd_np = np.array(pcd.points)
             transformation_matrix = np.array([
-                [0, 1, 0],
-                [1, 0, 0],
-                [0, 0, -1]
+                [0, 1, 0, 0],
+                [1, 0, 0, 0],
+                [0, 0, -1, 0],
+                [0, 0, 0, 1]
             ])
-            pcd_opengl = pcd_np.dot(transformation_matrix.T)
-            pcd.points = pcd_opengl.tolist()
-            return pcd
+            return pcd.transform(transformation_matrix)
         
         return pcd
 
