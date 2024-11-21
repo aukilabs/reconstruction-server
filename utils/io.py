@@ -441,7 +441,7 @@ class Model:
         for i in frames:
             self.__vis.add_geometry(i)
     
-    def get_points(self, min_track_len=3, remove_statistical_outlier=True):
+    def get_points(self, in_opengl=False, min_track_len=3, remove_statistical_outlier=True):
         pcd = open3d.geometry.PointCloud()
 
         xyz = []
@@ -462,6 +462,16 @@ class Model:
                 nb_neighbors=20, std_ratio=2.0
             )
 
+        # convert to opengl coordinate 
+        if in_opengl:
+            transformation_matrix = np.array([
+                [0, 1, 0, 0],
+                [1, 0, 0, 0],
+                [0, 0, -1, 0],
+                [0, 0, 0, 1]
+            ])
+            return pcd.transform(transformation_matrix)
+        
         return pcd
 
     def create_window(self):

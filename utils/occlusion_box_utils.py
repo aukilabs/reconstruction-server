@@ -37,18 +37,18 @@ def floor_removal(pcd, hard_offset_threshold):
 def z_axis_hard_offset(pcd, floor_height_threshold):
     pcd_np = np.asarray(pcd.points)
     # Keep points above the threshold (floor height)
-    non_floor_indices = np.where(pcd_np[:, 2] < floor_height_threshold)[0] 
+    non_floor_indices = np.where(pcd_np[:, 2] > floor_height_threshold)[0] 
     pcd_without_floor = pcd.select_by_index(non_floor_indices)
-    floor_indices = np.where(pcd_np[:, 2] > floor_height_threshold)[0]
+    floor_indices = np.where(pcd_np[:, 2] < floor_height_threshold)[0]
     pcd_only_floor = pcd.select_by_index(floor_indices)
     return pcd_without_floor, pcd_only_floor
 
 
 def z_axis_slope_offset(pcd, a, b, c):
     pcd_np = np.asarray(pcd.points)
-    non_floor_indices = np.where(pcd_np[:, 2] < calculate_z_from_xy(a, b, c, pcd_np[:, 0], pcd_np[:, 1]))[0]  # Keep points above the threshold (floor height)
+    non_floor_indices = np.where(pcd_np[:, 2] > calculate_z_from_xy(a, b, c, pcd_np[:, 0], pcd_np[:, 1]))[0]  # Keep points above the threshold (floor height)
     pcd_without_floor = pcd.select_by_index(non_floor_indices)
-    floor_indices = np.where(pcd_np[:, 2] > calculate_z_from_xy(a, b, c, pcd_np[:, 0], pcd_np[:, 1]))[0]
+    floor_indices = np.where(pcd_np[:, 2] < calculate_z_from_xy(a, b, c, pcd_np[:, 0], pcd_np[:, 1]))[0]
     pcd_only_floor = pcd.select_by_index(floor_indices)
     return pcd_without_floor, pcd_only_floor
 

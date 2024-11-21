@@ -1,10 +1,33 @@
 from pathlib import Path
-import sys
 import argparse
 
 from local_main import main as local_main
 from global_main import main as global_main
+from occlusion_box import main as occlusion_box_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.io import load_yaml, save_to_yaml
+
+
+def occlusion_box_wrapper(path, output_dir, logger):
+    config = load_yaml('config/occlusion_box/default.yaml')
+    config['path'] = str(path)
+    config['output_dir'] = str(output_dir)
+
+    # When refining through main.py the point cloud is already converted back to OpenGL
+    # Override setting in the default config
+    config['opengl'] = True
+    config['display'] = False
+
+    logger.info(f"Running occlusion box with config contents:")
+    for key, value in config.items():
+        logger.info(f"{key}: {value}")
+
+    save_to_yaml(config)
+
+    logger.info("Starting occlusion box extraction...")
+    occlusion_box_main(config)
+    logger.info("Done with occlusion box extraction!")
+
 
 def local_main_wrapper(args, logger):
     scans = args.scans
@@ -47,31 +70,34 @@ def global_main_wrapper(args, logger):
     logger.info("Done with global refinement")
     logger.info("--------------------------------")
 
+
 def local_and_global_main_wrapper(args, logger):
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
 
-    """
-    # output stitched point cloud
-    stitch_args = argparse.Namespace(
-        data_dir=Path(args.job_root_path) / "datasets",
-        dataset_group=None,
-        all_observations=True,
-        all_poses=True,
-        use_refined_outputs=True,
-        add_3dpoints=True,
-        basic_stitch_only=True
-    )
-    global_main(stitch_args)
-    """
-    
-    ply_output_path = Path(args.job_root_path) / "refined" / "global" / "RefinedPointCloud.ply"
+    global_out_folder = Path(args.job_root_path) / "refined" / "global"
+
+    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
     if ply_output_path.exists():
         logger.info(f"Refined point cloud created! {ply_output_path}")
     else:
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
+
+    # TODO: needs some fixing and testing before re-enabling
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger) 
+
+
+# For triggering manually via SSH on server, to retrigger again on previous global refinement
+def occlusion_debug_helper():
+    logger = setup_logger('occlusion_main', 'occlusion_test_log.txt')
+
+    global_out_folder = Path('/app/jobs/981b9726-0574-4ee8-9f29-f72fbdbfd0e2/job_d00ca0ba-3d19-4f95-b8ea-a32a1e0ac3ab/refined/global')
+    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
+
+    occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
@@ -105,6 +131,7 @@ def main(args):
         save_failed_manifest_json(manifest_out_path, str(e))
         raise e
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="SfM refinement script")
     parser.add_argument("mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
@@ -112,6 +139,7 @@ def parse_args():
     parser.add_argument("output_path", type=Path, help="Path for output")
     parser.add_argument("scans", nargs="+", help="List of scans to process")
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = parse_args()

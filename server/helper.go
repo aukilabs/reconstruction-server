@@ -46,14 +46,16 @@ func (js *jobList) AddJob(j *job) {
 
 func WriteJobManifestFile(j *job, status string) {
 	if status == "failed" {
-		outputCount, err := UploadRefinedOutputsToDomain(j)
-		if err != nil {
-			log.Printf("job %s failed inside 'UpdateJobManifestFile', couldn't upload refined outputs: %s", j.ID, err)
-		}
-		if outputCount == 0 {
-			log.Printf("job %s python produced no refined outputs. Upload basic failed manifest instead.", j.ID)
-			WriteFailedJobManifestFile(j, "Refinement python script failed to start")
-		}
+		/*
+			outputCount, err := UploadRefinedOutputsToDomain(j)
+			if err != nil {
+				log.Printf("job %s failed inside 'UpdateJobManifestFile', couldn't upload refined outputs: %s", j.ID, err)
+			}
+			if outputCount == 0 {
+				log.Printf("job %s python produced no refined outputs. Upload basic failed manifest instead.", j.ID)
+			}
+		*/
+		WriteFailedJobManifestFile(j, "Reconstruction job script failed")
 	} else if status == "processing" {
 		progress := 0
 		WriteJobManifestFileHelper(j, status, progress, "Request received by reconstruction server")
@@ -237,6 +239,11 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 			Name:     "unrefined_pointcloud",
 			DataType: "unrefined_pointcloud_ply",
 		},
+		/*{
+			FilePath: path.Join(refinedOutput, "occlusion", "meshes.obj"),
+			Name:     "occlusionmesh_v1",
+			DataType: "obj",
+		},*/
 	}
 
 	outputCount := 0

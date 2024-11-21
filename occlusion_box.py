@@ -6,7 +6,6 @@ import time
 import os
 import yaml
 
-
 from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
 from utils.occlusion_box_utils import (
     voxelise, 
@@ -47,24 +46,24 @@ def main(config):
     time_spent = {}
     num_points = {}
     
-    # Model init
+
+    # Init from colmap reconstruction folder
     model = Model()
     model.read_model(path=config['path'], ext='.bin')
-
     print("num_cameras:", len(model.cameras))
     print("num_images:", len(model.images))
     print("num_points3D:", len(model.points3D))
+    pcd = model.get_points(in_opengl=True)
 
-    # Load point cloud
-    pcd = model.get_points()
     num_points['Original'] = len(pcd.points)
 
-    # Step 0: fix coordinate
-    if config['opengl']: # TODO: is this default?
-        print("[Step 0] Fix Coordinate")
-        r_l = [-np.pi / 2, 0, 0]
-        rotation_fix = pcd.get_rotation_matrix_from_axis_angle(r_l)  # 90 degrees = π/2 radians
-        pcd.rotate(rotation_fix, center=(0, 0, 0))  # Center of rotation at origin (0, 0, 0)
+    # Step 0: Swap Axis 
+    print("[Step 0] Swap Y and Z Axis ")
+    x_z_swap =  np.array([[1, 0, 0, 0],
+                        [0, 0, 1, 0],
+                        [0, 1, 0, 0], 
+                        [0, 0, 0, 1]])
+    pcd.transform(x_z_swap)  # Center of rotation at origin (0, 0, 0)
 
     # Step 1: Voxelizing
     pcd = pcd.voxel_down_sample(voxel_size = config['voxel_size'])
@@ -223,20 +222,32 @@ def main(config):
         yaml.dump(result, yaml_file, default_flow_style=False)
 
     # Save Mesh
-    colmap_to_opengl_rot_mat = pcd.get_rotation_matrix_from_axis_angle([np.pi / 2, 0, 0])  # 90 degrees = π/2 radians
     for mesh in meshes:
-        mesh = mesh.rotate(colmap_to_opengl_rot_mat, center=(0, 0, 0))
+        mesh = mesh.transform(x_z_swap)
     save_meshes_obj(meshes, os.path.join(config['output_dir'], 'meshes.obj'))
 
+    if config['debug']:
+        pcd_ply = o3d.io.read_point_cloud(config['debug_ply'])
+        pcd_ply, _ = pcd_ply.remove_radius_outlier(nb_points=config['outlier_min_points'], radius=config['outlier_radius'])
+        vis2 = o3d.visualization.Visualizer()
+        vis2.create_window(window_name='Occlusion', width=960, height=540, left=960, top=0)
+        vis2.add_geometry(pcd_ply)
+        for mesh in meshes:
+            vis2.add_geometry(mesh)
     # If Display
     if config['display']:
         while True:
             if not vis1.poll_events():
                 break
             vis1.update_renderer()
+            if config['debug']:
+                if not vis2.poll_events():
+                    break
+                vis2.update_renderer()
 
     vis1.destroy_window()
-
+    if config['debug']:
+        vis2.destroy_window()
 
 if __name__ == "__main__":
 

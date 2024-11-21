@@ -13,7 +13,6 @@ PROD_SERVERS=(
 )
 
 DEV_SERVERS=(
-    "http://provider.dcnorse.ddns.net:31351/"
     "http://provider.pcgameservers.com:30004/"
 )
 
