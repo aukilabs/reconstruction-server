@@ -71,7 +71,7 @@ def run_triangulation(
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
-    ba_options.solver_options.num_threads = 16
+    #ba_options.solver_options.num_threads = 16
     #ba_options.min_num_residuals_for_multi_threading = 1000000000 # Put very high to avoid threading. Gets stuck on cloud (both on Akash and google colab, not sure why)
 
     num_ba_iterations_total = 5
