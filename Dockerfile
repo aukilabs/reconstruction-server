@@ -16,10 +16,14 @@ FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y wget \
+RUN apt-get update && apt-get install -y \
+    wget \
     curl \
     vim \
     git \
+    nano \
+    jq \
+    less \
     cmake \
     autoconf \
     automake \
@@ -44,6 +48,14 @@ RUN apt-get update && apt-get install -y wget \
     libsuitesparse-dev \
     python3-pip \
     python3-tk
+
+RUN apt-get install -y --no-install-recommends \
+    ssh \
+    netcat-openbsd \
+    ca-certificates \
+    iproute2 \
+    iputils-ping \
+    bind9-dnsutils
 
 RUN pip install --upgrade pip setuptools wheel
 
@@ -103,8 +115,8 @@ RUN git clone https://github.com/colmap/colmap.git && \
 
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    sed -i 's/num_workers=5, batch_size=1/num_workers=1, batch_size=1/' hloc/match_features.py && \
-    sed -i 's/match_path=match_path), 5)/match_path=match_path), 1)/' hloc/match_features.py && \
+    #sed -i 's/num_workers=5, batch_size=1/num_workers=1, batch_size=1/' hloc/match_features.py && \
+    #sed -i 's/match_path=match_path), 5)/match_path=match_path), 1)/' hloc/match_features.py && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
@@ -124,9 +136,10 @@ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDP
 
 COPY utils /app/utils
 RUN chmod 755 /app/utils
-COPY local_main.py global_main.py occlusion_box.py main.py start_server.sh /app/
+COPY local_main.py global_main.py occlusion_box.py main.py start_server.sh start_sshd.sh /app/
 RUN chmod 755 /app/*.py
 RUN chmod 755 /app/start_server.sh
+RUN chmod 755 /app/start_sshd.sh
 
 # Run reconstruction server as separate user, not root
 #RUN adduser --disabled-password --gecos "" reconstruction-server
