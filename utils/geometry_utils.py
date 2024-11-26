@@ -210,7 +210,6 @@ def align_reconstruction_chunks(
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
     solver_options.max_num_iterations = 100
-    #solver_options.num_threads = 16
     solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
 
     summary = pyceres.SolverSummary()
