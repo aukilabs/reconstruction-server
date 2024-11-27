@@ -23,10 +23,8 @@ jobs:
 
       # Step 3: Replace the version number in a file
       - name: Update version in file
-        env:
-          TAG_VERSION: ${{ steps.vars.outputs.tag }}
         run: |
-          sed -i 's/\"reconstructionServerVersion\": VERSION/\"reconstructionServerVersion\": \"${TAG_VERSION}\"/' utils/data_utils.py
+          sed -i 's/"reconstructionServerVersion": VERSION/"reconstructionServerVersion": "\"${{ steps.vars.outputs.tag }}\""/' utils/data_utils.py
 
       # Step 4: Login AWS
       - name: Configure AWS credentials
