@@ -26,7 +26,7 @@ jobs:
         env:
           TAG_VERSION: ${{ steps.vars.outputs.tag }}
         run: |
-          sed -i 's/"reconstructionServerVersion": VERSION/"reconstructionServerVersion": "${TAG_VERSION}"/' utils/data_utils.py
+          sed -i 's/\"reconstructionServerVersion\": VERSION/\"reconstructionServerVersion\": \"${TAG_VERSION}\"/' utils/data_utils.py
 
       # Step 4: Login AWS
       - name: Configure AWS credentials
@@ -61,6 +61,6 @@ jobs:
           rounds=15
           for i in $(seq 1 ${rounds}); do
             echo "Waiting for ECR image replication to finish (${i}/${rounds})..."
-            aws ecr describe-image-replication-status --repository-name "reconstruction-server" --image-id "imageTag=${{ steps.vars.outputs.tag }}" --region "${{ vars.GLOBAL_COMMON_AWS_REGIO }}" --output text | grep IN_PROGRESS || break
+            aws ecr describe-image-replication-status --repository-name "reconstruction-server" --image-id "imageTag=${{ steps.vars.outputs.tag }}" --region "${{ vars.GLOBAL_COMMON_AWS_REGION }}" --output text | grep IN_PROGRESS || break
             sleep 10
           done
