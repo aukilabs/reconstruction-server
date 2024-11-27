@@ -12,6 +12,7 @@ from src.ply_export import export_ply_text
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
+VERSION = "develop"
 
 def convert_pose_opengl_to_colmap(position, quaternion):
     
@@ -281,7 +282,7 @@ def save_failed_manifest_json(csv_path, jobStatusDetails):
 def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
     manifest_data = {
         "portals": [],
-        "reconstructionServerVersion": "0.1.28",
+        "reconstructionServerVersion": VERSION,
         "jobStatus": jobStatus if jobStatus is not None else "unknown",
         "jobProgress": jobProgress if jobProgress is not None else 0,
         "jobStatusDetails": jobStatusDetails if jobStatusDetails is not None else ""
