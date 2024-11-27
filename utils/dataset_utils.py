@@ -460,7 +460,7 @@ def load_partial(
         combined_rec.register_image(image_id)
 
         if loaded_rec is not None:
-            assert image_id not in image_id_old_to_new
+            assert loaded_image.image_id not in image_id_old_to_new
             image_id_old_to_new[loaded_image.image_id] = image_id
 
         next_image_id += 1
