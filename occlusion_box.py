@@ -16,11 +16,12 @@ from utils.occlusion_box_utils import (
     find_best_fit_alphashape,
     find_best_fit_alphashape_optimized,
     find_best_fit_convexhull,
-    draw_box_from_poly
+    draw_box_from_poly,
+    create_textured_mesh
 )
 
 
-SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "alphashape_optimized", "convexhull"]
+SUPPORTED_OCCLUSION_METHOD = ["aabb", "alphashape", "alphashape_optimized", "convexhull", "textured_mesh"]
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Occlusion boxes extraction script")
@@ -181,6 +182,11 @@ def main(config):
                     geo.append(occ_box)
                     geo.append(occ_pcd)
                     meshes.append(mesh)
+
+            elif config['occlusion_method'] == 'textured_mesh':
+                # Generate a textured mesh from the cluster
+                textured_mesh = create_textured_mesh(cluster, model, config)
+                meshes.append(textured_mesh)
 
     time5 = time.time()
     time_spent["Occlusion Volume"] = time5 - time4

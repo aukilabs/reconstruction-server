@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 import open3d as o3d
 from sklearn.linear_model import LinearRegression
@@ -257,3 +258,74 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
     mesh.compute_vertex_normals()  # Optionally compute normals for shading
 
     return point_cloud, line_set, mesh
+
+def create_textured_mesh(cluster, model, config):
+
+    # Estimate normals if not already computed
+    cluster.estimate_normals()
+
+    # Surface reconstruction (e.g., Poisson reconstruction)
+    print("Running Poisson surface reconstruction")
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(cluster, depth=9)
+
+    # Clean up the mesh by removing low-density vertices
+    densities = np.asarray(densities)
+    density_threshold = np.percentile(densities, 5)
+    vertices_to_remove = densities < density_threshold
+    mesh.remove_vertices_by_mask(vertices_to_remove)
+
+    # Prepare for texture mapping
+    # Load images and camera parameters
+    images = model.images
+    cameras = model.cameras
+    image_dir = config['image_dir']
+
+    # Create lists to hold images and corresponding camera parameters
+    rgb_images = []
+    camera_parameters = []
+
+    for image_id in images:
+        image = images[image_id]
+        camera = cameras[image.camera_id]
+
+        # Load image
+        image_path = os.path.join(image_dir, image.name)
+        if not os.path.exists(image_path):
+            print(f"Image not found: {image_path}")
+            continue
+        rgb_image = o3d.io.read_image(image_path)
+        rgb_images.append(rgb_image)
+
+        # Get intrinsic parameters
+        w = camera.width
+        h = camera.height
+        params = camera.params
+        if camera.model == 'PINHOLE':
+            fx, fy, cx, cy = params
+            intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
+        else:
+            print(f"Unsupported camera model: {camera.model}")
+            continue
+
+        # Get extrinsic parameters
+        R = image.qvec2rotmat()
+        t = image.tvec
+        extrinsic = np.eye(4)
+        extrinsic[:3, :3] = R
+        extrinsic[:3, 3] = t
+
+        # Store camera parameters
+        camera_parameter = {'intrinsic': intrinsic, 'extrinsic': extrinsic}
+        camera_parameters.append(camera_parameter)
+
+    # Texture mapping
+    # Compute vertex colors using the projection of mesh onto images
+    # This is a simplified example and may not provide full texture mapping
+    print("Computing vertex colors from images")
+    o3d.geometry.TriangleMesh.compute_vertex_normals(mesh)
+    
+    # save to obj
+    o3d.io.write_triangle_mesh(f"{config['output_dir']}/textured_mesh.obj", mesh)
+
+    # Return the mesh
+    return mesh

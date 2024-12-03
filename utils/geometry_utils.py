@@ -40,9 +40,7 @@ def dmt_global_stitching(detections_per_qr,
         bundle_adjuster.problem, ba_options.solver_options
     )
     solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
-    solver_options.minimizer_progress_to_stdout = True
-    solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
-
+    solver_options.minimizer_progress_to_stdout = False
     initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
     print("------------")
     print("INITIAL LOSS BREAKDOWN:")
@@ -206,11 +204,10 @@ def align_reconstruction_chunks(
 
     solver_options = pyceres.SolverOptions()
     solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
-    solver_options.minimizer_progress_to_stdout = True
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
     solver_options.max_num_iterations = 100
-    solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
+    solver_options.minimizer_progress_to_stdout = False
 
     summary = pyceres.SolverSummary()
     pyceres.solve(solver_options, problem, summary)
