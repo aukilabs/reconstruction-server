@@ -314,6 +314,7 @@ def load_partial(
             pose = alignment_transform * pose
         #placed_portal[qr_id] = rectify_floor_portal(pose)
         placed_portal[qr_id] = pose
+        print(f"Portal: {qr_id} Pose: {pose}")
 
     if alignment_transform is not None:
         for timestamp, detection in qr_detections_per_timestamp.items():
@@ -548,7 +549,9 @@ def load_partial(
 
         # detections_per_qr[id].append(pycolmap.Rigid3d())
         # image_ids_per_qr[id].append(image_id)
-
+    print("\n\n")
+    print(detections_per_qr)
+    print("\n\n")
     return next_image_id, placed_portal, partial_rec_dir, combined_rec, \
            timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
 
@@ -855,10 +858,10 @@ def stitching_helper(
     logger.info('========================================================================')
     logger.info("ALL DETECTIONS (optimized stitch):")
     logger.info('========================================================================')
-    optimized_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in optimized_stitch_qr_detections.items()}
+    optimized_stitch_mean_qr_poses = {qr_id: [mean_pose(poses)] for qr_id, poses in optimized_stitch_qr_detections.items()}
     for qr_id, pose in optimized_stitch_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
-        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+        logger.info(f"{qr_id}, translation:{pose[0].translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
     optimized_stitch_ply_path = refined_group_dir / 'global' / "OptimizedStitchPointCloud.ply"
     refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
@@ -886,9 +889,8 @@ def stitching_helper(
             shutil.copy(optimized_stitch_ply_path, refined_ply_path)
 
         manifest_out_path = output_path / 'refined_manifest.json'
-        logger.info(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
-        save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
-
+        logger.info(f"Saving refined manifest with {len(optimized_stitch_mean_qr_poses)} detections, to: {manifest_out_path}")
+        save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
         return (
             combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
             combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
