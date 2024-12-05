@@ -259,29 +259,35 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
 
     return point_cloud, line_set, mesh
 
+
 def create_textured_mesh(cluster, model, config):
 
     # Estimate normals if not already computed
-    cluster.estimate_normals()
+    cluster.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
 
     # Surface reconstruction (e.g., Poisson reconstruction)
-    print("Running Poisson surface reconstruction")
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(cluster, depth=9)
+    #print("Running Poisson surface reconstruction")
+    #mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(cluster, depth=config.get('poisson_depth', 6))
+    #densities = np.asarray(densities)
+    #density_threshold = np.percentile(densities, 5)
+    #vertices_to_remove = densities < density_threshold
+    #mesh.remove_vertices_by_mask(vertices_to_remove)
 
-    # Clean up the mesh by removing low-density vertices
-    densities = np.asarray(densities)
-    density_threshold = np.percentile(densities, 5)
-    vertices_to_remove = densities < density_threshold
-    mesh.remove_vertices_by_mask(vertices_to_remove)
+    print("Creating mesh from point cloud alpha shape")
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster, config.get('alphashape_alpha', 0.5))
+    
+    #print("Creating mesh from point cloud ball pivoting")
+    #radii = o3d.utility.DoubleVector(config.get('ball_pivoting_radii', [0.01, 0.05, 0.1]))
+    #mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(cluster, (radii))
 
     # Prepare for texture mapping
     # Load images and camera parameters
     images = model.images
     cameras = model.cameras
-    image_dir = config['image_dir']
+    #image_dir = config['image_dir']
 
     # Create lists to hold images and corresponding camera parameters
-    rgb_images = []
+    #rgb_images = []
     camera_parameters = []
 
     for image_id in images:
@@ -289,12 +295,12 @@ def create_textured_mesh(cluster, model, config):
         camera = cameras[image.camera_id]
 
         # Load image
-        image_path = os.path.join(image_dir, image.name)
-        if not os.path.exists(image_path):
-            print(f"Image not found: {image_path}")
-            continue
-        rgb_image = o3d.io.read_image(image_path)
-        rgb_images.append(rgb_image)
+        #image_path = os.path.join(image_dir, image.name)
+        #if not os.path.exists(image_path):
+        #    print(f"Image not found: {image_path}")
+        #    continue
+        #rgb_image = o3d.io.read_image(image_path)
+        #rgb_images.append(rgb_image)
 
         # Get intrinsic parameters
         w = camera.width
@@ -303,6 +309,9 @@ def create_textured_mesh(cluster, model, config):
         if camera.model == 'PINHOLE':
             fx, fy, cx, cy = params
             intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
+        elif camera.model == 'SIMPLE_PINHOLE':
+            f, cx, cy = params
+            intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, f, f, cx, cy)
         else:
             print(f"Unsupported camera model: {camera.model}")
             continue
@@ -321,11 +330,12 @@ def create_textured_mesh(cluster, model, config):
     # Texture mapping
     # Compute vertex colors using the projection of mesh onto images
     # This is a simplified example and may not provide full texture mapping
-    print("Computing vertex colors from images")
+    #print("Computing vertex colors from images")
     o3d.geometry.TriangleMesh.compute_vertex_normals(mesh)
     
     # save to obj
-    o3d.io.write_triangle_mesh(f"{config['output_dir']}/textured_mesh.obj", mesh)
+    o3d.io.write_triangle_mesh(f"{config['output_dir']}/textured_mesh_partial_{len(cluster.points)}.obj", mesh)
+    #debug_index += 1
 
     # Return the mesh
     return mesh

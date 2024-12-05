@@ -158,7 +158,7 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2], config.get('alphashape_alpha', 2.0))
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
@@ -167,7 +167,7 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape_optimized':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2], config.get('alphashape_alpha', 2.0))
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)

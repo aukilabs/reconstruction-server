@@ -62,9 +62,23 @@ def refine_dataset(
     features = sfm_dir / 'features.h5'
     matches = sfm_dir / 'matches.h5'
 
-    feature_conf = extract_features.confs["superpoint_max"]
-    feature_conf["output"] = features
-    feature_conf["model"]["max_keypoints"] = 1024
+    #feature_conf = extract_features.confs["superpoint_max"]
+    #feature_conf["output"] = features
+    #feature_conf["model"]["max_keypoints"] = 1024
+    #feature_conf["preprocessing"]["resize_max"] = 1024
+
+    feature_conf = {
+        "output": features,
+        "model": {
+            "name": "aliked",
+            "model_name": "aliked-n16rot",
+            "max_num_keypoints": 512,
+        },
+        "preprocessing": {
+            "grayscale": False,
+            "resize_max": 1024,
+        },
+    }
 
     """
     feature_conf = {
@@ -79,8 +93,10 @@ def refine_dataset(
         },
     }
     """
+
     logger.info(f"Feature conf: {feature_conf}")
-    matcher_conf = match_features.confs["superpoint+lightglue"]
+    #matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf = match_features.confs["aliked+lightglue"]
 
     ############################
     # LOAD DATASET
