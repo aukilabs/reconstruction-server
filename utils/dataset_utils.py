@@ -913,16 +913,16 @@ def stitching_helper(
     logger.info('========================================================================')
     logger.info('ALL DETECTIONS (bundle adjusted):')
     logger.info('========================================================================')
-    bundle_adjusted_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in bundle_adjusted_qr_detections.items()}
+    bundle_adjusted_mean_qr_poses = {qr_id: [mean_pose(poses)] for qr_id, poses in bundle_adjusted_qr_detections.items()}
     for qr_id, pose in bundle_adjusted_mean_qr_poses.items():
         deviation = np.std([det.translation for det in bundle_adjusted_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
-        logger.info(f"{qr_id} translation: {pose.translation}, deviation: {deviation:.10f}")
+        logger.info(f"{qr_id} translation: {pose[0].translation}, deviation: {deviation:.10f}")
 
 
     manifest_out_path = output_path / 'refined_manifest.json'
-    logger.info(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
-    save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+    logger.info(f"Saving refined manifest with {len(bundle_adjusted_mean_qr_poses)} detections, to: {manifest_out_path}")
+    save_manifest_json(bundle_adjusted_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"
