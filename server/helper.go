@@ -44,18 +44,35 @@ func (js *jobList) AddJob(j *job) {
 	js.list[j.ID] = *j
 }
 
+func ParseStatusFromManifest(manifestPath string) (string, error) {
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+
+	var parsedManifest map[string]interface{}
+	if err := json.Unmarshal(content, &parsedManifest); err != nil {
+		return "", err
+	}
+
+	status, ok := parsedManifest["jobStatus"].(string)
+	if !ok {
+		return "", fmt.Errorf("Cannot parse jobStatus in existing manifest json file: %s", manifestPath)
+	}
+	return status, nil
+}
+
 func WriteJobManifestFile(j *job, status string) {
 	if status == "failed" {
-		/*
-			outputCount, err := UploadRefinedOutputsToDomain(j)
-			if err != nil {
-				log.Printf("job %s failed inside 'UpdateJobManifestFile', couldn't upload refined outputs: %s", j.ID, err)
-			}
-			if outputCount == 0 {
-				log.Printf("job %s python produced no refined outputs. Upload basic failed manifest instead.", j.ID)
-			}
-		*/
-		WriteFailedJobManifestFile(j, "Reconstruction job script failed")
+		// If python script has already written a manifest with status "failed", don't overwrite it
+		statusFromManifest, err := ParseStatusFromManifest(path.Join(j.JobPath, "job_manifest.json"))
+		
+		if err == nil && statusFromManifest == "failed" {
+			log.Printf("job %s python script has already written a failed manifest, won't overwrite.", j.ID)
+		} else {
+			WriteFailedJobManifestFile(j, "Reconstruction job script failed")
+		}
+
 	} else if status == "processing" {
 		progress := 0
 		WriteJobManifestFileHelper(j, status, progress, "Request received by reconstruction server")
@@ -194,9 +211,9 @@ func WriteJobManifestFileHelper(j *job, status string, progress int, statusDetai
 from utils.data_utils import save_manifest_json;
 save_manifest_json({},
 	'` + j.JobPath + `/job_manifest.json',
-	jobStatus='` + status + `',
-	jobProgress=` + strconv.Itoa(progress) + `,
-	jobStatusDetails='` + statusDetails + `'
+	job_status='` + status + `',
+	job_progress=` + strconv.Itoa(progress) + `,
+	job_status_details='` + statusDetails + `'
 )`
 
 	log.Println("Writing manifest for job ", j.ID, ", with status: ", status, ", progress: ", progress, ", status details: ", statusDetails)
@@ -661,6 +678,7 @@ func executeJob(j *job) {
 
 	startTime := time.Now()
 	cmd := exec.Command("python3", params...)
+
 	// Create log file
 	logFile, err := os.Create(logFilePath)
 	if err != nil {

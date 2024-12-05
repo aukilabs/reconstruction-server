@@ -75,6 +75,8 @@ RUN git clone https://github.com/google/glog.git && cd glog && \
     cmake --build build --target install
 
 RUN pip install "pybind11[global]==2.12.0"
+
+RUN pip install psutil gputil
     
 WORKDIR /src
 

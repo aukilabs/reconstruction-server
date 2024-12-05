@@ -887,7 +887,7 @@ def stitching_helper(
 
         manifest_out_path = output_path / 'refined_manifest.json'
         logger.info(f"Saving refined manifest with {len(optimized_stitch_qr_detections)} detections, to: {manifest_out_path}")
-        save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+        save_manifest_json(optimized_stitch_qr_detections, manifest_out_path, job_status="refined", job_progress=100)
 
         return (
             combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
@@ -920,7 +920,7 @@ def stitching_helper(
 
     manifest_out_path = output_path / 'refined_manifest.json'
     logger.info(f"Saving refined manifest with {len(bundle_adjusted_qr_detections)} detections, to: {manifest_out_path}")
-    save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, jobStatus="refined", jobProgress=100)
+    save_manifest_json(bundle_adjusted_qr_detections, manifest_out_path, job_status="refined", job_progress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"

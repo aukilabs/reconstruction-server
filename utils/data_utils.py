@@ -9,6 +9,10 @@ import torch
 import logging
 import cv2
 from src.ply_export import export_ply_text
+import datetime
+import platform
+import psutil
+import GPUtil
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -275,18 +279,68 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 
-def save_failed_manifest_json(csv_path, jobStatusDetails):
-    save_manifest_json({}, csv_path, jobStatus="failed", jobProgress=100, jobStatusDetails=jobStatusDetails)
+def save_failed_manifest_json(csv_path, job_status_details):
+    save_manifest_json({}, csv_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, csv_path, jobStatus=None, jobProgress=None, jobStatusDetails=None):
+def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=None, job_status_details=None):
     manifest_data = {
         "portals": [],
         "reconstructionServerVersion": VERSION,
-        "jobStatus": jobStatus if jobStatus is not None else "unknown",
-        "jobProgress": jobProgress if jobProgress is not None else 0,
-        "jobStatusDetails": jobStatusDetails if jobStatusDetails is not None else ""
+        "jobStatus": job_status if job_status is not None else "unknown",
+        "jobProgress": job_progress if job_progress is not None else 0,
+        "jobStatusDetails": job_status_details if job_status_details is not None else "",
+        "manifestTimestamp": datetime.datetime.now().isoformat()
     }
+
+    manifest_data["serverDetails"] = {}
+
+    # Lots of try catch to just skip data that is not available but still keep the rest
+    try:
+        manifest_data["serverDetails"]["os"] = platform.platform()
+    except:
+        pass
+
+    try:
+        manifest_data["serverDetails"]["cpu"] = {
+            "model": platform.processor(),
+            "cores": psutil.cpu_count(logical=False),
+            "threads": psutil.cpu_count(logical=True),
+            "load": psutil.cpu_percent(interval=1),
+        }
+    except:
+        pass
+
+    try:
+        manifest_data["serverDetails"]["memory"] = {
+            "total": psutil.virtual_memory().total,
+            "available": psutil.virtual_memory().available,
+            "used": psutil.virtual_memory().used,
+            "used_percent": psutil.virtual_memory().percent
+        }
+    except:
+        pass
+    
+    try:
+        manifest_data["serverDetails"]["gpus"] = [
+            {
+                "name": gpu.name,
+                "memory_total": gpu.memoryTotal,
+                "memory_used": gpu.memoryUsed,
+                "load": gpu.load
+            }
+            for gpu in GPUtil.getGPUs()
+        ] if len(GPUtil.getGPUs()) > 0 else [],
+    except:
+        pass
+
+    try:
+        manifest_data["serverDetails"]["docker"] = {
+            "in_container": os.path.exists("/.dockerenv"),
+            "container_id": subprocess.check_output(["cat", "/proc/1/cpuset"]).decode().strip().split("/")[-1] if os.path.exists("/.dockerenv") else None
+        }
+    except:
+        pass
 
     # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
     # For now we just take the first
