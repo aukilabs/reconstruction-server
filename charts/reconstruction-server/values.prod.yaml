@@ -1,0 +1,5 @@
+k8s-service:
+  containerImage:
+    tag: v0.1.31
+    pullPolicy: IfNotPresent
+  replicaCount: 2
