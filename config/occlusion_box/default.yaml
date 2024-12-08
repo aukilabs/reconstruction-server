@@ -3,14 +3,21 @@ cluster_min_points: 20
 display: false
 height_threshold: 0.7
 occlusion_method: textured_mesh
-alphashape_alpha: 1.0
+mesh_algorithm: alphashape
+normals_radius: 0.1
+normals_max_neighbors: 10
+alphashape_alpha: 0.2
+ball_pivoting_radii: [0.1, 0.2]
 poisson_depth: 7
-outlier_min_points: 10
+poisson_density_threshold: 5.0
+outlier_min_points: 15
+outlier_std_ratio: 3.0
 outlier_radius: 0.3
+downsample_polygons: true
 output_dir: ./output/occlusion_box
 path: /path/to/jobs/my_domain_job/refined/global/sam
 viewpoint_dir: ./view_points
-voxel_size: 0.01
+voxel_size: 0.02
 xy_plane_clustering: false
 debug: true
 debug_ply: ''

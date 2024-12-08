@@ -262,24 +262,39 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
 
 def create_textured_mesh(cluster, model, config):
 
-    # Estimate normals if not already computed
-    cluster.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
+    mesh_algorithm = config.get('mesh_algorithm', 'alphashape')
+    print(f"Creating topography mesh, mesh_algorithm: {mesh_algorithm}")
 
-    # Surface reconstruction (e.g., Poisson reconstruction)
-    #print("Running Poisson surface reconstruction")
-    #mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(cluster, depth=config.get('poisson_depth', 6))
-    #densities = np.asarray(densities)
-    #density_threshold = np.percentile(densities, 5)
-    #vertices_to_remove = densities < density_threshold
-    #mesh.remove_vertices_by_mask(vertices_to_remove)
+    # Estimate normals for the point cloud
+    radius = config.get('normals_radius', 0.1)
+    max_nn = config.get('normals_max_neighbors', 20)
+    print(f"Estimating point cloud normals (radius={radius}, max_nn={max_nn})")
+    cluster.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn))
 
-    print("Creating mesh from point cloud alpha shape")
-    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster, config.get('alphashape_alpha', 0.5))
+    # Surface reconstruction from point cloud
+    if mesh_algorithm == 'poisson':
+        print("Running Poisson surface reconstruction")
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(cluster, depth=config.get('poisson_depth', 6))
+        densities = np.asarray(densities)
+        print(f"density 5th percentile: {np.percentile(densities, 5)}")
+        print(f"density 10th percentile: {np.percentile(densities, 10)}")
+        print(f"density 20th percentile: {np.percentile(densities, 20)}")
+        density_threshold = config.get('poisson_density_threshold', 5.0)
+        vertices_to_remove = densities < density_threshold
+        mesh.remove_vertices_by_mask(vertices_to_remove)
     
-    #print("Creating mesh from point cloud ball pivoting")
-    #radii = o3d.utility.DoubleVector(config.get('ball_pivoting_radii', [0.01, 0.05, 0.1]))
-    #mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(cluster, (radii))
+    elif mesh_algorithm == 'ball_pivoting':
+        print("Running ball pivoting surface reconstruction")
+        radii = o3d.utility.DoubleVector(config.get('ball_pivoting_radii', [0.01, 0.05, 0.1]))
+        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(cluster, radii)
+        
+    else:
+        if mesh_algorithm != 'alphashape':
+            print(f"Unsupported mesh algorithm: {mesh_algorithm}. Falling back to alpha shape.")
 
+        print("Running alpha shape reconstruction")
+        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster, config.get('alphashape_alpha', 0.5))
+    
     # Prepare for texture mapping
     # Load images and camera parameters
     images = model.images

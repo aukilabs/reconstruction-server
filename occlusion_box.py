@@ -59,35 +59,54 @@ def main(config):
     num_points['Original'] = len(pcd.points)
 
     # Step 0: Swap Axis 
-    print("[Step 0] Swap Y and Z Axis ")
+    print("[Step 0] Swap Y and Z Axis")
     x_z_swap =  np.array([[1, 0, 0, 0],
                         [0, 0, 1, 0],
                         [0, 1, 0, 0], 
                         [0, 0, 0, 1]])
     pcd.transform(x_z_swap)  # Center of rotation at origin (0, 0, 0)
+    print("--------")
+
+    original_ply_path = os.path.join(config['output_dir'], 'original_points.ply')
+    o3d.io.write_point_cloud(original_ply_path, pcd)
 
     # Step 1: Voxelizing
+    print("[Step 1] Voxelize Point Cloud")
     pcd = pcd.voxel_down_sample(voxel_size = config['voxel_size'])
     time1 = time.time()
     time_spent["Voxelize"] = time1 - time0
-    print("step1 time spent: ", time_spent["Voxelize"])
     num_points['Voxelized'] = len(pcd.points)
+    print(f"Voxelized from {num_points['Original']} to {num_points['Voxelized']} points")
+    print("step1 time spent: ", time_spent["Voxelize"])
+    print("--------")
+
+    voxelized_ply_path = os.path.join(config['output_dir'], 'voxelized_points.ply')
+    o3d.io.write_point_cloud(voxelized_ply_path, pcd)
 
     # Step 2: Points Cleaning
     print("[Step 2] Point Cloud Cleaning")
     pcd, _ = pcd.remove_radius_outlier(nb_points=config['outlier_min_points'], radius=config['outlier_radius'])
+    #pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=config['outlier_min_points'], std_ratio=config['outlier_std_ratio'])
     time2 = time.time()
     time_spent["Point Cloud Cleaning"] = time2 - time1
-    print("step2 time spent: ", time_spent["Point Cloud Cleaning"])
     num_points['Outlier Cleaning'] = len(pcd.points)
+    print(f"Removed {num_points['Voxelized'] - num_points['Outlier Cleaning']} outlier points")
+    print("step2 time spent: ", time_spent["Point Cloud Cleaning"])
+    print("--------")
+
+    cleaned_ply_path = os.path.join(config['output_dir'], 'cleaned_points.ply')
+    o3d.io.write_point_cloud(cleaned_ply_path, pcd)
 
     # Step 3: Floor Removal
     print("[Step 3] Floor Removal")
     pcd_without_floor, _ = floor_removal(pcd, config['height_threshold'])
+    #pcd_without_floor = pcd
     time3 = time.time()
     time_spent["Floor Removal"] = time3 - time2
+    num_points['Removed Floor'] = len(pcd_without_floor.points)
+    print(f"Removed {num_points['Outlier Cleaning'] - num_points['Removed Floor']} floor points")
     print("step3 time spent: ", time_spent["Floor Removal"])
-    num_points['Removed Floor'] = len(pcd.points)
+    print("--------")
 
     # Step 4: DBSCAN for voxel clustering
     print("[Step 4] Clustering")
@@ -232,6 +251,31 @@ def main(config):
         mesh = mesh.transform(x_z_swap)
     save_meshes_obj(meshes, os.path.join(config['output_dir'], 'meshes.obj'))
 
+    filtered_meshes = []
+    decimated_meshes = []
+    filtered_decimated_meshes = []
+    if config['downsample_polygons']:
+        for mesh in meshes:
+            poly_count = len(mesh.triangles)
+            if poly_count > 100:
+                filtered = mesh.filter_smooth_laplacian(number_of_iterations=3)
+                #filtered = mesh.filter_smooth_taubin(number_of_iterations=3)
+                print(f"Mesh filtered from {poly_count} to {len(filtered.triangles)} polygons")
+                filtered_meshes.append(filtered)
+                decimated = mesh.simplify_quadric_decimation(target_number_of_triangles=poly_count//3)
+                print(f"Mesh decimated from {poly_count} to {len(decimated.triangles)} polygons")
+                decimated_meshes.append(decimated)
+                filtered_decimated = filtered.simplify_quadric_decimation(target_number_of_triangles=poly_count//3)
+                print(f"Mesh filtered AND decimated from {poly_count} to {len(filtered_decimated.triangles)} polygons")
+                filtered_decimated_meshes.append(filtered_decimated)
+            else:
+                print(f"Mesh with {poly_count} polygons, skipping downsampling")
+
+    save_meshes_obj(filtered_meshes, os.path.join(config['output_dir'], 'filtered_meshes.obj'))
+    save_meshes_obj(decimated_meshes, os.path.join(config['output_dir'], 'decimated_meshes.obj'))
+    save_meshes_obj(filtered_decimated_meshes, os.path.join(config['output_dir'], 'filtered_decimated_meshes.obj'))
+
+    # Save Mesh
     if config['debug']:
         pcd_ply = o3d.io.read_point_cloud(config['debug_ply'])
         pcd_ply, _ = pcd_ply.remove_radius_outlier(nb_points=config['outlier_min_points'], radius=config['outlier_radius'])
