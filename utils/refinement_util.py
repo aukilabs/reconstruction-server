@@ -72,11 +72,11 @@ def refine_dataset(
         "model": {
             "name": "aliked",
             "model_name": "aliked-n16rot",
-            "max_num_keypoints": 512,
+            "max_num_keypoints": 1024,
         },
         "preprocessing": {
             "grayscale": False,
-            "resize_max": 1024,
+            "resize_max": 1280,
         },
     }
 
