@@ -1,0 +1,47 @@
+k8s-service:
+  containerImage:
+    repository: 026987513085.dkr.ecr.us-east-1.amazonaws.com/reconstruction-server
+    tag: latest
+    pullPolicy: Always
+  applicationName: reconstruction-server
+  containerPorts:
+    http:
+      port: 8080
+      protocol: TCP
+  shutdownDelay: 5
+  replicaCount: 1
+  service:
+    enabled: true
+    ports:
+      http:
+        port: 80
+        targetPort: 8080
+        protocol: TCP
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/group.name: default
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      alb.ingress.kuberetes.io/target-group-attributes: load_balancing.algorithm.type=least_outstanding_requests
+    path: "/"
+    pathType: "Prefix"
+    servicePort: "http"
+  containerResources:
+    limits:
+      cpu: 8
+      memory: 12Gi
+    requests:
+      cpu: 6
+      memory: 6Gi
+  tolerations:
+    - key: "dedicated"
+      value: "gpuGroup"
+      effect: "NoSchedule"
+  scratchPaths:
+    shm: /dev/shm
+  deploymentStrategy:
+    enabled: true
+    type: Recreate
