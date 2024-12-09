@@ -334,14 +334,6 @@ def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=Non
     except:
         pass
 
-    try:
-        manifest_data["serverDetails"]["docker"] = {
-            "in_container": os.path.exists("/.dockerenv"),
-            "container_id": subprocess.check_output(["cat", "/proc/1/cpuset"]).decode().strip().split("/")[-1] if os.path.exists("/.dockerenv") else None
-        }
-    except:
-        pass
-
     # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
     # For now we just take the first
     for short_id, poses_for_qr in portal_poses.items():
