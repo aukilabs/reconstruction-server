@@ -123,7 +123,6 @@ RUN python3 -m pip install open3d trimesh alphashape
 
 WORKDIR /app
 
-COPY k8s-config /app/k8s-config
 COPY scripts /app/scripts
 COPY src /app/src
 COPY config /app/config
@@ -137,11 +136,11 @@ COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
 
 # Run reconstruction server as separate user, not root
-#RUN adduser --disabled-password --gecos "" reconstruction-server
-#RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
-RUN mkdir -p /app/jobs
+RUN adduser --disabled-password --gecos "" reconstruction-server
+RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
+# RUN mkdir -p /app/jobs
 
-#USER reconstruction-server
+USER reconstruction-server
 COPY --from=go-build /app/reconstruction ./reconstruction
 ENTRYPOINT ["./reconstruction"]
 
