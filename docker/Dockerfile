@@ -13,6 +13,9 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
+ARG USERNAME=reconstruction-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
@@ -112,8 +115,10 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && cd ../pycolmap \
     && python3 -m pip install -e .
 
+# Hloc
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
+    git checkout --recurse-submodules tags/v1.4 && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
@@ -136,11 +141,13 @@ COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
 
 # Run reconstruction server as separate user, not root
-RUN adduser --disabled-password --gecos "" reconstruction-server
-RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
-# RUN mkdir -p /app/jobs
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
 
-USER reconstruction-server
+RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
+
+USER $USERNAME
+
 COPY --from=go-build /app/reconstruction ./reconstruction
 ENTRYPOINT ["./reconstruction"]
 
