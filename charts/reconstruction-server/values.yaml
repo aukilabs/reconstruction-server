@@ -13,7 +13,7 @@ k8s-service:
   service:
     enabled: true
     ports:
-      http:
+      app:
         port: 80
         targetPort: 8080
         protocol: TCP
@@ -28,7 +28,7 @@ k8s-service:
       alb.ingress.kuberetes.io/target-group-attributes: load_balancing.algorithm.type=least_outstanding_requests
     path: "/"
     pathType: "Prefix"
-    servicePort: "http"
+    servicePort: "app"
   containerResources:
     limits:
       cpu: 8
