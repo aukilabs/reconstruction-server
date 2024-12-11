@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
+
 	"fmt"
 	"io"
 
@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aukilabs/go-tooling/pkg/errors"
 	"github.com/aukilabs/go-tooling/pkg/logs"
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/jwt"
@@ -66,8 +67,9 @@ func WriteJobManifestFile(j *job, status string) {
 
 	err := UploadJobManifestToDomain(j)
 	if err != nil {
-		logs.Infof("job %s failed to upload job manifest to domain: %s", j.ID, err)
-		// log.Printf("job %s failed to upload job manifest to domain: %s", j.ID, err)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.New("failed to upload job manifest to domain").Wrap(err))
 	}
 }
 
@@ -185,8 +187,9 @@ func WriteFailedJobManifestFile(j *job, errorMessage string) error {
 from utils.data_utils import save_failed_manifest_json; 
 save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + errorMessage + `')
 `
-	logs.Info("Writing failed manifest for job ", j.ID, ", with error message: ", errorMessage)
-	// log.Println("Writing failed manifest for job ", j.ID, ", with error message: ", errorMessage)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("writing failed manifest, error message: %s", errorMessage)
 
 	cmd := exec.Command("python3", "-c", pythonSnippet)
 	cmd.Stdout = os.Stdout
@@ -205,8 +208,9 @@ save_manifest_json({},
 	jobStatusDetails='` + statusDetails + `'
 )`
 
-	logs.Info("Writing manifest for job ", j.ID, ", with status: ", status, ", progress: ", progress, ", status details: ", statusDetails)
-	// log.Println("Writing manifest for job ", j.ID, ", with status: ", status, ", progress: ", progress, ", status details: ", statusDetails)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Info("Writing manifest with status: ", status, ", progress: ", progress, ", status details: ", statusDetails)
 
 	cmd := exec.Command("python3", "-c", pythonSnippet)
 	cmd.Stdout = os.Stdout
@@ -216,8 +220,10 @@ save_manifest_json({},
 }
 
 func UploadJobManifestToDomain(j *job) error {
-	logs.Infof("Upload job manifest to domain, for job %s", j.ID)
-	// log.Printf("Upload job manifest to domain, for job %s", j.ID)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Upload job manifest to domain, for job")
+
 	output := ExpectedOutput{
 		FilePath: "job_manifest.json",
 		Name:     "refined_manifest",
@@ -263,15 +269,11 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 
 	// Upload manifest using PUT since it already exists from start of the job
 	if err := UploadOutputToDomain(j, expectedOutputs[0]); err != nil {
-		// logs.Error("job %s failed to upload refined manifest to domain: %s", j.ID, err)
-		// log.Printf("job %s failed to upload refined manifest to domain: %s", j.ID, err)
-		return outputCount, err
+		return outputCount, errors.New("failed to upload refined manifest to domain").Wrap(err)
 	}
 
 	if err := UploadOutputsToDomain(j, expectedOutputs[1:]); err != nil {
-		// logs.Error("job %s failed to upload refined outputs to domain: %s", j.ID, err)
-		// log.Printf("job %s failed to upload refined outputs to domain: %s", j.ID, err)
-		return outputCount, err
+		return outputCount, errors.New("failed to upload refined outputs to domain").Wrap(err)
 	}
 
 	return outputCount, nil
@@ -297,9 +299,7 @@ func UploadOutputToDomain(j *job, output ExpectedOutput) error {
 
 	f, err := os.Open(path.Join(outputPath, output.FilePath))
 	if err != nil {
-		logs.Infof("job %s failed to open output file %s: %s", j.ID, output.FilePath, err)
-		// log.Printf("job %s failed to open output file %s: %s", j.ID, output.FilePath, err)
-		return err
+		return fmt.Errorf("failed to open output file %s: %s", output.FilePath, err.Error())
 	}
 	defer f.Close()
 
@@ -318,8 +318,9 @@ func UploadOutputToDomain(j *job, output ExpectedOutput) error {
 	httpMethod := http.MethodPost
 	alreadyUploadedID := j.UploadedDataIDs[output.Name+"."+output.DataType]
 	if alreadyUploadedID != "" {
-		logs.Infof("%s.%s already uploaded. Updating it instead.", output.Name, output.DataType)
-		// log.Printf("%s.%s already uploaded. Updating it instead.", output.Name, output.DataType)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("%s.%s already uploaded. Updating it instead.", output.Name, output.DataType)
 		domainData.ID = alreadyUploadedID
 		httpMethod = http.MethodPut
 	}
@@ -328,8 +329,7 @@ func UploadOutputToDomain(j *job, output ExpectedOutput) error {
 	writer := multipart.NewWriter(body)
 
 	if err := WriteDomainData(writer, &domainData); err != nil {
-		// log.Print(err)
-		return err
+		return fmt.Errorf("failed to write domain data to message body: %s", err.Error())
 	}
 
 	if err := writer.Close(); err != nil {
@@ -358,19 +358,25 @@ func UploadOutputToDomain(j *job, output ExpectedOutput) error {
 	if err != nil {
 		return err
 	}
-	logs.Infof("Uploaded domain data! response: %s", string(responseBody))
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Uploaded domain data! response: %s", string(responseBody))
 	var parsedResp PostDomainDataResponse
 	if err := json.Unmarshal(responseBody, &parsedResp); err != nil {
 		return err
 	}
-	logs.Infof("Uploaded domain data! parsed response: %+v", parsedResp)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Uploaded domain data! parsed response: %+v", parsedResp)
 	j.UploadedDataIDs[output.Name+"."+output.DataType] = parsedResp.Data[0].ID
 	return nil
 }
 
 func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) error {
 
-	logs.Infof("downloading %d data from domain %s", len(ids), j.DomainID)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("downloading %d data from domain", len(ids))
 	if len(ids) == 0 {
 		return errors.New("no data ids provided")
 	}
@@ -384,7 +390,9 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 	req.Header.Add("Authorization", "Bearer "+j.AccessToken)
 	req.Header.Add("Accept", "multipart/form-data")
 
-	logs.Info("Downloading data from domain, request:\n", req)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Info("Downloading data from domain, request:\n", req)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -478,7 +486,9 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 
 		i++
 	}
-	logs.Infof("downloaded %d data objects from domain %s", i, j.DomainID)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("downloaded %d data objects from domain", i)
 	return nil
 }
 
@@ -562,11 +572,12 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 		return nil, err
 	}
 
-	logs.Info("Parsing domain access token: ", jobRequest.AccessToken)
+	logs.WithTag("domain_id", jobRequest.DomainID).
+		Info("Parsing domain access token: ", jobRequest.AccessToken)
 	t, err := jwt.ParseString(jobRequest.AccessToken, jwt.WithValidate(false))
 	if err != nil {
-		logs.Info("Error parsing domain access token from job request: ", err)
-		return nil, err
+		return nil, errors.New("Error parsing domain access token from job request").
+			WithTag("domain_id", jobRequest.DomainID).Wrap(err)
 	}
 
 	domainServerURL := jobRequest.DomainServerURL
@@ -575,10 +586,12 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 		if domainServerURL == "" {
 			return nil, errors.New("domain server URL is not set in job request or domain access token")
 		}
-		logs.Info("Using domain server URL from domain access token: ", domainServerURL)
+		logs.WithTag("domain_id", jobRequest.DomainID).
+			Info("Using domain server URL from domain access token: ", domainServerURL)
 
 	} else {
-		logs.Info("Using domain server URL from job request: ", domainServerURL)
+		logs.WithTag("domain_id", jobRequest.DomainID).
+			Info("Using domain server URL from job request: ", domainServerURL)
 	}
 
 	startTime := time.Now()
@@ -600,31 +613,43 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 	j.JobPath = path.Join(dirPath, jobRequest.DomainID, jobName)
 
 	if err := os.MkdirAll(j.JobPath, 0755); err != nil {
-		return nil, err
+		return nil, errors.New("failed to create job directory").Wrap(err).
+			WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID)
 	}
 
 	f, err := os.Create(path.Join(j.JobPath, "jobrequest"+j.ID))
 	if err != nil {
-		return nil, err
+		return nil, errors.New("failed to create jobrequest file").Wrap(err).
+			WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID)
 	}
 	defer f.Close()
 
 	// write the requestJson to the file for later checking
 	if _, err := f.WriteString(requestJson); err != nil {
-		return nil, err
+		return nil, errors.New("failed to write jobrequest file").Wrap(err).
+			WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID)
 	}
 
 	//dataString := buf.String()
-	logs.Info("Data File:", f.Name())
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Info("Data File:", f.Name())
 
 	//destPath, err := unzipFile(f.Name(), path.Join(dirPath, "datasets"))
 	//if err != nil {
 	//	return nil, err
 	//}
 
-	logs.Info("Adding job to job list")
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Info("Adding job to job list")
 	jobs.AddJob(&j)
-	logs.Info("Job added to job list")
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Info("Job added to job list")
 
 	return &j, nil
 }
@@ -645,7 +670,9 @@ func executeJob(j *job) {
 		batch := j.DataIDs[i:end]
 
 		if err := DownloadDomainDataFromDomain(context.Background(), j, batch...); err != nil {
-			logs.Infof("Data download failed for job %s batch %d-%d: %v", j.ID, i, end, err)
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Error(errors.Newf("failed to download data batch %d-%d", i, end).Wrap(err))
 			jobs.UpdateJob(j.ID, "failed")
 			return
 		}
@@ -661,11 +688,15 @@ func executeJob(j *job) {
 
 	datasetsRootPath := path.Join(jobRootPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
-		logs.Infof("job %s failed to read input directory: %s", j.ID, err)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.Newf("failed to to read input directory").Wrap(err))
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	} else {
-		logs.Infof("job %s read %d scan folders", j.ID, len(allScanFolders))
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("read %d scan folders", len(allScanFolders))
 		for _, folder := range allScanFolders {
 			params = append(params, folder.Name())
 		}
@@ -676,7 +707,9 @@ func executeJob(j *job) {
 	// Create log file
 	logFile, err := os.Create(logFilePath)
 	if err != nil {
-		logs.Infof("job %s failed to create log file: %s", j.ID, err)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.Newf("failed to create log file").Wrap(err))
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
@@ -688,11 +721,15 @@ func executeJob(j *job) {
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 
-	logs.Infof("job %s started, logging to %s", j.ID, logFilePath)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("started, logging to %s", logFilePath)
 
 	// Run the refinement python
 	if err := cmd.Start(); err != nil {
-		logs.Infof("job %s failed to start: %s", j.ID, err)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.Newf("job failed to start").Wrap(err))
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
@@ -712,7 +749,9 @@ func executeJob(j *job) {
 				// Get total number of datasets
 				datasetFolders, err := os.ReadDir(datasetsPath)
 				if err != nil {
-					logs.Infof("Error reading datasets directory for job %s: %s", j.ID, err)
+					logs.WithTag("job_id", j.ID).
+						WithTag("domain_id", j.DomainID).
+						Error(errors.Newf("Error reading datasets directory").Wrap(err))
 					return
 				}
 				totalCount := len(datasetFolders)
@@ -735,9 +774,23 @@ func executeJob(j *job) {
 
 				// Update manifest with current progress
 				statusText := fmt.Sprintf("Processed %d of %d scans", refinedCount, totalCount)
-				logs.Infof("job %s progress: %d%% - %s", j.ID, progress, statusText)
-				WriteJobManifestFileHelper(j, "processing", progress, statusText)
-				UploadJobManifestToDomain(j)
+				logs.WithTag("job_id", j.ID).
+					WithTag("domain_id", j.DomainID).
+					Infof("progress: %d%% - %s", progress, statusText)
+
+				err = WriteJobManifestFileHelper(j, "processing", progress, statusText)
+				if err != nil {
+					logs.WithTag("job_id", j.ID).
+						WithTag("domain_id", j.DomainID).
+						Error(errors.Newf("failed to write job manifest").Wrap(err))
+				}
+
+				err = UploadJobManifestToDomain(j)
+				if err != nil {
+					logs.WithTag("job_id", j.ID).
+						WithTag("domain_id", j.DomainID).
+						Error(errors.Newf("failed to upload job manifest").Wrap(err))
+				}
 
 				time.Sleep(10 * time.Second)
 			}
@@ -746,20 +799,31 @@ func executeJob(j *job) {
 
 	if err := cmd.Wait(); err != nil {
 		progressDone <- true
-		logs.Infof("job %s failed: %s", j.ID, err)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.Newf("job failed").Wrap(err))
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
 	progressDone <- true
 
-	logs.Infof("Refinement python script for job %s finished.", j.ID)
-	timeTaken := time.Since(startTime)
-	logs.Infof("Refinement algorithm took %s", timeTaken)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Refinement python script finished.")
 
-	logs.Infof("Going to upload results to domain %s", j.DomainID)
+	timeTaken := time.Since(startTime)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Refinement algorithm took %s", timeTaken)
+
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("Going to upload results to domain %s", j.DomainID)
 
 	if _, err := UploadRefinedOutputsToDomain(j); err != nil {
-		logs.WithTag("job_id", j.ID).Error(errors.New("failed to upload data: " + err.Error()))
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Error(errors.New("failed to upload refined outputs to domain").Wrap(err))
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
@@ -771,6 +835,8 @@ func executeJob(j *job) {
 	}
 	*/
 
-	logs.Infof("job %s succeeded!", j.ID)
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Infof("job succeeded!")
 	jobs.UpdateJob(j.ID, "succeeded")
 }
