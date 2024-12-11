@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
-	"log"
+
 	"net/http"
 	"net/http/httputil"
 	"reflect"
 	"sync"
 
+	"github.com/aukilabs/go-tooling/pkg/errors"
+	"github.com/aukilabs/go-tooling/pkg/logs"
 	"github.com/go-chi/chi"
 )
 
@@ -21,25 +23,31 @@ var (
 
 func main() {
 
-	// Configure logging to include file name, line number, and timestamp
-	log.SetFlags(log.Lshortfile | log.LstdFlags)
-
 	apiKey := flag.String("api-key", "", "API key for the server")
 	port := flag.String("port", ":8080", "Port to run the server on")
+	loglevel := flag.String("log", "info", "Log Level")
 	flag.Parse()
 
+	// Configure logging to include file name, line number, and timestamp
+	// log.SetFlags(log.Lshortfile | log.LstdFlags)
+	logs.SetLevel(logs.ParseLevel(*loglevel))
+	logs.Encoder = json.Marshal
+
 	if apiKey == nil || *apiKey == "" {
-		log.Fatal("API key is required")
+		logs.Fatal(errors.New("API key is required"))
+		// log.Fatal("API key is required")
 	}
 	// create a new router
 	r := chi.NewRouter()
 
 	// Endpoint for triggering refinement jobs (from DMT)
 	r.Post("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("[POST] /jobs endpoint called")
+		logs.Info("[POST] /jobs endpoint called")
+		// log.Println("[POST] /jobs endpoint called")
 
 		debug, _ := httputil.DumpRequest(r, true)
-		log.Printf("%s", debug)
+		logs.Debug(debug)
+		// log.Printf("%s", debug)
 
 		if apiKey != nil && *apiKey != "" {
 			inApiKey := r.Header.Get("X-API-Key")
@@ -53,7 +61,8 @@ func main() {
 		jobMutex.Lock()
 		if jobInProgress {
 			jobMutex.Unlock()
-			log.Println("Job already in progress, rejecting incoming job request.")
+			logs.Info("Job already in progress, rejecting incoming job request.")
+			// log.Println("Job already in progress, rejecting incoming job request.")
 			http.Error(w, "Reconstruction server is busy processing another job", http.StatusServiceUnavailable)
 			return
 		}
@@ -62,8 +71,9 @@ func main() {
 
 		reqBodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Print("Failed to read request body for job request")
-			log.Print(err)
+			logs.Error(errors.New("Failed to read request body for job request: " + err.Error()))
+			// log.Print("Failed to read request body for job request")
+			// log.Print(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			jobMutex.Lock()
 			jobInProgress = false
@@ -72,11 +82,13 @@ func main() {
 		}
 
 		reqBodyString := string(reqBodyBytes)
-		log.Printf("Request body: %s", reqBodyString)
+		logs.Infof("Request body: %s", reqBodyString)
+		// log.Printf("Request body: %s", reqBodyString)
 
 		j, err := CreateJobMetadata("jobs", reqBodyString)
 		if err != nil {
-			log.Print("Job creation failed with error: ", err.Error())
+			logs.Error(errors.New("Job creation failed with error: " + err.Error()))
+			// log.Print("Job creation failed with error: ", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			jobMutex.Lock()
 			jobInProgress = false
@@ -97,10 +109,12 @@ func main() {
 	})
 
 	r.Get("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("[GET] /jobs endpoint called")
+		logs.Info("[GET] /jobs endpoint called")
+		// log.Println("[GET] /jobs endpoint called")
 
 		jobList := jobs.List()
-		log.Println("Number of jobs to list: ", len(jobList), " type: ", reflect.TypeOf(jobList))
+		logs.Info("Number of jobs to list: ", len(jobList), " type: ", reflect.TypeOf(jobList))
+		// log.Println("Number of jobs to list: ", len(jobList), " type: ", reflect.TypeOf(jobList))
 
 		//debug, _ := httputil.DumpRequest(r, true)
 		//log.Printf("%s", debug)
@@ -112,13 +126,14 @@ func main() {
 
 		err := encoder.Encode(jobList)
 		if err != nil {
-			log.Printf("Error encoding jobs list: %v", err)
+			logs.Error(errors.Newf("Error encoding jobs list: %v", err))
+			// log.Printf("Error encoding jobs list: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		log.Println("Jobs list returned successfully")
+		logs.Info("Jobs list returned successfully")
 	})
 	// start the server
-	log.Print("Server running on ", *port)
-	log.Fatal(http.ListenAndServe(*port, r))
+	logs.Info("Server running on ", *port)
+	logs.Fatal(http.ListenAndServe(*port, r))
 }
