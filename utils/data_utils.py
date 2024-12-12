@@ -491,8 +491,8 @@ class JsonFormatter(logging.Formatter):
         record_dict = {
             "time": self.formatTime(record),
             "level": record.levelname,
-            "message": record.getMessage(),
-            "tags": {"domain_id": self.domain_id, "job_id": self.job_id}
+            "tags": {"domain_id": self.domain_id, "job_id": self.job_id},
+            "message": record.getMessage()
         }
         return json.dumps(record_dict)
 
