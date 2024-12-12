@@ -479,8 +479,25 @@ def pycolmap_to_batch_matrix(
 
     return points3D, extrinsics, intrinsics, extra_params
 
+class JsonFormatter(logging.Formatter):
+    """Formatter to dump error message into JSON"""
 
-def setup_logger(name, log_file, console_out=True, level=logging.INFO):
+    def __init__(self, domain_id, job_id,fmt = None, datefmt = None, style = "%", validate = True):
+        super().__init__(fmt, datefmt, style, validate)
+        self.domain_id = domain_id
+        self.job_id = job_id
+
+    def format(self, record: logging.LogRecord) -> str:
+        record_dict = {
+            "time": self.formatTime(record),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "tags": {"domain_id": self.domain_id, "job_id": self.job_id}
+        }
+        return json.dumps(record_dict)
+
+
+def setup_logger(name, log_file, domain_id="", job_id="", console_out=True, level=logging.INFO):
     """To setup as many loggers as you want"""
 
     logger = logging.getLogger(name)
@@ -493,7 +510,8 @@ def setup_logger(name, log_file, console_out=True, level=logging.INFO):
 
     if console_out:
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
+        console_handler.setFormatter(JsonFormatter(
+            domain_id=domain_id, job_id=job_id))
         logger.addHandler(console_handler)
 
     return logger

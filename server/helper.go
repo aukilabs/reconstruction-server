@@ -683,8 +683,9 @@ func executeJob(j *job) {
 	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
 	outputPath := path.Join(j.JobPath, "refined")
 	logFilePath := path.Join(j.JobPath, "log.txt")
-
-	params := []string{refinementPython, j.ProcessingType, jobRootPath, outputPath}
+	domainIDArg := "--domain_id " + j.DomainID
+	jobIDArg := "--job_id " + j.Name
+	params := []string{refinementPython, domainIDArg, jobIDArg, j.ProcessingType, jobRootPath, outputPath}
 
 	datasetsRootPath := path.Join(jobRootPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {

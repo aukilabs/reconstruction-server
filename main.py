@@ -87,23 +87,14 @@ def local_and_global_main_wrapper(args, logger):
 
     # TODO: needs some fixing and testing before re-enabling
     #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger) 
-
-
-# For triggering manually via SSH on server, to retrigger again on previous global refinement
-def occlusion_debug_helper():
-    logger = setup_logger('occlusion_main', 'occlusion_test_log.txt')
-
-    global_out_folder = Path('/app/jobs/981b9726-0574-4ee8-9f29-f72fbdbfd0e2/job_d00ca0ba-3d19-4f95-b8ea-a32a1e0ac3ab/refined/global')
-    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
-
-    occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+    return
 
 
 def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
 
-    logger = setup_logger('main', args.job_root_path / 'log.txt')
+    logger = setup_logger('main', args.job_root_path / 'log.txt', args.domain_id, args.job_id)
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     args.scans = []
@@ -134,6 +125,8 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="SfM refinement script")
+    parser.add_argument("--domain_id", type=str, default="00000000-0000-0000-0000-000000000000")
+    parser.add_argument("--job_id", type=str, default="job_00000000-0000-0000-0000-000000000000")
     parser.add_argument("mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("output_path", type=Path, help="Path for output")
