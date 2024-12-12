@@ -102,9 +102,10 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && cd ../pycolmap \
     && python3 -m pip install -e .
 
+# Hloc
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    git checkout --recurse-submodules tags/v1.4 && \
+    git checkout --recurse-submodules abb252080282e31147db6291206ca102c43353f7 && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
