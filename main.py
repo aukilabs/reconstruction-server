@@ -127,9 +127,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="SfM refinement script")
     parser.add_argument("--domain_id", type=str, default="00000000-0000-0000-0000-000000000000")
     parser.add_argument("--job_id", type=str, default="job_00000000-0000-0000-0000-000000000000")
-    parser.add_argument("mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
-    parser.add_argument("job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
-    parser.add_argument("output_path", type=Path, help="Path for output")
+    parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
+    parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
+    parser.add_argument("--output_path", type=Path, help="Path for output")
     parser.add_argument("scans", nargs="+", help="List of scans to process")
     return parser.parse_args()
 
