@@ -15,14 +15,14 @@
             ]
         }
     },
-    "forwardPorts": [8080],
+    "appPort": [8080],
     "runArgs": [
         "--gpus", "all",
         "--shm-size", "512m"
     ],
     "mounts": [
         // Modify this to your own data folder
-        "source=/path/to/data,target=/data,type=bind"
+        // "source=/home/sam/Workspaces/data,target=/data,type=bind"
     ],
     "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
 }
