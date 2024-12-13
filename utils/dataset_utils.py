@@ -241,10 +241,15 @@ def load_partial(
                 continue
             nearest_image = nearest_image[0]
 
+            portal_pose = detection["pose"]
+
             cam_space_qr_pose = arkit_world_from_cam(nearest_image_timestamp).inverse() * detection["pose"]
 
             detection["pose"] = nearest_image.cam_from_world.inverse() * cam_space_qr_pose
 
+            logger.debug(f"Added Portal {detection['short_id']}    Portal TS: {timestamp}    Nearest Image TS: {nearest_image_timestamp}")
+            logger.debug(f"{detection['short_id']} Pose:         t: {portal_pose.translation}    r: {portal_pose.rotation.quat}")
+            logger.debug(f"{detection['short_id']} Refined Pose: t: {detection['pose'].translation}    r: {detection['pose'].rotation.quat}")
         for failed_ts in failed_timestamps:
             qr_detections_per_timestamp.pop(failed_ts, None)
 
@@ -555,9 +560,7 @@ def load_partial(
 
         # detections_per_qr[id].append(pycolmap.Rigid3d())
         # image_ids_per_qr[id].append(image_id)
-    logger.info("\n\n")
-    logger.info(detections_per_qr)
-    logger.info("\n\n")
+    logger.debug(detections_per_qr)
     return next_image_id, placed_portal, partial_rec_dir, combined_rec, \
            timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
 
