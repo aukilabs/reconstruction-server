@@ -494,7 +494,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         t = time.strftime(self.datefmt, time.gmtime(record.created))
-        s = '%s.%03dZ' % (t, record.msecs)
+        s = '%s.%03d000000Z' % (t, record.msecs)
         if self.dataset_id:
             record_dict = {
                 "time": s,
