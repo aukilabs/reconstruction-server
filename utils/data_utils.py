@@ -8,6 +8,7 @@ from numpy import arccos, rad2deg
 import torch
 import logging
 import cv2
+import time
 from src.ply_export import export_ply_text
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
@@ -492,10 +493,12 @@ class JsonFormatter(logging.Formatter):
         self.dataset_id = dataset_id
 
     def format(self, record: logging.LogRecord) -> str:
+        t = time.strftime(self.datefmt, time.gmtime(record.created))
+        s = '%s.%03dZ' % (t, record.msecs)
         if self.dataset_id:
             record_dict = {
-                "time": self.formatTime(record),
-                "level": record.levelname,
+                "time": s,
+                "level": record.levelname.lower(),
                 "name": record.name,
                 "tags": {
                     "domain_id": self.domain_id, 
@@ -505,8 +508,8 @@ class JsonFormatter(logging.Formatter):
             }
         else: 
             record_dict = {
-                "time": self.formatTime(record),
-                "level": record.levelname,
+                "time": s,
+                "level": record.levelname.lower(),
                 "name": record.name,
                 "tags": {
                     "domain_id": self.domain_id, 
@@ -526,14 +529,14 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
         logger, _ = add_file_handler(logger, log_file)
 
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(JsonFormatter(
+    console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
         domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
     logger.addHandler(console_handler)
 
     return logger
 
 def add_file_handler(logger, log_file):
-    file_formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')   
+    file_formatter = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s')   
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
