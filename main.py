@@ -66,7 +66,9 @@ def global_main_wrapper(args, logger):
         all_poses=True,
         use_refined_outputs=True,
         add_3dpoints=True,
-        basic_stitch_only=True
+        basic_stitch_only=True,
+        domain_id=args.domain_id,
+        job_id=args.job_id
     )
     global_main(global_args)
     logger.info("Done with global refinement")

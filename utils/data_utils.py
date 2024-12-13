@@ -78,7 +78,8 @@ def convert_pose_colmap_to_opengl(position, quaternion):
     return convert_pose_opengl_to_colmap(position, quaternion)
 
 
-def get_data_paths(group_folder):
+def get_data_paths(group_folder, logger_name=None):
+    logger = logging.getLogger(logger_name)
     path_to_truth_portals = group_folder / "portals.json"
     if path_to_truth_portals.exists():
         truth_portal_poses = load_portals_json(group_folder / "portals.json")
@@ -111,7 +112,7 @@ def get_data_paths(group_folder):
             zip_count += 1
         else:
             unwanted_count += 1
-    print(f"Found {zip_count} valid zip files, {unwanted_count} unwanted zip files skipped")
+    logger.info(f"Found {zip_count} valid zip files, {unwanted_count} unwanted zip files skipped")
 
     subfolder_count = 0
     for subfolder in group_folder.iterdir():
@@ -121,15 +122,15 @@ def get_data_paths(group_folder):
         ):
             dataset_paths.append(subfolder)
             subfolder_count += 1
-    print(f"Found {subfolder_count} scan subfolders (not zip)")
+    logger.info(f"Found {subfolder_count} scan subfolders (not zip)")
 
-    print(f"Using in total {len(dataset_paths)} scans from folder '{group_folder.name}'")
+    logger.info(f"Using in total {len(dataset_paths)} scans from folder '{group_folder.name}'")
     
     if truth_portal_poses:
-        print(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
-        print("\n".join(f"{id}: {value}" for id, value in truth_portal_poses.items()))
+        logger.info(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
+        logger.info("\n".join(f"{id}: {value}" for id, value in truth_portal_poses.items()))
     else:
-        print("No truth provided (portals.json). Will skip comparison with ground truth.")
+        logger.info("No truth provided (portals.json). Will skip comparison with ground truth.")
 
     return truth_portal_poses, dataset_paths
 
@@ -367,10 +368,12 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
     capture.release()
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=True):
-    print(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
-    print(f"convert_to_opengl = {convert_to_opengl}")
-    print("...")
+def export_rec_as_ply(rec, path, convert_to_opengl=True, logger_name=""):
+    logger = logging.getLogger(logger_name)
+
+    logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
+    logger.info(f"convert_to_opengl = {convert_to_opengl}")
+    logger.info("...")
     # As text for now, as mobile DMT doesn't work with binary domain data blobs
     rec_openGL = pycolmap.Reconstruction()
     for point in rec.points3D.values():
@@ -379,7 +382,7 @@ def export_rec_as_ply(rec, path, convert_to_opengl=True):
             x,y,z = y,x,-z
         _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
     export_ply_text(rec_openGL, str(path))
-    print(f"PLY export done")
+    logger.info(f"PLY export done")
 
 
 def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
