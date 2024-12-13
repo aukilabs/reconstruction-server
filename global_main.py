@@ -4,14 +4,13 @@ import os
 from utils.data_utils import get_data_paths, setup_logger
 from utils.dataset_utils import stitching_helper
 
-
 def main(args):
     # Create and configure logger
     output_path = args.data_dir.parent / "refined" / "global"
     os.makedirs(output_path, exist_ok=True)
     global_log_file = str(output_path) + "/global_logs"
     logger = setup_logger(name="global_refinement", log_file=global_log_file,
-                          domain_id=args.domain_id, job_id=args.job_id)
+                          domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
 
     # Find all stitch paths
     truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, "global_refinement")
@@ -47,5 +46,9 @@ if __name__ == "__main__":
     parser.add_argument("--basic_stitch_only", action='store_true', default=False)
     parser.add_argument("--domain_id", type=str, default="")
     parser.add_argument("--job_id", type=str, default="")
+    parser.add_argument("--log_level", type=str, default="INFO", 
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)"
+    )
     args = parser.parse_args()
     main(args)

@@ -516,11 +516,11 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(record_dict)
 
 
-def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=None, level=logging.INFO):
+def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=None, level="INFO"):
     """To setup as many loggers as you want"""
 
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(getattr(logging, level.upper()),)
     
     if log_file:
         logger, _ = add_file_handler(logger, log_file)

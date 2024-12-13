@@ -7,7 +7,6 @@ from occlusion_box import main as occlusion_box_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
-
 def occlusion_box_wrapper(path, output_dir, logger):
     config = load_yaml('config/occlusion_box/default.yaml')
     config['path'] = str(path)
@@ -49,6 +48,7 @@ def local_main_wrapper(args, logger):
             remove_outputs=False,
             domain_id=args.domain_id,
             job_id=args.job_id,
+            log_level=args.log_level
         )
         local_main(local_args)
         logger.info(f"Done refining scan {scan}")
@@ -68,7 +68,8 @@ def global_main_wrapper(args, logger):
         add_3dpoints=True,
         basic_stitch_only=True,
         domain_id=args.domain_id,
-        job_id=args.job_id
+        job_id=args.job_id,
+        log_level=args.log_level
     )
     global_main(global_args)
     logger.info("Done with global refinement")
@@ -98,7 +99,8 @@ def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
 
-    logger = setup_logger(name='main', log_file=args.job_root_path / 'log.txt', domain_id=args.domain_id, job_id=args.job_id)
+    logger = setup_logger(name='main', log_file=args.job_root_path / 'log.txt', 
+                domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     args.scans = []
@@ -134,6 +136,11 @@ def parse_args():
     parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
+    parser.add_argument("--log_level", type=str, default="INFO", 
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)"
+    )
+
     parser.add_argument("scans", nargs="+", help="List of scans to process")
     return parser.parse_args()
 

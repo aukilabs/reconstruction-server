@@ -36,6 +36,7 @@ def refine_dataset(
     remove_outputs=False,
     domain_id="",
     job_id="",
+    log_level="INFO",
     measure_pairs=None, 
     truth_pairs=None, 
     truth_portal_poses=None
@@ -63,13 +64,15 @@ def refine_dataset(
 
     # Setup Loggging
     logger = setup_logger(name="refine_dataset", log_file=log_file, 
-                        domain_id=domain_id, job_id=job_id, dataset_id=experiment_name)
+                        domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
+                        level=log_level)
 
     logger.info(f'Working on {str(scan_folder_path.name)}')
 
     # Override Hloc
     setup_logger(name="hloc", log_file=log_file,
-                domain_id=domain_id, job_id=job_id, dataset_id=experiment_name)
+                domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
+                level=log_level)
 
 
     feature_conf = extract_features.confs["superpoint_max"]

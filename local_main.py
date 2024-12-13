@@ -15,7 +15,8 @@ def main(args):
         args.every_nth_image,
         args.remove_outputs,
         args.domain_id,
-        args.job_id
+        args.job_id,
+        args.log_level
     )
     return
 
@@ -39,6 +40,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--job_id", type=str, default=""
+    )
+    parser.add_argument("--log_level", type=str, default="INFO", 
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)"
     )
     args = parser.parse_args()
 
