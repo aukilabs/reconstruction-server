@@ -253,8 +253,8 @@ def refine_dataset(
 
     image_ts_list = list(timestamps_per_image.values())
     reference_ts = [ timestamps_per_image[ref] for ref in references]
-    logger.debug("timestamps length: ", len(image_ts_list))
-    logger.debug("references length: ", len(references))
+    logger.debug(f"timestamps length: {len(image_ts_list)}")
+    logger.debug(f"references length: { len(references)}")
     for qr_id, timestamps in this_chunk_detections_per_qr.items():
 
         in_ref = [a in reference_ts for a in timestamps]
