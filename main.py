@@ -46,7 +46,9 @@ def local_main_wrapper(args, logger):
             dataset_path=Path(job_root_path) / 'datasets' / scan,
             output_path=args.output_path,
             every_nth_image=2,
-            remove_outputs=False
+            remove_outputs=False,
+            domain_id=args.domain_id,
+            job_id=args.job_id,
         )
         local_main(local_args)
         logger.info(f"Done refining scan {scan}")
@@ -94,7 +96,7 @@ def main(args):
     args.job_root_path = Path(args.job_root_path)
     args.output_path = Path(args.output_path)
 
-    logger = setup_logger('main', args.job_root_path / 'log.txt', args.domain_id, args.job_id)
+    logger = setup_logger(name='main', log_file=args.job_root_path / 'log.txt', domain_id=args.domain_id, job_id=args.job_id)
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     args.scans = []

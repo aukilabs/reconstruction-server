@@ -482,36 +482,56 @@ def pycolmap_to_batch_matrix(
 class JsonFormatter(logging.Formatter):
     """Formatter to dump error message into JSON"""
 
-    def __init__(self, domain_id, job_id,fmt = None, datefmt = None, style = "%", validate = True):
+    def __init__(self, domain_id, job_id, dataset_id = None, fmt = None, datefmt = None, style = "%", validate = True):
         super().__init__(fmt, datefmt, style, validate)
         self.domain_id = domain_id
         self.job_id = job_id
+        self.dataset_id = dataset_id
 
     def format(self, record: logging.LogRecord) -> str:
-        record_dict = {
-            "time": self.formatTime(record),
-            "level": record.levelname,
-            "tags": {"domain_id": self.domain_id, "job_id": self.job_id},
-            "message": record.getMessage()
-        }
+        if self.dataset_id:
+            record_dict = {
+                "time": self.formatTime(record),
+                "level": record.levelname,
+                "name": record.name,
+                "tags": {
+                    "domain_id": self.domain_id, 
+                    "job_id": self.job_id, 
+                    "dataset_id": self.dataset_id},
+                "message": record.getMessage()
+            }
+        else: 
+            record_dict = {
+                "time": self.formatTime(record),
+                "level": record.levelname,
+                "name": record.name,
+                "tags": {
+                    "domain_id": self.domain_id, 
+                    "job_id": self.job_id},
+                "message": record.getMessage()
+            }
         return json.dumps(record_dict)
 
 
-def setup_logger(name, log_file, domain_id="", job_id="", console_out=True, level=logging.INFO):
+def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=None, level=logging.INFO):
     """To setup as many loggers as you want"""
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')   
+    
+    if log_file:
+        logger, _ = add_file_handler(logger, log_file)
 
-    file_handler = logging.FileHandler(log_file)     
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    if console_out:
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(JsonFormatter(
-            domain_id=domain_id, job_id=job_id))
-        logger.addHandler(console_handler)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(JsonFormatter(
+        domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
+    logger.addHandler(console_handler)
 
     return logger
+
+def add_file_handler(logger, log_file):
+    file_formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')   
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+    return logger, file_handler

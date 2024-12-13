@@ -20,7 +20,7 @@ def run_triangulation(
     arkit_precomputed=None
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
-    logger = logging.getLogger("logger")
+    logger = logging.getLogger('refine_dataset')
 
     mapper_options = pycolmap.IncrementalMapperOptions(options)
 
@@ -209,6 +209,6 @@ def triangulate_model(
         timestamp_per_image, arkit_precomputed
     )
     # Grab logger by name
-    shared_logger = logging.getLogger("shared_logger")
-    shared_logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
+    logger = logging.getLogger('refine_dataset')
+    logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction

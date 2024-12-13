@@ -15,7 +15,8 @@ from utils.data_utils import (
     get_world_space_qr_codes,
     mean_pose,
     setup_logger,
-    mp4_to_frames
+    mp4_to_frames,
+    add_file_handler
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -33,6 +34,8 @@ def refine_dataset(
     output_path,
     every_nth_image=1,
     remove_outputs=False,
+    domain_id="",
+    job_id="",
     measure_pairs=None, 
     truth_pairs=None, 
     truth_portal_poses=None
@@ -45,14 +48,9 @@ def refine_dataset(
     # Create and configure logger
     log_path = str(output_path) + '/' + str(scan_folder_path.name)
     os.makedirs(log_path, exist_ok=True)
-    logger = setup_logger("logger", log_path + "/local_logs")
-    logger.info(f'Working on {str(scan_folder_path.name)}')
 
-    shared_logger = setup_logger("shared_logger", str(output_path) + "/shared_local_logs")
-    shared_logger.info(f'Working on {str(scan_folder_path.name)}')
-
+    # Setup paths and names
     experiment_name = Path(scan_folder_path).name
-
     dataset = Path(scan_folder_path)
     images = dataset / 'Frames/'
     outputs = Path(output_path) / experiment_name
@@ -61,6 +59,17 @@ def refine_dataset(
     sfm_pairs = sfm_dir / 'pairs-sfm.txt'
     features = sfm_dir / 'features.h5'
     matches = sfm_dir / 'matches.h5'
+    log_file = log_path + "/local_logs"
+
+    # Setup Loggging
+    logger = setup_logger(name="refine_dataset", log_file=log_file, 
+                        domain_id=domain_id, job_id=job_id, dataset_id=experiment_name)
+
+    logger.info(f'Working on {str(scan_folder_path.name)}')
+
+    # Override Hloc
+    setup_logger(name="hloc", log_file=log_file,
+                domain_id=domain_id, job_id=job_id, dataset_id=experiment_name)
 
 
     feature_conf = extract_features.confs["superpoint_max"]
@@ -456,13 +465,7 @@ def refine_dataset(
     logger.info('========================================================================')
     logger.info('')
     logger.info('========================================================================')
-    
-    shared_logger.info(f'Successful run on {str(scan_folder_path.name)}')
-    shared_logger.info('========================================================================')
-    shared_logger.info('')
-    shared_logger.info('========================================================================')
 
-   
     return refined_rec, rec
 
 
