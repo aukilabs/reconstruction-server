@@ -96,9 +96,6 @@ def local_and_global_main_wrapper(args, logger):
 
 
 def main(args):
-    args.job_root_path = Path(args.job_root_path)
-    args.output_path = Path(args.output_path)
-
     logger = setup_logger(name='main', log_file=args.job_root_path / 'log.txt', 
                 domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
 
