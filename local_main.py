@@ -1,6 +1,6 @@
 from pathlib import Path
 import argparse
-
+import logging
 from utils.refinement_util import refine_dataset
 
 
@@ -13,10 +13,12 @@ def main(args):
         args.dataset_path, 
         args.output_path,
         args.every_nth_image,
-        args.remove_outputs
+        args.remove_outputs,
+        args.domain_id,
+        args.job_id,
+        args.log_level
     )
-    
-    print(f"Finished local refinment on {args.dataset_path}!")
+    return
 
 
 if __name__ == "__main__":
@@ -32,6 +34,16 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--remove_outputs", default=False, action='store_true'
+    )
+    parser.add_argument(
+        "--domain_id", type=str, default=""
+    )
+    parser.add_argument(
+        "--job_id", type=str, default=""
+    )
+    parser.add_argument("--log_level", type=str, default="INFO", 
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)"
     )
     args = parser.parse_args()
 

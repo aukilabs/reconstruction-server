@@ -15,7 +15,8 @@ from utils.data_utils import (
     get_world_space_qr_codes,
     mean_pose,
     setup_logger,
-    mp4_to_frames
+    mp4_to_frames,
+    add_file_handler
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -33,6 +34,9 @@ def refine_dataset(
     output_path,
     every_nth_image=1,
     remove_outputs=False,
+    domain_id="",
+    job_id="",
+    log_level="INFO",
     measure_pairs=None, 
     truth_pairs=None, 
     truth_portal_poses=None
@@ -45,14 +49,9 @@ def refine_dataset(
     # Create and configure logger
     log_path = str(output_path) + '/' + str(scan_folder_path.name)
     os.makedirs(log_path, exist_ok=True)
-    logger = setup_logger("logger", log_path + "/local_logs")
-    logger.info(f'Working on {str(scan_folder_path.name)}')
 
-    shared_logger = setup_logger("shared_logger", str(output_path) + "/shared_local_logs")
-    shared_logger.info(f'Working on {str(scan_folder_path.name)}')
-
+    # Setup paths and names
     experiment_name = Path(scan_folder_path).name
-
     dataset = Path(scan_folder_path)
     images = dataset / 'Frames/'
     outputs = Path(output_path) / experiment_name
@@ -61,6 +60,19 @@ def refine_dataset(
     sfm_pairs = sfm_dir / 'pairs-sfm.txt'
     features = sfm_dir / 'features.h5'
     matches = sfm_dir / 'matches.h5'
+    log_file = log_path + "/local_logs"
+
+    # Setup Loggging
+    logger = setup_logger(name="refine_dataset", log_file=log_file, 
+                        domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
+                        level=log_level)
+
+    logger.info(f'Working on {str(scan_folder_path.name)}')
+
+    # Override Hloc
+    setup_logger(name="hloc", log_file=log_file,
+                domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
+                level=log_level)
 
 
     feature_conf = extract_features.confs["superpoint_max"]
@@ -241,8 +253,8 @@ def refine_dataset(
 
     image_ts_list = list(timestamps_per_image.values())
     reference_ts = [ timestamps_per_image[ref] for ref in references]
-    logger.debug("timestamps length: ", len(image_ts_list))
-    logger.debug("references length: ", len(references))
+    logger.debug(f"timestamps length: {len(image_ts_list)}")
+    logger.debug(f"references length: { len(references)}")
     for qr_id, timestamps in this_chunk_detections_per_qr.items():
 
         in_ref = [a in reference_ts for a in timestamps]
@@ -440,13 +452,13 @@ def refine_dataset(
     reproj_error = refined_rec.compute_mean_reprojection_error()
     logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
 
-    logging.info("Now save adjusted QR code poses")
+    logger.info("Now save adjusted QR code poses")
     stitched_qr_detections = get_world_space_qr_codes(refined_rec, detections_per_qr, image_ids_per_qr)
     stitched_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items() if poses}
     for qr_id, pose in stitched_mean_qr_poses.items():
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
-        logging.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
+        logger.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
 
     if remove_outputs:
         logger.info('Remove output directory')
@@ -456,13 +468,7 @@ def refine_dataset(
     logger.info('========================================================================')
     logger.info('')
     logger.info('========================================================================')
-    
-    shared_logger.info(f'Successful run on {str(scan_folder_path.name)}')
-    shared_logger.info('========================================================================')
-    shared_logger.info('')
-    shared_logger.info('========================================================================')
 
-   
     return refined_rec, rec
 
 
