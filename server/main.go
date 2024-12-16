@@ -25,7 +25,7 @@ func main() {
 
 	apiKey := flag.String("api-key", "", "API key for the server")
 	port := flag.String("port", ":8080", "Port to run the server on")
-	loglevel := flag.String("log", "info", "Log Level")
+	loglevel := flag.String("log-level", "info", "Log Level")
 	flag.Parse()
 
 	// Configure logging to include file name, line number, and timestamp

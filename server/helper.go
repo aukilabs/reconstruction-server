@@ -684,12 +684,13 @@ func executeJob(j *job) {
 	outputPath := path.Join(j.JobPath, "refined")
 	logFilePath := path.Join(j.JobPath, "log.txt")
 
-	modeArg := "--mode " + j.ProcessingType
-	jobRootArg := "--job_root_path " + jobRootPath
-	outputArg := "--output " + outputPath
-	domainIDArg := "--domain_id " + j.DomainID
-	jobIDArg := "--job_id " + j.Name
-	params := []string{refinementPython, modeArg, jobRootArg, outputArg, domainIDArg, jobIDArg}
+	params := []string{
+		refinementPython,
+		"--mode", j.ProcessingType,
+		"--job_root_path", jobRootPath,
+		"--output", outputPath,
+		"--domain_id", j.DomainID,
+		"--job_id", j.Name}
 
 	datasetsRootPath := path.Join(jobRootPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
@@ -708,6 +709,9 @@ func executeJob(j *job) {
 	}
 
 	startTime := time.Now()
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		Debugf("executing main.py with params: %s", params)
 	cmd := exec.Command("python3", params...)
 	// Create log file
 	logFile, err := os.Create(logFilePath)
