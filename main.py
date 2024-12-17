@@ -7,6 +7,7 @@ from occlusion_box import main as occlusion_box_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
+
 def occlusion_box_wrapper(path, output_dir, logger):
     config = load_yaml('config/occlusion_box/default.yaml')
     config['path'] = str(path)
@@ -79,10 +80,11 @@ def global_main_wrapper(args, logger):
 def local_and_global_main_wrapper(args, logger):
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
+    
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
 
-    global_out_folder = Path(args.job_root_path) / "refined" / "global"
+    global_out_folder = args.job_root_path / "refined" / "global"
 
     ply_output_path = global_out_folder / "RefinedPointCloud.ply"
     if ply_output_path.exists():
@@ -96,33 +98,32 @@ def local_and_global_main_wrapper(args, logger):
 
 
 def main(args):
-    logger = setup_logger(name='main', log_file=args.job_root_path / 'log.txt', 
-                domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
+    logger = setup_logger(
+        name='main', 
+        log_file=args.job_root_path / 'log.txt', 
+        domain_id=args.domain_id, 
+        job_id=args.job_id, 
+        level=args.log_level
+    )
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     for scan in Path(args.job_root_path / "datasets").iterdir():
         if scan.is_dir() or scan.suffix == ".zip":
             args.scans.append(scan.name)
 
-    try:
-        if args.mode == "local_refinement":
-            if not args.output_path:
-                args.output_path = args.job_root_path / "refined" / "local"
-            local_main_wrapper(args, logger)
-        elif args.mode == "global_refinement":
-            if not args.output_path:
-                args.output_path = args.job_root_path / "refined" / "global"
-            global_main_wrapper(args, logger)
-        elif args.mode == "local_and_global_refinement":
-            if not args.output_path:
-                args.output_path = args.job_root_path / "refined" / "global"
-            local_and_global_main_wrapper(args, logger)
-    except Exception as e:
-        logger.error(f"Refinement failed with exception: {e}")
-        manifest_out_path =  args.output_path / "refined_manifest.json"
-        logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
-        save_failed_manifest_json(manifest_out_path, str(e))
-        raise e
+    mode_config = {
+        "local_refinement": ("local", local_main_wrapper),
+        "global_refinement": ("global", global_main_wrapper),
+        "local_and_global_refinement": ("global", local_and_global_main_wrapper)
+    }
+    if args.mode in mode_config:
+        path_suffix, function = mode_config[args.mode]
+        if not args.output_path:
+            args.output_path = args.job_root_path / "refined" / path_suffix
+        
+        function(args, logger)
+    else:
+        raise ValueError(f"Invalid mode: {args.mode}")
 
 
 def parse_args():
@@ -132,8 +133,7 @@ def parse_args():
     parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
-    parser.add_argument("--log_level", type=str, default="INFO", 
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+    parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
 
