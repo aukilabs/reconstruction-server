@@ -100,7 +100,6 @@ def main(args):
                 domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
-    args.scans = []
     for scan in Path(args.job_root_path / "datasets").iterdir():
         if scan.is_dir() or scan.suffix == ".zip":
             args.scans.append(scan.name)
@@ -138,7 +137,7 @@ def parse_args():
         help="Set the logging level (default: INFO)"
     )
 
-    parser.add_argument("scans", nargs="+", help="List of scans to process")
+    parser.add_argument("--scans", nargs="+", default=[], help="List of scans to process")
     return parser.parse_args()
 
 
