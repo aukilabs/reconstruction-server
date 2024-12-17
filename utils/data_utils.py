@@ -49,6 +49,7 @@ def rectify_floor_portal(qr_pose):
 
     return pycolmap.Rigid3d(rot3d, pos)
 
+
 def load_portals_json(file_path):
     portal_poses = {}
 
@@ -483,6 +484,7 @@ def pycolmap_to_batch_matrix(
 
     return points3D, extrinsics, intrinsics, extra_params
 
+
 class JsonFormatter(logging.Formatter):
     """Formatter to dump error message into JSON"""
 
@@ -534,6 +536,7 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     logger.addHandler(console_handler)
 
     return logger
+
 
 def add_file_handler(logger, log_file):
     file_formatter = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s')   
