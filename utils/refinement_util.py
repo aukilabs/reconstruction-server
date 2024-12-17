@@ -3,7 +3,6 @@ import csv
 import pycolmap
 import numpy as np
 from numpy.linalg import norm
-import logging
 import shutil
 import os
 
@@ -15,8 +14,7 @@ from utils.data_utils import (
     get_world_space_qr_codes,
     mean_pose,
     setup_logger,
-    mp4_to_frames,
-    add_file_handler
+    mp4_to_frames
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -37,8 +35,6 @@ def refine_dataset(
     domain_id="",
     job_id="",
     log_level="INFO",
-    measure_pairs=None, 
-    truth_pairs=None, 
     truth_portal_poses=None
 ):
 
