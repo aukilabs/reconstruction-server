@@ -34,8 +34,7 @@ def refine_dataset(
     remove_outputs=False,
     domain_id="",
     job_id="",
-    log_level="INFO",
-    truth_portal_poses=None
+    log_level="INFO"
 ):
 
     ############################
@@ -406,29 +405,7 @@ def refine_dataset(
 
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
-
-    # Add more truth measurements if available.
-    # Uses portal poses from JSON.
-    # Only if portal poses are manually measured very carefully.
-    if truth_portal_poses is not None:
-        measure_pairs = []
-        truth_pairs = []
-        all_detected_qr_ids = list(detections_per_qr.keys())
-
-        #First to last
-        measure_pairs.append([all_detected_qr_ids[0], all_detected_qr_ids[-1]])
-        truth_pairs.append(
-            norm(truth_portal_poses[all_detected_qr_ids[0]].translation - truth_portal_poses[all_detected_qr_ids[-1]].translation)
-        )
-
-        # From each to next in order of first scan.
-        for i, short_id in enumerate(all_detected_qr_ids[1:]):
-            prev_short_id = all_detected_qr_ids[i - 1]
-            measure_pairs.append([prev_short_id, short_id])
-            truth_pairs.append(
-                norm(truth_portal_poses[short_id].translation - truth_portal_poses[prev_short_id].translation)
-            )
-
+        
 
     logger.info("Start triangulation")
     refined_rec = triangulate_model(
