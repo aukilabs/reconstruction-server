@@ -1,6 +1,5 @@
 from pathlib import Path
 import argparse
-import logging
 from utils.refinement_util import refine_dataset
 
 
@@ -18,7 +17,6 @@ def main(args):
         args.job_id,
         args.log_level
     )
-    return
 
 
 if __name__ == "__main__":
@@ -30,7 +28,7 @@ if __name__ == "__main__":
         "--output_path", type=Path, default="./outputs"
     )
     parser.add_argument(
-        "--every_nth_image", type=int, default=2
+        "--every_nth_image", type=int, default=1
     )
     parser.add_argument(
         "--remove_outputs", default=False, action='store_true'
