@@ -45,7 +45,7 @@ def local_main_wrapper(args, logger):
         local_args = argparse.Namespace(
             dataset_path=Path(job_root_path) / 'datasets' / scan,
             output_path=args.output_path,
-            every_nth_image=2,
+            every_nth_image=1,
             remove_outputs=False,
             domain_id=args.domain_id,
             job_id=args.job_id,
