@@ -4,7 +4,7 @@ import argparse
 from local_main import main as local_main
 from global_main import main as global_main
 from occlusion_box import main as occlusion_box_main
-from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.data_utils import setup_logger
 from utils.io import load_yaml, save_to_yaml
 
 
@@ -93,8 +93,7 @@ def local_and_global_main_wrapper(args, logger):
         logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
     # TODO: needs some fixing and testing before re-enabling
-    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger) 
-    return
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
 
 
 def main(args):
