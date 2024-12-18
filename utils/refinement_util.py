@@ -46,10 +46,11 @@ def refine_dataset(
     os.makedirs(log_path, exist_ok=True)
 
     # Setup paths and names
-    experiment_name = Path(scan_folder_path).name
-    dataset = Path(scan_folder_path)
+    experiment_name = scan_folder_path.name
+    dataset = scan_folder_path
+
     images = dataset / 'Frames/'
-    outputs = Path(output_path) / experiment_name
+    outputs = output_path / experiment_name
     sfm_dir = outputs / 'sfm'
     sfm_dir.mkdir(exist_ok=True, parents=True)
     sfm_pairs = sfm_dir / 'pairs-sfm.txt'
@@ -58,16 +59,26 @@ def refine_dataset(
     log_file = log_path + "/local_logs"
 
     # Setup Loggging
-    logger = setup_logger(name="refine_dataset", log_file=log_file, 
-                        domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
-                        level=log_level)
+    logger = setup_logger(
+        name="refine_dataset", 
+        log_file=log_file, 
+        domain_id=domain_id, 
+        job_id=job_id, 
+        dataset_id=experiment_name,
+        level=log_level
+    )
 
     logger.info(f'Working on {str(scan_folder_path.name)}')
 
     # Override Hloc
-    setup_logger(name="hloc", log_file=log_file,
-                domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
-                level=log_level)
+    setup_logger(
+        name="hloc", 
+        log_file=log_file,
+        domain_id=domain_id, 
+        job_id=job_id, 
+        dataset_id=experiment_name,
+        level=log_level
+    )
 
 
     feature_conf = extract_features.confs["superpoint_max"]
@@ -89,14 +100,13 @@ def refine_dataset(
     logger.info(f"Feature conf: {feature_conf}")
     matcher_conf = match_features.confs["superpoint+lightglue"]
 
+
     ############################
     # LOAD DATASET
     ############################
 
     #--------------------
     # RGB Frames
-
-
     frames_mp4 = dataset / 'Frames.mp4'
     logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
     use_frames_from_video = False
@@ -118,7 +128,6 @@ def refine_dataset(
 
     #--------------------
     # Frames Metadata
-
     frames_csv_path = str(dataset / "Frames.csv")
 
     logger.info(f'Loading image timestamps from, {frames_csv_path} ...')
@@ -148,7 +157,6 @@ def refine_dataset(
 
     #--------------------
     # Cam Intrinsics
-
     cam_intrinsics_csv_path = str(dataset / "CameraIntrinsics.csv")
 
     logger.info(f'Loading camera intrinsics from, {cam_intrinsics_csv_path}, ...')
@@ -176,7 +184,6 @@ def refine_dataset(
 
     #--------------------
     # Unrefined Poses
-
     ar_poses_csv_path = str(dataset / "ARposes.csv")
 
     logger.info(f'Loading unrefined AR poses from", {ar_poses_csv_path}, ...')
@@ -200,7 +207,6 @@ def refine_dataset(
 
     #--------------------
     # QR detections
-
     qr_detections_csv_path = dataset / "PortalDetections.csv"
     if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
         qr_detections_csv_path = dataset / "Observations.csv"
@@ -261,6 +267,7 @@ def refine_dataset(
         if any(in_ref):
             continue
 
+        # TODO: With the new dmt, the following part of the code will never be entered. We can revist this later and remove if nessary.
         all_timestamps_before = [t for t in image_ts_list if t <= timestamps[0]]
         nearest_image_timestamp = np.max(all_timestamps_before)
 
@@ -297,20 +304,16 @@ def refine_dataset(
         cam = pycolmap.Camera(
             model=model, width=w, height=h, params=params, camera_id=camera_id
         )
+        rec.add_camera(cam)
+        
         position = ar_pose[0:3]
         rotation = ar_pose[3:7]
-
         position, rotation = convert_pose_opengl_to_colmap(position, rotation)
-
-        rec.add_camera(cam)
-
-        # logger.info(f"{timestampNs} @ Cam {camera_id}: {w}x{h}, {model} params {params} at pos=({position}) rot=({rotation})")
-
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
 
         cam_from_world = cam_to_world.inverse()
         arkit_cam_from_world_transforms[image_id] = cam_from_world
-        #print("INV: pos:", world_to_cam.translation, "rot:", world_to_cam.rotation)
+
         img = pycolmap.Image(
             image_filename, pycolmap.ListPoint2D([]), cam_from_world, camera_id, image_id
         )
@@ -322,7 +325,7 @@ def refine_dataset(
 
     colmap_rec_path = outputs / 'colmap_rec'
     Path.mkdir(colmap_rec_path, parents=True, exist_ok=True)
-    rec.write(colmap_rec_path)
+    rec.write(colmap_rec_path) 
 
     refined_rec = pycolmap.Reconstruction()
     refined_rec.read(colmap_rec_path)
@@ -390,8 +393,6 @@ def refine_dataset(
             detections_per_qr[id] = []
             image_ids_per_qr[id] = []
 
-        # print(f"QR position for {id}:", detection["pose"])
-
         # Convert back into cam space of nearest image frame (since we skip some frames)
         valid_nearest_timestamps = [t for t in valid_timestamps if t <= timestamp]
         if valid_nearest_timestamps:
@@ -405,7 +406,7 @@ def refine_dataset(
 
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
-        
+
 
     logger.info("Start triangulation")
     refined_rec = triangulate_model(
