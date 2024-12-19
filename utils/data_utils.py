@@ -318,18 +318,29 @@ def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=Non
             "total": psutil.virtual_memory().total,
             "available": psutil.virtual_memory().available,
             "used": psutil.virtual_memory().used,
-            "used_percent": psutil.virtual_memory().percent
+            "usedPercent": psutil.virtual_memory().percent
         }
     except:
         pass
     
     try:
+        if torch.cuda.is_available():
+            manifest_data["serverDetails"]["cudaAvailable"] = True
+            manifest_data["serverDetails"]["cudaVersion"] = torch.version.cuda
+        else:
+            manifest_data["serverDetails"]["cudaAvailable"] = False
+    except:
+        manifest_data["serverDetails"]["cudaAvailable"] = False
+        pass
+
+    try:
         manifest_data["serverDetails"]["gpus"] = [
             {
                 "name": gpu.name,
-                "memory_total": gpu.memoryTotal,
-                "memory_used": gpu.memoryUsed,
-                "load": gpu.load
+                "memoryTotal": gpu.memoryTotal,
+                "memoryUsed": gpu.memoryUsed,
+                "load": gpu.load,
+                "driver": gpu.driver,
             }
             for gpu in GPUtil.getGPUs()
         ] if len(GPUtil.getGPUs()) > 0 else [],
