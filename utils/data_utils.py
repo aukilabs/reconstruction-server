@@ -281,23 +281,55 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 
-def save_failed_manifest_json(csv_path, job_status_details):
-    save_manifest_json({}, csv_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
+def save_failed_manifest_json(json_path, job_root_path, job_status_details):
+    save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=None, job_status_details=None):
+def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None):
     manifest_data = {
         "portals": [],
         "reconstructionServerVersion": VERSION,
         "jobStatus": job_status if job_status is not None else "unknown",
         "jobProgress": job_progress if job_progress is not None else 0,
         "jobStatusDetails": job_status_details if job_status_details is not None else "",
-        "manifestTimestamp": datetime.datetime.now().isoformat()
+        "updatedAt": datetime.datetime.now().isoformat()
     }
+
+    # Lots of try catch to just skip data that is not available but still keep the rest
+
+    #-------------------------
+    # JOB METADATA
+    #-------------------------
+
+    manifest_data["jobMetadata"] = {}
+    jobMeta = manifest_data["jobMetadata"]
+
+    try:
+        job_metadata_json_path = job_root_path / "job_metadata.json"
+        if job_metadata_json_path.exists():
+            job_metadata_json = json.load(open(job_metadata_json_path))
+
+            def copy_meta(from_key, to_key):
+                if from_key in job_metadata_json:
+                    jobMeta[to_key] = job_metadata_json[from_key]
+
+            copy_meta("id", "id")
+            copy_meta("name", "name")
+            copy_meta("created_at", "createdAt")
+            copy_meta("processing_type", "processingType")
+            copy_meta("reconstruction_server_url", "reconstructionServerURL")
+            copy_meta("domain_server_url", "domainServerURL")
+            copy_meta("domain_id", "domainID")
+            copy_meta("data_ids", "dataIDs")
+    except:
+        pass
+
+    #-------------------------
+    # SERVER DETAILS
+    #-------------------------
 
     manifest_data["serverDetails"] = {}
 
-    # Lots of try catch to just skip data that is not available but still keep the rest
     try:
         manifest_data["serverDetails"]["os"] = platform.platform()
     except:
@@ -347,6 +379,10 @@ def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=Non
     except:
         pass
 
+    #-------------------------
+    # PORTALS
+    #-------------------------
+
     # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
     # For now we just take the first
     for short_id, poses_for_qr in portal_poses.items():
@@ -385,7 +421,9 @@ def save_manifest_json(portal_poses, csv_path, job_status=None, job_progress=Non
             "physicalSize": 0.15 #TODO: use actual value from Manifest.csv
         })
 
-    with open(csv_path, 'w') as json_file:
+    #-------------------------
+
+    with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
 
 
