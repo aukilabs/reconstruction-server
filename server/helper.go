@@ -59,7 +59,7 @@ func ParseStatusFromManifest(manifestPath string) (string, error) {
 
 	status, ok := parsedManifest["jobStatus"].(string)
 	if !ok {
-		return "", fmt.Errorf("Cannot parse jobStatus in existing manifest json file: %s", manifestPath)
+		return "", fmt.Errorf("cannot parse jobStatus in existing manifest json file: %s", manifestPath)
 	}
 	return status, nil
 }
@@ -68,9 +68,11 @@ func WriteJobManifestFile(j *job, status string) {
 	if status == "failed" {
 		// If python script has already written a manifest with status "failed", don't overwrite it
 		statusFromManifest, err := ParseStatusFromManifest(path.Join(j.JobPath, "job_manifest.json"))
-		
+
 		if err == nil && statusFromManifest == "failed" {
-			log.Printf("job %s python script has already written a failed manifest, won't overwrite.", j.ID)
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("job %s python script has already written a failed manifest, won't overwrite.", j.ID)
 		} else {
 			WriteFailedJobManifestFile(j, "Reconstruction job script failed")
 		}
