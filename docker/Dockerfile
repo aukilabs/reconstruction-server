@@ -11,9 +11,11 @@ ARG VERSION
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 
-# FROM nvidia/cuda:12.4.1-devel-ubuntu20.04
 FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
+ARG USERNAME=reconstruction-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
@@ -115,10 +117,10 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && cd ../pycolmap \
     && python3 -m pip install -e .
 
+# Hloc
 RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    #sed -i 's/num_workers=5, batch_size=1/num_workers=1, batch_size=1/' hloc/match_features.py && \
-    #sed -i 's/match_path=match_path), 5)/match_path=match_path), 1)/' hloc/match_features.py && \
+    git checkout --recurse-submodules abb252080282e31147db6291206ca102c43353f7 && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
@@ -128,7 +130,6 @@ RUN python3 -m pip install open3d trimesh alphashape
 
 WORKDIR /app
 
-COPY k8s-config /app/k8s-config
 COPY scripts /app/scripts
 COPY src /app/src
 COPY config /app/config
@@ -138,21 +139,17 @@ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDP
 
 COPY utils /app/utils
 RUN chmod 755 /app/utils
-COPY local_main.py global_main.py occlusion_box.py main.py start_server.sh start_sshd.sh /app/
+COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
-RUN chmod 755 /app/start_server.sh
-RUN chmod 755 /app/start_sshd.sh
 
 # Run reconstruction server as separate user, not root
-#RUN adduser --disabled-password --gecos "" reconstruction-server
-#RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
-RUN mkdir -p /app/jobs
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
 
-# temporary for remote editing easier
-#RUN chown -R reconstruction-server:reconstruction-server /app/utils 
-#RUN chown -R reconstruction-server:reconstruction-server /app/*.py
+RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
 
-#USER reconstruction-server
+USER $USERNAME
+
 COPY --from=go-build /app/reconstruction ./reconstruction
 ENTRYPOINT ["./reconstruction"]
 
