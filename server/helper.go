@@ -187,12 +187,13 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
-func WriteScanManifestsSummary(datasetsRootPath string, allScanFolders []os.DirEntry, summaryJsonPath string) error {
+func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry, summaryJsonPath string) error {
 	scanCount := 0
 	totalFrameCount := 0
 	totalDuration := 0.0
 	scanDurations := []float64{}
 	uniquePortalIDs := []string{}
+	portalSizes := []float64{} // Size list is used when saving manifest, to output same physical size, without asking domain server
 	devicesUsed := []string{}
 	appVersionsUsed := []string{}
 
@@ -230,6 +231,7 @@ func WriteScanManifestsSummary(datasetsRootPath string, allScanFolders []os.DirE
 					if portalID, ok := portalMap["shortId"].(string); ok {
 						if !slices.Contains(uniquePortalIDs, portalID) {
 							uniquePortalIDs = append(uniquePortalIDs, portalID)
+							portalSizes = append(portalSizes, portalMap["physicalSize"].(float64))
 						}
 					}
 				}
@@ -258,19 +260,20 @@ func WriteScanManifestsSummary(datasetsRootPath string, allScanFolders []os.DirE
 	averageScanFrameRate := float64(totalFrameCount) / totalDuration
 
 	summary := map[string]interface{}{
-		"scan_count":               scanCount,
-		"total_frame_count":        totalFrameCount,
-		"total_duration":           totalDuration,
-		"average_scan_duration":    averageScanDuration,
-		"average_scan_frame_count": averageScanFrameCount,
-		"average_frame_rate":       averageScanFrameRate,
-		"shortest_scan_duration":   shortestScanDuration,
-		"longest_scan_duration":    longestScanDuration,
-		"median_scan_duration":     medianScanDuration,
-		"portal_count":             len(uniquePortalIDs),
-		"portal_ids":               uniquePortalIDs,
-		"device_versions_used":     devicesUsed,
-		"app_versions_used":        appVersionsUsed,
+		"scanCount":             scanCount,
+		"totalFrameCount":       totalFrameCount,
+		"totalDuration":         totalDuration,
+		"averageScanDuration":   averageScanDuration,
+		"averageScanFrameCount": averageScanFrameCount,
+		"averageFrameRate":      averageScanFrameRate,
+		"shortestScanDuration":  shortestScanDuration,
+		"longestScanDuration":   longestScanDuration,
+		"medianScanDuration":    medianScanDuration,
+		"portalCount":           len(uniquePortalIDs),
+		"portalIDs":             uniquePortalIDs,
+		"portalSizes":           portalSizes,
+		"deviceVersionsUsed":    devicesUsed,
+		"appVersionsUsed":       appVersionsUsed,
 	}
 
 	summaryJson, err := json.MarshalIndent(summary, "", "  ")
@@ -799,8 +802,8 @@ func executeJob(j *job) {
 			WithTag("domain_id", j.DomainID).
 			Infof("read %d scan folders", len(allScanFolders))
 
-		manifestSummaryPath := path.Join(j.JobPath, "manifest_summary.json")
-		WriteScanManifestsSummary(datasetsRootPath, allScanFolders, manifestSummaryPath)
+		scanDataSummaryPath := path.Join(j.JobPath, "scan_data_summary.json")
+		WriteScanDataSummary(datasetsRootPath, allScanFolders, scanDataSummaryPath)
 
 		for _, folder := range allScanFolders {
 			params = append(params, folder.Name())

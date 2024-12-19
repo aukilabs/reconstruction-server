@@ -301,34 +301,37 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     # JOB METADATA
     #-------------------------
 
-    manifest_data["jobMetadata"] = {}
-    jobMeta = manifest_data["jobMetadata"]
-
-    try:
-        manifest_summary_path = job_root_path / "manifest_summary.json"
-        if manifest_summary_path.exists():
-            manifest_summary = json.load(open(manifest_summary_path))
-            jobMeta["manifest_summary"] = manifest_summary
-    except:
-        pass
-
     try:
         job_metadata_json_path = job_root_path / "job_metadata.json"
         if job_metadata_json_path.exists():
             job_metadata_json = json.load(open(job_metadata_json_path))
 
-            def copy_meta(from_key, to_key):
-                if from_key in job_metadata_json:
-                    jobMeta[to_key] = job_metadata_json[from_key]
+            created_datetime = datetime.datetime.fromisoformat(job_metadata_json["created_at"])
+            
+            manifest_data["createdAt"] = job_metadata_json["created_at"]
+            manifest_data["jobDuration"] = float((datetime.datetime.now() - created_datetime).total_seconds())
+            manifest_data["jobID"] = job_metadata_json["id"]
+            manifest_data["jobName"] = job_metadata_json["name"]
+            manifest_data["reconstructionServerURL"] = job_metadata_json.get("reconstruction_server_url", None)
+            manifest_data["domainID"] = job_metadata_json["domain_id"]
+            manifest_data["domainServerURL"] = job_metadata_json.get("domain_server_url", None)
+            manifest_data["processingType"] = job_metadata_json["processing_type"]
+            manifest_data["dataIDs"] = job_metadata_json["data_ids"]
+    except:
+        pass
 
-            copy_meta("id", "jobID")
-            copy_meta("name", "jobName")
-            copy_meta("created_at", "createdAt")
-            copy_meta("processing_type", "processingType")
-            copy_meta("reconstruction_server_url", "reconstructionServerURL")
-            copy_meta("domain_server_url", "domainServerURL")
-            copy_meta("domain_id", "domainID")
-            copy_meta("data_ids", "dataIDs")
+    #-------------------------
+    # SCAN DATA SUMMARY
+    #-------------------------
+
+    portal_sizes = {}
+    try:
+        scan_data_summary_path = job_root_path / "scan_data_summary.json"
+        if scan_data_summary_path.exists():
+            scan_data_summary = json.load(open(scan_data_summary_path))
+            manifest_data["scanDataSummary"] = scan_data_summary
+            for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
+                portal_sizes[portal_id] = portal_size
     except:
         pass
 
@@ -426,7 +429,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
                     "w": quat[3],
                 }
             },
-            "physicalSize": 0.15 #TODO: use actual value from Manifest.csv
+            "physicalSize": portal_sizes.get(short_id, None)
         })
 
     #-------------------------
