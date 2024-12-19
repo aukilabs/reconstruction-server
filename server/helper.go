@@ -190,7 +190,7 @@ func escapeQuotes(s string) string {
 func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry, summaryJsonPath string) error {
 	scanCount := 0
 	totalFrameCount := 0
-	totalDuration := 0.0
+	totalScanDuration := 0.0
 	scanDurations := []float64{}
 	uniquePortalIDs := []string{}
 	portalSizes := []float64{} // Size list is used when saving manifest, to output same physical size, without asking domain server
@@ -222,7 +222,7 @@ func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry,
 		frameCount := manifest["frameCount"].(int)
 		duration := manifest["duration"].(float64)
 		totalFrameCount += frameCount
-		totalDuration += duration
+		totalScanDuration += duration
 		scanDurations = append(scanDurations, duration)
 
 		if portals, ok := manifest["portals"].([]interface{}); ok {
@@ -255,14 +255,14 @@ func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry,
 	longestScanDuration := scanDurations[len(scanDurations)-1]
 	medianScanDuration := scanDurations[len(scanDurations)/2]
 
-	averageScanDuration := totalDuration / float64(len(allScanFolders))
+	averageScanDuration := totalScanDuration / float64(len(allScanFolders))
 	averageScanFrameCount := float64(totalFrameCount) / float64(len(allScanFolders))
-	averageScanFrameRate := float64(totalFrameCount) / totalDuration
+	averageScanFrameRate := float64(totalFrameCount) / totalScanDuration
 
 	summary := map[string]interface{}{
 		"scanCount":             scanCount,
 		"totalFrameCount":       totalFrameCount,
-		"totalDuration":         totalDuration,
+		"totalScanDuration":     totalScanDuration,
 		"averageScanDuration":   averageScanDuration,
 		"averageScanFrameCount": averageScanFrameCount,
 		"averageFrameRate":      averageScanFrameRate,
