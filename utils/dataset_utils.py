@@ -42,6 +42,7 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+
 def load_partial(
     unzip_folder, 
     dataset_dir, 
@@ -732,7 +733,7 @@ def stitching_helper(
     
     next_image_id = 1
     datasets_already_aligned = []
-    datasets_to_align = dataset_paths.copy() # TODO Why copy? Can just loop through the list?
+    datasets_to_align = dataset_paths.copy() # Queue of not-yet-aligned datasets (We go through it multiple times until everything overlaps)
     consecutive_alignment_fails = 0
 
     refined_group_dir = parent_dir / "refined"

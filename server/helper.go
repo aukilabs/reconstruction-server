@@ -1,10 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
+	"sort"
 
 	"fmt"
 	"io"
@@ -184,6 +185,100 @@ var MaxBytesError = &http.MaxBytesError{}
 
 func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
+}
+
+func WriteScanManifestsSummary(datasetsRootPath string, allScanFolders []os.DirEntry, summaryJsonPath string) error {
+	scanCount := 0
+	totalFrameCount := 0
+	totalDuration := 0.0
+	scanDurations := []float64{}
+	uniquePortalIDs := []string{}
+	devicesUsed := []string{}
+	appVersionsUsed := []string{}
+
+	for _, scanFolder := range allScanFolders {
+		if !scanFolder.IsDir() {
+			continue
+		}
+
+		manifestPath := path.Join(datasetsRootPath, scanFolder.Name(), "Manifest.json")
+		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+			continue
+		}
+
+		manifestData, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return err
+		}
+
+		var manifest map[string]interface{}
+		if err := json.Unmarshal(manifestData, &manifest); err != nil {
+			return err
+		}
+
+		scanCount++
+
+		frameCount := manifest["frameCount"].(int)
+		duration := manifest["duration"].(float64)
+		totalFrameCount += frameCount
+		totalDuration += duration
+		scanDurations = append(scanDurations, duration)
+
+		if portals, ok := manifest["portals"].([]interface{}); ok {
+			for _, portal := range portals {
+				if portalMap, ok := portal.(map[string]interface{}); ok {
+					if portalID, ok := portalMap["shortId"].(string); ok {
+						if !slices.Contains(uniquePortalIDs, portalID) {
+							uniquePortalIDs = append(uniquePortalIDs, portalID)
+						}
+					}
+				}
+			}
+		}
+
+		device := manifest["brand"].(string) + " " + manifest["model"].(string) + " " + manifest["systemName"].(string) + " " + manifest["systemVersion"].(string)
+		device = strings.TrimSpace(device)
+		if !slices.Contains(devicesUsed, device) {
+			devicesUsed = append(devicesUsed, device)
+		}
+
+		appVersion := manifest["appVersion"].(string) + " (build " + manifest["buildId"].(string) + ")"
+		if !slices.Contains(appVersionsUsed, appVersion) {
+			appVersionsUsed = append(appVersionsUsed, appVersion)
+		}
+	}
+
+	sort.Float64s(scanDurations)
+	shortestScanDuration := scanDurations[0]
+	longestScanDuration := scanDurations[len(scanDurations)-1]
+	medianScanDuration := scanDurations[len(scanDurations)/2]
+
+	averageScanDuration := totalDuration / float64(len(allScanFolders))
+	averageScanFrameCount := float64(totalFrameCount) / float64(len(allScanFolders))
+	averageScanFrameRate := float64(totalFrameCount) / totalDuration
+
+	summary := map[string]interface{}{
+		"scan_count":               scanCount,
+		"total_frame_count":        totalFrameCount,
+		"total_duration":           totalDuration,
+		"average_scan_duration":    averageScanDuration,
+		"average_scan_frame_count": averageScanFrameCount,
+		"average_frame_rate":       averageScanFrameRate,
+		"shortest_scan_duration":   shortestScanDuration,
+		"longest_scan_duration":    longestScanDuration,
+		"median_scan_duration":     medianScanDuration,
+		"portal_count":             len(uniquePortalIDs),
+		"portal_ids":               uniquePortalIDs,
+		"device_versions_used":     devicesUsed,
+		"app_versions_used":        appVersionsUsed,
+	}
+
+	summaryJson, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(summaryJsonPath, summaryJson, 0644)
 }
 
 func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
@@ -428,10 +523,6 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 		return fmt.Errorf("domain server returned status %d", resp.StatusCode)
 	}
 
-	//if err := os.MkdirAll(path.Join(j.JobPath, "Frames"), 0755); err != nil {
-	//	return err
-	//}
-
 	_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil {
 		return err
@@ -514,30 +605,6 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 		WithTag("domain_id", j.DomainID).
 		Infof("downloaded %d data objects from domain", i)
 	return nil
-}
-
-func ParseFramesCsv(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// frames.csv is a csv file has two columns, the first column is the timestamp, and the second column is the data id
-	// we need to extract the data ids from the second column
-	var ids []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, ",")
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("invalid line: %s", line)
-		}
-		ids = append(ids, parts[1])
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
 }
 
 func ReadDispositionParams(part *multipart.Part) (map[string]string, error) {
@@ -709,19 +776,18 @@ func executeJob(j *job) {
 
 	refinementPython := "main.py"
 
-	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
 	outputPath := path.Join(j.JobPath, "refined")
 	logFilePath := path.Join(j.JobPath, "log.txt")
 
 	params := []string{
 		refinementPython,
 		"--mode", j.ProcessingType,
-		"--job_root_path", jobRootPath,
+		"--job_root_path", j.JobPath,
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
 		"--job_id", j.Name}
 
-	datasetsRootPath := path.Join(jobRootPath, "datasets")
+	datasetsRootPath := path.Join(j.JobPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
@@ -732,6 +798,10 @@ func executeJob(j *job) {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
 			Infof("read %d scan folders", len(allScanFolders))
+
+		manifestSummaryPath := path.Join(j.JobPath, "manifest_summary.json")
+		WriteScanManifestsSummary(datasetsRootPath, allScanFolders, manifestSummaryPath)
+
 		for _, folder := range allScanFolders {
 			params = append(params, folder.Name())
 		}
@@ -772,21 +842,19 @@ func executeJob(j *job) {
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
+
 	// Monitor progress in a separate goroutine
 	progressDone := make(chan bool)
 	go func() {
-		datasetsPath := path.Join(jobRootPath, "datasets")
-		refinedPath := path.Join(jobRootPath, "refined", "local")
+		refinedPath := path.Join(outputPath, "local")
 
 		for {
 			select {
 			case <-progressDone:
 				return
 			default:
-				time.Sleep(10 * time.Second)
-
 				// Get total number of datasets
-				datasetFolders, err := os.ReadDir(datasetsPath)
+				datasetFolders, err := os.ReadDir(datasetsRootPath)
 				if err != nil {
 					logs.WithTag("job_id", j.ID).
 						WithTag("domain_id", j.DomainID).
@@ -831,7 +899,7 @@ func executeJob(j *job) {
 						Error(errors.Newf("failed to upload job manifest").Wrap(err))
 				}
 
-				time.Sleep(10 * time.Second)
+				time.Sleep(30 * time.Second)
 			}
 		}
 	}()

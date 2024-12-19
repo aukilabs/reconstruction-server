@@ -305,6 +305,14 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     jobMeta = manifest_data["jobMetadata"]
 
     try:
+        manifest_summary_path = job_root_path / "manifest_summary.json"
+        if manifest_summary_path.exists():
+            manifest_summary = json.load(open(manifest_summary_path))
+            jobMeta["manifest_summary"] = manifest_summary
+    except:
+        pass
+
+    try:
         job_metadata_json_path = job_root_path / "job_metadata.json"
         if job_metadata_json_path.exists():
             job_metadata_json = json.load(open(job_metadata_json_path))
@@ -313,8 +321,8 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
                 if from_key in job_metadata_json:
                     jobMeta[to_key] = job_metadata_json[from_key]
 
-            copy_meta("id", "id")
-            copy_meta("name", "name")
+            copy_meta("id", "jobID")
+            copy_meta("name", "jobName")
             copy_meta("created_at", "createdAt")
             copy_meta("processing_type", "processingType")
             copy_meta("reconstruction_server_url", "reconstructionServerURL")
