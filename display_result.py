@@ -229,6 +229,11 @@ def create_grid(size=1.0, divisions=10, plane="xy"):
     line_set = o3d.geometry.LineSet()
     line_set.points = o3d.utility.Vector3dVector(points)
     line_set.lines = o3d.utility.Vector2iVector(lines)
+
+    # Set all line colors to white
+    colors = [[1.0, 1.0, 1.0] for _ in range(len(lines))]  # White color for all lines
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+    
     return line_set
 ####################################################
 # IO
@@ -295,8 +300,11 @@ def main(args):
         vis1.add_geometry(o)
     vis1.poll_events()
     vis1.update_renderer()
+
+    # Set Render Options
     render_option = vis1.get_render_option()
     render_option.point_size = 1.0  # Smaller value means smaller points (default is usually 5.0)
+    render_option.background_color = [0, 0, 0] 
 
     while True:
         if not vis1.poll_events():
