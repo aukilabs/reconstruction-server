@@ -170,6 +170,66 @@ def create_square_plane(translation, quaternion, size=1.0, thickness=0.01, color
     return plane_mesh
 
 
+def create_grid(size=1.0, divisions=10, plane="xy"):
+    """
+    Creates a grid on a specified plane (xy, yz, or xz).
+    
+    Args:
+        size (float): Length of the grid.
+        divisions (int): Number of divisions in the grid.
+        plane (str): The plane where the grid is created ("xy", "yz", or "xz").
+    
+    Returns:
+        open3d.geometry.LineSet: The grid as a LineSet object.
+    """
+    # Create grid points
+    linspace = np.linspace(-size / 2, size / 2, divisions + 1)
+    points = []
+    lines = []
+
+    if plane == "xy":
+        # Grid on XY plane
+        for i, x in enumerate(linspace):
+            points.append([x, -size / 2, 0])
+            points.append([x, size / 2, 0])
+            lines.append([2 * i, 2 * i + 1])
+        offset = len(points)
+        for i, y in enumerate(linspace):
+            points.append([-size / 2, y, 0])
+            points.append([size / 2, y, 0])
+            lines.append([offset + 2 * i, offset + 2 * i + 1])
+    elif plane == "yz":
+        # Grid on YZ plane
+        for i, y in enumerate(linspace):
+            points.append([0, y, -size / 2])
+            points.append([0, y, size / 2])
+            lines.append([2 * i, 2 * i + 1])
+        offset = len(points)
+        for i, z in enumerate(linspace):
+            points.append([0, -size / 2, z])
+            points.append([0, size / 2, z])
+            lines.append([offset + 2 * i, offset + 2 * i + 1])
+    elif plane == "xz":
+        # Grid on XZ plane
+        for i, x in enumerate(linspace):
+            points.append([x, 0, -size / 2])
+            points.append([x, 0, size / 2])
+            lines.append([2 * i, 2 * i + 1])
+        offset = len(points)
+        for i, z in enumerate(linspace):
+            points.append([-size / 2, 0, z])
+            points.append([size / 2, 0, z])
+            lines.append([offset + 2 * i, offset + 2 * i + 1])
+    else:
+        raise ValueError(f"Unknown plane '{plane}'. Choose from 'xy', 'yz', or 'xz'.")
+
+    # Convert to LineSet
+    points = np.array(points)
+    lines = np.array(lines)
+    line_set = o3d.geometry.LineSet()
+    line_set.points = o3d.utility.Vector3dVector(points)
+    line_set.lines = o3d.utility.Vector2iVector(lines)
+    return line_set
 ####################################################
 # IO
 ####################################################
@@ -218,6 +278,9 @@ def main(args):
     # Construct Origin Axis Visual
     geo.extend(create_pose_with_thickness([0, 0, 0], [0, 0, 0, 1], 0.5, 0.05))
 
+    # Create Grid
+    geo.append(create_grid(20.0, 20, plane="xz"))
+
     # Construct Portals Visual Object
     for _, portal in portal_detections.items():
         pose = portal["pose"]
@@ -232,6 +295,9 @@ def main(args):
         vis1.add_geometry(o)
     vis1.poll_events()
     vis1.update_renderer()
+    render_option = vis1.get_render_option()
+    render_option.point_size = 1.0  # Smaller value means smaller points (default is usually 5.0)
+
     while True:
         if not vis1.poll_events():
             break
