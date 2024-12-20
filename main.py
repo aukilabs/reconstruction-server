@@ -106,9 +106,10 @@ def main(args):
     )
 
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
-    for scan in Path(args.job_root_path / "datasets").iterdir():
-        if scan.is_dir() or scan.suffix == ".zip":
-            args.scans.append(scan.name)
+    if len(args.scans) == 0:
+        for scan in Path(args.job_root_path / "datasets").iterdir():
+            if scan.is_dir() or scan.suffix == ".zip":
+                args.scans.append(scan.name)
 
     mode_config = {
         "local_refinement": ("local", local_main_wrapper),
