@@ -75,7 +75,7 @@ def plot_coordinates_on_image(portal_file, frames_ts_file, images_folder, output
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Display SFM and Portal results")
-    parser.add_argument('--dataset', type=str, help='Path to dataset folder', default='./refined/local/2024-12-16_12-57-48/sfm')
+    parser.add_argument('--dataset', type=str, help='Path to dataset folder', required=True)
     return parser.parse_args()   
 
 
