@@ -219,7 +219,7 @@ func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry,
 
 		scanCount++
 
-		frameCount := manifest["frameCount"].(int)
+		frameCount := int(manifest["frameCount"].(float64))
 		duration := manifest["duration"].(float64)
 		totalFrameCount += frameCount
 		totalScanDuration += duration
