@@ -42,6 +42,7 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+
 def load_partial(
     unzip_folder, 
     dataset_dir, 
@@ -59,8 +60,11 @@ def load_partial(
     all_observations=True, 
     all_poses=True, 
     gt_observations=False, 
-    with_3dpoints=False
+    with_3dpoints=False,
+    logger_name=None
 ):
+    logger = logging.getLogger(logger_name)
+
     experiment_name = unzip_folder.name
 
     dataset = unzip_folder # TODO will remove this as we can use scan_folder_path all along
@@ -68,10 +72,10 @@ def load_partial(
     images = unzip_folder / 'Frames/'
     
     frames_mp4 = unzip_folder / 'Frames.mp4'
-    print("Looking for mp4 encoded frames: ", frames_mp4)
+    logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
     use_frames_from_video = False
     if frames_mp4.exists():
-        print("Frames mp4 found, unpacking into", images)
+        logger.info(f"Frames mp4 found, unpacking into {images}")
         if not images.exists():
             images.mkdir()
 
@@ -79,8 +83,8 @@ def load_partial(
         if matching_unpacked_count == 0:
             mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
         else:
-            print(f"Frames folder contains {matching_unpacked_count} matching jpg files already")
-            print("Already unpacked! Skipping mp4 to frames (to save time)")
+            logger.info(f"Frames folder contains {matching_unpacked_count} matching jpg files already")
+            logger.info("Already unpacked! Skipping mp4 to frames (to save time)")
         use_frames_from_video = True
 
 
@@ -98,9 +102,9 @@ def load_partial(
     original_image_count = len(references)
     references = sorted(references) # Assume file name is time stamp, to get chronological sequence
 
-    print(len(references), "frames selected")
+    logger.info(f"{len(references)} frames selected")
     if len(references) < 20:
-        print("TOO FEW IMAGES! Skipping short dataset")
+        logger.info("TOO FEW IMAGES! Skipping short dataset")
         return next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
                arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
     
@@ -110,13 +114,13 @@ def load_partial(
 
     frames_csv_path = dataset / "Frames.csv"
     if not frames_csv_path.exists():
-        print("Dataset has no Frames.csv. SKIPPING!")
+        logger.info("Dataset has no Frames.csv. SKIPPING!")
         return next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
                arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
 
     frames_csv_path = str(frames_csv_path)
 
-    print("Loading image timestamps from", frames_csv_path, "...")
+    logger.info(f"Loading image timestamps from {frames_csv_path} ...")
 
     # Read and process the CSV file
     timestamp_per_image_chunk = {}
@@ -136,7 +140,7 @@ def load_partial(
         raise Exception("Mismatching number of Frames and Timestamps. "
                         f"{original_image_count} images {len(timestamp_per_image_chunk)} timestamps")
 
-    print(len(timestamp_per_image_chunk), "frame timestamps loaded")
+    logger.info(f"{len(timestamp_per_image_chunk)} frame timestamps loaded")
 
 
     #--------------------
@@ -144,7 +148,7 @@ def load_partial(
 
     cam_intrinsics_csv_path = str(dataset / "CameraIntrinsics.csv")
 
-    print("Loading camera intrinsics from", cam_intrinsics_csv_path, "...")
+    logger.info(f"Loading camera intrinsics from {cam_intrinsics_csv_path} ...")
 
     # Read and process the CSV file
     intrinsics_per_timestamp = {}
@@ -160,7 +164,7 @@ def load_partial(
     if len(intrinsics_per_timestamp) != original_image_count:
         raise Exception("Mismatching number of Frames and Camera Intrinsics. "
                         f"{original_image_count} images {len(intrinsics_per_timestamp)} intrinsics")
-    print(len(intrinsics_per_timestamp), "camera frame intrinsics loaded")
+    logger.info(f"{len(intrinsics_per_timestamp)} camera frame intrinsics loaded")
 
 
     #--------------------
@@ -168,7 +172,7 @@ def load_partial(
 
     ar_poses_csv_path = str(dataset / "ARposes.csv")
 
-    print("Loading unrefined AR poses from", ar_poses_csv_path, "...")
+    logger.info(f"Loading unrefined AR poses from {ar_poses_csv_path} ...")
 
     # Read and process the CSV file
     ar_poses_per_timestamp = {}
@@ -182,7 +186,7 @@ def load_partial(
     if len(ar_poses_per_timestamp) != original_image_count:
         raise Exception("Mismatching number of Frames and Poses. "
                         f"{original_image_count} images {len(ar_poses_per_timestamp)} poses")
-    print(len(ar_poses_per_timestamp), "AR poses loaded")
+    logger.info(f"{len(ar_poses_per_timestamp)} AR poses loaded")
 
 
     def arkit_world_from_cam(timestampNs) -> pycolmap.Rigid3d:
@@ -198,15 +202,15 @@ def load_partial(
     qr_detections_csv_path = dataset / "PortalDetections.csv"
     if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
         qr_detections_csv_path = dataset / "Observations.csv"
-        print("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
+        logger.info("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
     qr_detections_csv_path = str(qr_detections_csv_path)
     
-    print("Loading QR detections from", qr_detections_csv_path, "...")
+    logger.info(f"Loading QR detections from {qr_detections_csv_path} ...")
 
     # Read and process the CSV file
     qr_detections_per_timestamp = load_qr_detections_csv(qr_detections_csv_path)
     # unique_qr = set(value['short_id'] for value in qr_detections_per_timestamp.values())
-    print(len(qr_detections_per_timestamp), "QR detections loaded")
+    logger.info(f"{len(qr_detections_per_timestamp)} QR detections loaded")
 
     # Start with the known camera intrinsics and cam poses from ARKit, or from an already refined chunk.
 
@@ -214,7 +218,7 @@ def load_partial(
     if partial_rec_dir is not None and partial_rec_dir.exists():
         loaded_rec = pycolmap.Reconstruction()
         loaded_rec.read(partial_rec_dir)
-        print("Using loaded refined reconstruction from", partial_rec_dir)
+        logger.info(f"Using loaded refined reconstruction from {partial_rec_dir}")
 
     if loaded_rec is not None:
         # Recalculate QR detections' world poses using refined camera poses
@@ -238,10 +242,15 @@ def load_partial(
                 continue
             nearest_image = nearest_image[0]
 
+            portal_pose = detection["pose"]
+
             cam_space_qr_pose = arkit_world_from_cam(nearest_image_timestamp).inverse() * detection["pose"]
 
             detection["pose"] = nearest_image.cam_from_world.inverse() * cam_space_qr_pose
 
+            logger.debug(f"Added Portal {detection['short_id']}    Portal TS: {timestamp}    Nearest Image TS: {nearest_image_timestamp}")
+            logger.debug(f"{detection['short_id']} Pose:         t: {portal_pose.translation}    r: {portal_pose.rotation.quat}")
+            logger.debug(f"{detection['short_id']} Refined Pose: t: {detection['pose'].translation}    r: {detection['pose'].rotation.quat}")
         for failed_ts in failed_timestamps:
             qr_detections_per_timestamp.pop(failed_ts, None)
 
@@ -261,7 +270,7 @@ def load_partial(
         this_chunk_mean_qr_poses = {qr_id: truth_portal_poses[qr_id] for qr_id, poses in this_chunk_detections_per_qr.items()}
     else:
         this_chunk_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in this_chunk_detections_per_qr.items()}
-    print("There are", len(this_chunk_mean_qr_poses.keys()), "of unique QR codes")
+    logger.info(f"There are {len(this_chunk_mean_qr_poses.keys())} of unique QR codes")
     
 
     # Find all overlapping portal poses
@@ -273,8 +282,11 @@ def load_partial(
     has_overlap = len(target_poses) > 0
 
     is_first_chunk = len(placed_portal) == 0
-    print(f"Portals already placed: {len(placed_portal)}.",
-          "FIRST CHUNK -> put origin portal" if is_first_chunk else "NOT FIRST -> align based on overlapping portals.")
+    logger.info(f"Portals already placed: {len(placed_portal)}.")
+    if is_first_chunk:
+        logger.info(f"FIRST CHUNK -> put origin portal")
+    else:
+        logger.info("NOT FIRST -> align based on overlapping portals.")
 
     if not has_overlap and not is_first_chunk:
         raise NoOverlapException  # handled outside, to retry again after other chunks are added
@@ -295,15 +307,15 @@ def load_partial(
             alignment_transforms.append(transform)
 
         alignment_transform = mean_pose(alignment_transforms)
-        print(f"TRANSFORM: Aligning with overlapping QR(s): ({overlap_ids})")
-        print(alignment_transform)
+        logger.info(f"TRANSFORM: Aligning with overlapping QR(s): ({overlap_ids})")
+        logger.info(alignment_transform)
 
     elif is_first_chunk:
         origin_portal_id = list(this_chunk_mean_qr_poses.keys())[0]
-        print("SET ORIGIN PORTAL:", origin_portal_id)
+        logger.info(f"SET ORIGIN PORTAL: {origin_portal_id}")
         alignment_transform = floor_origin_portal_pose * this_chunk_mean_qr_poses[origin_portal_id].inverse()
-        print(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
-        print(alignment_transform)
+        logger.info(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
+        logger.info(alignment_transform)
 
     #if alignment_transform is not None:
     #    # Align around up vector only, since ARKit gives already a good gravity vector
@@ -314,7 +326,7 @@ def load_partial(
             pose = alignment_transform * pose
         #placed_portal[qr_id] = rectify_floor_portal(pose)
         placed_portal[qr_id] = pose
-        print(f"Portal: {qr_id} Pose: {pose}")
+        logger.info(f"Portal: {qr_id} Pose: {pose}")
 
     if alignment_transform is not None:
         for timestamp, detection in qr_detections_per_timestamp.items():
@@ -527,7 +539,7 @@ def load_partial(
         # cam_space_qr_pose = nearest_image.cam_from_world * pycolmap.Rigid3d(np.eye(3), np.random.uniform(low=-0.01, high=0.01, size=(3,))) * true_pose
 
         if nearest_image.image_id in image_ids_per_qr[id]:
-            print('WARNING: Double observation of the same QR code in one image!')
+            logger.warn('WARNING: Double observation of the same QR code in one image!')
             continue
 
         detections_per_qr[id].append(cam_space_qr_pose)
@@ -549,9 +561,7 @@ def load_partial(
 
         # detections_per_qr[id].append(pycolmap.Rigid3d())
         # image_ids_per_qr[id].append(image_id)
-    print("\n\n")
-    print(detections_per_qr)
-    print("\n\n")
+    logger.debug(detections_per_qr)
     return next_image_id, placed_portal, partial_rec_dir, combined_rec, \
            timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
 
@@ -703,21 +713,13 @@ def stitching_helper(
     all_poses=True, 
     use_refined_outputs=False, 
     with_3dpoints=False, 
-    basic_stitch_only=False
+    basic_stitch_only=False,
+    logger_name=None
 ):
-    # Create and configure logger
+    logger = logging.getLogger(logger_name)
     parent_dir = group_folder.parent
     output_path = parent_dir / "refined" / "global"
-    os.makedirs(output_path, exist_ok=True)
-    logging.basicConfig(filename=str(output_path) + "/global_logs",
-                        format='%(asctime)s %(message)s',
-                        level=logging.INFO,
-                        filemode='a')
-
-    # Creating an object
-    logger = logging.getLogger()
     logger.info(f'Working on {str(parent_dir.name)}')
-
 
     # init
     detections_per_qr = {}
@@ -731,7 +733,7 @@ def stitching_helper(
     
     next_image_id = 1
     datasets_already_aligned = []
-    datasets_to_align = dataset_paths.copy() # TODO Why copy? Can just loop through the list?
+    datasets_to_align = dataset_paths.copy() # Queue of not-yet-aligned datasets (We go through it multiple times until everything overlaps)
     consecutive_alignment_fails = 0
 
     refined_group_dir = parent_dir / "refined"
@@ -746,6 +748,7 @@ def stitching_helper(
         dataset_path = datasets_to_align.pop(0)
         scan_name = dataset_path.stem
 
+        logger.info('========================================================================')
         if dataset_path.suffix.lower() == ".zip":
                 unzip_folder = Path(os.path.join(dataset_dir, scan_name))
                 if not unzip_folder.exists():
@@ -773,7 +776,6 @@ def stitching_helper(
                 partial_rec_dir = refined_scan_dir / 'sfm'
 
         logger.info(f"Loading partial scan: {unzip_folder}")
-
         try:
             next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
             arkit_precomputed, detections_per_qr, image_ids_per_qr, \
@@ -793,9 +795,9 @@ def stitching_helper(
                 chunks_image_ids,
                 all_observations=all_observations,
                 all_poses=all_poses,
-                with_3dpoints=with_3dpoints
+                with_3dpoints=with_3dpoints,
+                logger_name=logger_name
             )
-            logger.info('========================================================================')
             logger.info(f"Loaded {str(unzip_folder.stem)}")
             logger.info('========================================================================')
             consecutive_alignment_fails = 0
@@ -821,6 +823,7 @@ def stitching_helper(
                 logger.error(f"{len(placed_portal)} QR codes already placed:")
                 logger.error('\n'.join(f"{qr_id} -> {pose}" for qr_id, pose in placed_portal.items()))
                 #raise NoOverlapException(err)
+                logger.error('========================================================================')
                 break
 
     def detection_position_stats(detections: Iterable[pycolmap.Rigid3d]):
@@ -835,17 +838,17 @@ def stitching_helper(
 
     basic_stitch_qr_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
 
-    print('========================================================================')
-    print("ALL DETECTIONS (basic stitch):")
-    print('========================================================================')
+    logger.info('========================================================================')
+    logger.info("ALL DETECTIONS (basic stitch):")
+    logger.info('========================================================================')
     basic_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in basic_stitch_qr_detections.items()}
     for qr_id, pose in basic_stitch_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(basic_stitch_qr_detections[qr_id])
-        print(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
+        logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
 
     if with_3dpoints:
         basic_stitch_ply_path = refined_group_dir / 'global' / "BasicStitchPointCloud.ply"
-        export_rec_as_ply(combined_rec, basic_stitch_ply_path)
+        export_rec_as_ply(combined_rec, basic_stitch_ply_path, logger_name)
 
 
     ####################
@@ -871,7 +874,7 @@ def stitching_helper(
         logger.info(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
         Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
         combined_rec.write(optimized_stitch_sfm)
-        export_rec_as_ply(combined_rec, optimized_stitch_ply_path)
+        export_rec_as_ply(combined_rec, optimized_stitch_ply_path, logger_name)
 
     if basic_stitch_only:
         logger.info("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
@@ -890,7 +893,7 @@ def stitching_helper(
 
         manifest_out_path = output_path / 'refined_manifest.json'
         logger.info(f"Saving refined manifest with {len(optimized_stitch_mean_qr_poses)} detections, to: {manifest_out_path}")
-        save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
+        save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, parent_dir, job_status="refined", job_progress=100)
         return (
             combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
             combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
@@ -922,7 +925,7 @@ def stitching_helper(
 
     manifest_out_path = output_path / 'refined_manifest.json'
     logger.info(f"Saving refined manifest with {len(bundle_adjusted_mean_qr_poses)} detections, to: {manifest_out_path}")
-    save_manifest_json(bundle_adjusted_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
+    save_manifest_json(bundle_adjusted_mean_qr_poses, manifest_out_path, parent_dir, job_status="refined", job_progress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"

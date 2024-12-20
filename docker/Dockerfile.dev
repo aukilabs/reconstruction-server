@@ -1,0 +1,135 @@
+FROM nvidia/cuda:11.0.3-base-ubuntu20.04
+
+ARG USERNAME=reconstruction-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    vim \
+    git \
+    nano \
+    jq \
+    less \
+    cmake \
+    autoconf \
+    automake \
+    libtool \
+    libffi-dev \
+    ninja-build \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-filesystem-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgtest-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libsuitesparse-dev \
+    python3-pip \
+    python3-tk
+
+RUN apt-get install -y --no-install-recommends \
+    ssh \
+    netcat-openbsd \
+    ca-certificates \
+    iproute2 \
+    iputils-ping \
+    bind9-dnsutils
+
+RUN pip install --upgrade pip setuptools wheel
+
+RUN wget https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz \
+    && tar xvf cmake-3.27.9-linux-x86_64.tar.gz \
+    && cd cmake-3.27.9-linux-x86_64 \
+    && cp -r bin /usr/ \
+    && cp -r share /usr/ \
+    && cp -r doc /usr/share/ \
+    && cp -r man /usr/share/ \
+    && cd .. \
+    && rm -rf cmake*
+
+RUN git clone https://github.com/google/glog.git && cd glog && \
+    git checkout tags/v0.6.0 && \
+    cmake -S . -B build -G "Unix Makefiles" && \
+    cmake --build build --target install
+
+RUN pip install "pybind11[global]==2.12.0"
+
+RUN pip install psutil gputil
+
+WORKDIR /src
+
+RUN git clone https://github.com/NVIDIA/libglvnd && \
+    cd libglvnd && \
+    ./autogen.sh && \
+    ./configure && \
+    make -j4 && \
+    make install
+
+# Ceres
+RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
+    && cd ceres-solver \
+    && git checkout tags/2.2.0 \
+    && mkdir build \
+    && cd build \
+    && cmake .. -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+    && make -j4 \
+    && make install
+
+# pyCeres
+RUN git clone https://github.com/cvg/pyceres.git \
+    && cd pyceres \
+    && git checkout tags/v2.3 \
+    && python3 -m pip install -e .
+
+# COLMAP
+RUN git clone https://github.com/colmap/colmap.git && \
+    cd colmap \
+    && git checkout release/3.10 \
+    && mkdir build \
+    && cd build \
+    && cmake -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89" .. \
+    && make -j 4 \
+    && make install \
+    && cd ../pycolmap \
+    && python3 -m pip install -e .
+
+# Hloc
+RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
+    cd Hierarchical-Localization && \
+    git checkout --recurse-submodules abb252080282e31147db6291206ca102c43353f7 && \
+    python3 -m pip install -e . --config-settings editable_mode=compat && \
+    python3 -m pip install --upgrade plotly
+
+RUN python3 -m pip install enlighten evo
+
+RUN python3 -m pip install open3d trimesh alphashape
+
+# Server Stuff
+COPY --from=golang:1.21 /usr/local/go/ /usr/local/go/
+ENV PATH="$PATH:/usr/local/go/bin"
+
+# User Stuff
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    #
+    # [Optional] Add sudo support. Omit if you don't need to install software after connecting.
+    && apt-get update \
+    && apt-get install -y sudo \
+    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+USER $USERNAME
+
+WORKDIR /app
+ENTRYPOINT /bin/bash

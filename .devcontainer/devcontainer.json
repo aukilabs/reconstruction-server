@@ -1,0 +1,28 @@
+{
+    "name": "Reconstruction Server Devcontainer",
+    "remoteUser": "reconstruction-server",
+    "build": {
+        "dockerfile": "../docker/Dockerfile.dev"
+    },
+    "workspaceFolder": "/app",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind",
+    "customizations": {
+        "vscode": {
+            "extensions":[
+                "golang.Go",
+                "ms-python.python",
+                "ms-python.debugpy"
+            ]
+        }
+    },
+    "appPort": [8080],
+    "runArgs": [
+        "--gpus", "all",
+        "--shm-size", "512m"
+    ],
+    "mounts": [
+        // Modify this to your own data folder
+        // "source=/home/sam/Workspaces/data,target=/data,type=bind"
+    ],
+    "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
+}
