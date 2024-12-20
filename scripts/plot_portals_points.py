@@ -3,6 +3,11 @@ import cv2
 import csv
 import argparse
 
+COLORS = [(0, 0, 255),   # Red
+          (0, 255, 0),   # Green
+          (255, 0, 0),   # Blue
+          (0, 255, 255)] # Yellow
+
 def get_image_names(folder_path, valid_extensions=None):
     """
     Get a list of image file names in the given folder.
@@ -61,11 +66,11 @@ def plot_coordinates_on_image(portal_file, frames_ts_file, images_folder, output
             image = cv2.imread(image_path)
             height, width = image.shape[:2]
             # Plot the points on the image
-            for point in points:
+            for i, point in enumerate(points):
                 x, y = int(point[0]), int(point[1])
                 x = width - x
                 y = height - y
-                cv2.circle(image, (x, y), radius=5, color=(0, 0, 255), thickness=-1)  # Red dot
+                cv2.circle(image, (x, y), radius=5, color=COLORS[i], thickness=-1)  # Red dot
 
             # Save the output image
             output_path = os.path.join(output_folder, image_name)
@@ -74,7 +79,7 @@ def plot_coordinates_on_image(portal_file, frames_ts_file, images_folder, output
             print(f"Processed and saved: {output_path}")
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Display SFM and Portal results")
+    parser = argparse.ArgumentParser(description="Read and plot the position of the portals in image frame")
     parser.add_argument('--dataset', type=str, help='Path to dataset folder', required=True)
     return parser.parse_args()   
 
