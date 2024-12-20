@@ -125,7 +125,7 @@ def main(args):
         logger.error(f"Refinement failed with exception: {e}")
         manifest_out_path =  args.output_path / "refined_manifest.json"
         logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
-        save_failed_manifest_json(manifest_out_path, str(e))
+        save_failed_manifest_json(manifest_out_path, args.output_path, str(e))
         raise e
 
 
