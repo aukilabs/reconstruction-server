@@ -307,7 +307,7 @@ func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 func WriteFailedJobManifestFile(j *job, errorMessage string) error {
 	pythonSnippet := `
 from utils.data_utils import save_failed_manifest_json; 
-save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + errorMessage + `')
+save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + j.JobPath + `', '` + errorMessage + `')
 `
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
@@ -325,6 +325,7 @@ func WriteJobManifestFileHelper(j *job, status string, progress int, statusDetai
 from utils.data_utils import save_manifest_json;
 save_manifest_json({},
 	'` + j.JobPath + `/job_manifest.json',
+	'` + j.JobPath + `',
 	job_status='` + status + `',
 	job_progress=` + strconv.Itoa(progress) + `,
 	job_status_details='` + statusDetails + `'
