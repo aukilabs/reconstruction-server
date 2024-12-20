@@ -690,7 +690,8 @@ func executeJob(j *job) {
 		"--job_root_path", jobRootPath,
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
-		"--job_id", j.Name}
+		"--job_id", j.Name,
+		"--scans"}
 
 	datasetsRootPath := path.Join(jobRootPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
