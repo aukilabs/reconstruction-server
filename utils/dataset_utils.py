@@ -42,6 +42,7 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+
 def load_partial(
     unzip_folder, 
     dataset_dir, 
@@ -732,7 +733,7 @@ def stitching_helper(
     
     next_image_id = 1
     datasets_already_aligned = []
-    datasets_to_align = dataset_paths.copy() # TODO Why copy? Can just loop through the list?
+    datasets_to_align = dataset_paths.copy() # Queue of not-yet-aligned datasets (We go through it multiple times until everything overlaps)
     consecutive_alignment_fails = 0
 
     refined_group_dir = parent_dir / "refined"
@@ -892,7 +893,7 @@ def stitching_helper(
 
         manifest_out_path = output_path / 'refined_manifest.json'
         logger.info(f"Saving refined manifest with {len(optimized_stitch_mean_qr_poses)} detections, to: {manifest_out_path}")
-        save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
+        save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, parent_dir, job_status="refined", job_progress=100)
         return (
             combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
             combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
@@ -924,7 +925,7 @@ def stitching_helper(
 
     manifest_out_path = output_path / 'refined_manifest.json'
     logger.info(f"Saving refined manifest with {len(bundle_adjusted_mean_qr_poses)} detections, to: {manifest_out_path}")
-    save_manifest_json(bundle_adjusted_mean_qr_poses, manifest_out_path, jobStatus="refined", jobProgress=100)
+    save_manifest_json(bundle_adjusted_mean_qr_poses, manifest_out_path, parent_dir, job_status="refined", job_progress=100)
 
     if with_3dpoints:
         refined_sfm_dir = output_path / "refined_sfm_combined"
