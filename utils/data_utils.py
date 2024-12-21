@@ -156,9 +156,12 @@ def load_qr_detections_csv(csv_path):
                 np.array(pos)
             )
 
+            coordinates = [float(coord) for coord in row[9:]]
+
             detections_per_timestamp[timestamp] = {
                 "pose": qr_pose,
-                "short_id": row[1]
+                "short_id": row[1],
+                "corners_wrt_image": [(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
             }
 
     return detections_per_timestamp
