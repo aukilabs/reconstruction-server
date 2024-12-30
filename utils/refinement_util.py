@@ -15,7 +15,8 @@ from utils.data_utils import (
     mean_pose,
     setup_logger,
     mp4_to_frames,
-    load_qr_detections_csv
+    load_qr_detections_csv,
+    save_portal_csv
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -376,6 +377,7 @@ def refine_dataset(
 
     detections_per_qr = {}
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
+    corners_per_qr = {}
     logger.info(f"valid timestamps: {len(valid_timestamps)}")
     logger.info(f"count of qr detections: {len(qr_detections_per_timestamp)}")
     for timestamp, detection in qr_detections_per_timestamp.items():
@@ -384,6 +386,7 @@ def refine_dataset(
         if id not in detections_per_qr.keys():
             detections_per_qr[id] = []
             image_ids_per_qr[id] = []
+            corners_per_qr[id] = []
 
         # Convert back into cam space of nearest image frame (since we skip some frames)
         valid_nearest_timestamps = [t for t in valid_timestamps if t <= timestamp]
@@ -398,6 +401,7 @@ def refine_dataset(
 
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
+        corners_per_qr[id].append(detection["portal_corners"])
 
 
     logger.info("Start triangulation")
@@ -425,6 +429,9 @@ def refine_dataset(
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
         logger.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
+
+    stitched_qr_csv_path = sfm_dir / "portals.csv"
+    save_portal_csv(stitched_qr_detections, stitched_qr_csv_path, image_ids_per_qr, portal_sizes, corners_per_qr)
 
     if remove_outputs:
         logger.info('Remove output directory')

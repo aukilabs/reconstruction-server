@@ -286,6 +286,32 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 # Write the row to the CSV file
                 csv_writer.writerow(row)
 
+def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corners_per_qr):
+    with open(csv_path, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        for short_id, qr_poses in poses_per_qr.items():
+
+            corresponding_image_ids = image_ids_per_qr[short_id]
+            corresponding_corners = corners_per_qr[short_id]
+
+            for image_id, qr_pose, qr_corners in zip(corresponding_image_ids, qr_poses, corresponding_corners):
+                pos, quat = convert_pose_colmap_to_opengl(qr_pose.translation, qr_pose.rotation.quat)
+                corner_array = [coord for coords in qr_corners for coord in coords]
+                # Create a row for the CSV
+                # Format 
+                # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
+                row = [
+                    image_id,
+                    short_id,
+                    portal_sizes[short_id],
+                    pos[0], pos[1], pos[2],
+                    quat[0], quat[1], quat[2], quat[3]
+                ]
+
+                row.extend(corner_array)
+                # Write the row to the CSV file
+                csv_writer.writerow(row)
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
