@@ -8,6 +8,8 @@ import csv
 import numpy as np 
 from numpy.linalg import norm
 import logging
+import json 
+import cv2
 
 from evo.main_ape import ape as evo_ape
 from evo.core.trajectory import PosePath3D
@@ -42,6 +44,46 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+def get_camera_matrix(colmap_camera):
+    if colmap_camera.model.name == "SIMPLE_PINHOLE":
+        params = colmap_camera.params
+        matrix = np.array([[params[0], 0, params[1]],
+                           [0, params[0], params[2]],
+                           [0, 0, 1]])
+        return matrix
+
+    return None
+
+
+def solve_qr_pose(image_points, qr_size, camera_matrix, dist_coeffs):
+    """
+    Solve the pose of a QR code in 3D space relative to the camera.
+
+    Parameters:
+        image_points (np.ndarray): 4x2 array of the QR code's corner points in the image (top-left, top-right, bottom-right, bottom-left).
+        qr_size (float): Real-world size of the QR code (side length, in meters or any consistent unit).
+        camera_matrix (np.ndarray): Camera intrinsic matrix (3x3).
+        dist_coeffs (np.ndarray): Distortion coefficients (1x5 or 1x8).
+
+    Returns:
+        success (bool): Whether pose estimation was successful.
+        rvec (np.ndarray): Rotation vector (3x1).
+        tvec (np.ndarray): Translation vector (3x1).
+    """
+    # Define the 3D coordinates of the QR code corners in the world coordinate system
+    # Assuming the QR code lies in the Z=0 plane, with its center at the origin
+    half_size = qr_size / 2.0
+    object_points = np.array([
+        [-half_size, -half_size, 0],  # Top-left corner
+        [ half_size, -half_size, 0],  # Top-right corner
+        [ half_size,  half_size, 0],  # Bottom-right corner
+        [-half_size,  half_size, 0],  # Bottom-left corner
+    ], dtype=np.float32)
+
+    # Solve for the pose using solvePnP
+    success, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
+
+    return success, rvec, tvec
 
 def load_partial(
     unzip_folder, 
@@ -212,6 +254,14 @@ def load_partial(
     # unique_qr = set(value['short_id'] for value in qr_detections_per_timestamp.values())
     logger.info(f"{len(qr_detections_per_timestamp)} QR detections loaded")
 
+    # Read Portal Sizes
+    portal_sizes = {}
+    scan_data_summary_path = dataset_dir.parent / "scan_data_summary.json"
+    if scan_data_summary_path.exists():
+        scan_data_summary = json.load(open(scan_data_summary_path))
+        for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
+            portal_sizes[portal_id] = portal_size
+
     # Start with the known camera intrinsics and cam poses from ARKit, or from an already refined chunk.
 
     loaded_rec = None
@@ -235,22 +285,60 @@ def load_partial(
             if len(nearest_image_names) == 0:
                 failed_timestamps.append(timestamp)
                 continue
-
+ 
             nearest_image = [image for image in loaded_rec.images.values() if image.name == nearest_image_names[0]]
             if len(nearest_image) == 0:
                 failed_timestamps.append(timestamp)
                 continue
             nearest_image = nearest_image[0]
 
+            cam_matrix = get_camera_matrix(loaded_rec.cameras[nearest_image.camera_id])
+
+            success, rvec, tvec = solve_qr_pose(np.array(detection["corners_wrt_image"]), portal_sizes[detection["short_id"]], cam_matrix, np.array([0, 0, 0, 0, 0]))
+            if not success:
+                logger.error(f"failed to solve_qr_pose")
+                failed_timestamps.append(timestamp)
+                continue
+
+            # 
+            new_cam_space_qr_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(rvec), tvec)
+            new_cam_space_qr_pose_mat = np.vstack([new_cam_space_qr_pose.matrix(), np.array([0, 0, 0, 1])])
+
+            # Opencv Image Coordinate is different from Recording Image Coordinate
+            # opencv start from top left, recording start from bottom right
+            tf_mat = np.array([[-1, 0, 0, 0],
+                               [0, -1, 0, 0],
+                               [0, 0, 1, 0],
+                               [0, 0, 0, 1]])
+            # Definition of qr coordinate needs to be confirmed
+            rot_tf_mat = np.array([[0, 1, 0, 0],
+                                   [-1, 0, 0, 0],
+                                   [0, 0, 1, 0],
+                                   [0, 0, 0, 1]])
+            new_cam_space_qr_pose_mat_flip = tf_mat @ new_cam_space_qr_pose_mat @ rot_tf_mat
+
+            new_cam_space_qr_pose = pycolmap.Rigid3d(new_cam_space_qr_pose_mat_flip[:3, :])
+            # Original
             portal_pose = detection["pose"]
 
+            # Refined
             cam_space_qr_pose = arkit_world_from_cam(nearest_image_timestamp).inverse() * detection["pose"]
-
             detection["pose"] = nearest_image.cam_from_world.inverse() * cam_space_qr_pose
 
+            # Reprojected (SolvePnP)
+            new_qr_world_pose = nearest_image.cam_from_world.inverse() * new_cam_space_qr_pose
+
             logger.debug(f"Added Portal {detection['short_id']}    Portal TS: {timestamp}    Nearest Image TS: {nearest_image_timestamp}")
-            logger.debug(f"{detection['short_id']} Pose:         t: {portal_pose.translation}    r: {portal_pose.rotation.quat}")
-            logger.debug(f"{detection['short_id']} Refined Pose: t: {detection['pose'].translation}    r: {detection['pose'].rotation.quat}")
+            logger.debug(f"{detection['short_id']} Pose:           t: {portal_pose.translation}    r: {portal_pose.rotation.quat}")
+            logger.debug(f"{detection['short_id']} Refined Pose:   t: {detection['pose'].translation}    r: {detection['pose'].rotation.quat}")
+            logger.debug(f"{detection['short_id']} Reproject Pose: t: {new_qr_world_pose.translation}    r: {new_qr_world_pose.rotation.quat}")
+            logger.debug(f"\n")
+            logger.debug(f"{detection['short_id']} Cam Space QR Pose:     t: {cam_space_qr_pose.translation}    r: {cam_space_qr_pose.rotation.matrix()}")
+            logger.debug(f"{detection['short_id']} New Cam Space QR Pose: t: {new_cam_space_qr_pose.translation}  r: {new_cam_space_qr_pose.rotation.matrix()}")
+
+            # Override
+            detection['pose'] = new_qr_world_pose
+
         for failed_ts in failed_timestamps:
             qr_detections_per_timestamp.pop(failed_ts, None)
 
