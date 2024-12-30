@@ -295,12 +295,14 @@ def refine_dataset(
         ar_pose = ar_poses_per_timestamp[timestampNs]
         fx, fy, cx, cy, w, h = intrinsics
 
-        if fx == fy:
-            model = 'SIMPLE_PINHOLE'
-            params = [fx, cx, cy]
-        else:
-            model = 'PINHOLE'
-            params = [fx, fy, cx, cy]
+        # if fx == fy:
+        #     model = 'SIMPLE_PINHOLE'
+        #     params = [fx, cx, cy]
+        # else:
+        #     model = 'PINHOLE'
+        #     params = [fx, fy, cx, cy]
+        model = 'OPENCV'
+        params = [fx, fy, cx, cy, 0.0, 0.0, 0.0, 0.0]
         cam = pycolmap.Camera(
             model=model, width=w, height=h, params=params, camera_id=camera_id
         )

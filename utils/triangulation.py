@@ -64,8 +64,8 @@ def run_triangulation(
     ba_options = pycolmap.BundleAdjustmentOptions()
 
     ba_options.refine_focal_length = True
-    ba_options.refine_principal_point = False
-    ba_options.refine_extra_params = False
+    ba_options.refine_principal_point = True
+    ba_options.refine_extra_params = True
     ba_options.refine_extrinsics = True
     ba_options.solver_options.max_num_iterations = 150
     ba_options.solver_options.gradient_tolerance = 1.0

@@ -50,9 +50,21 @@ def get_camera_matrix(colmap_camera):
         matrix = np.array([[params[0], 0, params[1]],
                            [0, params[0], params[2]],
                            [0, 0, 1]])
-        return matrix
-
-    return None
+        return matrix, None
+    if colmap_camera.model.name == "PINHOLE":
+        params = colmap_camera.params
+        matrix = np.array([[params[0], 0, params[2]],
+                           [0, params[1], params[3]],
+                           [0, 0, 1]])
+        return matrix, None
+    if colmap_camera.model.name == "OPENCV":
+        params = colmap_camera.params
+        matrix = np.array([[params[0], 0, params[2]],
+                           [0, params[1], params[3]],
+                           [0, 0, 1]])
+        dist_coeffs = np.array([params[4], params[5], params[6], params[7], 0])
+        return matrix, dist_coeffs
+    return None, None
 
 
 def solve_qr_pose(image_points, qr_size, camera_matrix, dist_coeffs):
@@ -292,9 +304,11 @@ def load_partial(
                 continue
             nearest_image = nearest_image[0]
 
-            cam_matrix = get_camera_matrix(loaded_rec.cameras[nearest_image.camera_id])
+            cam_matrix, dist_coeffs = get_camera_matrix(loaded_rec.cameras[nearest_image.camera_id])
+            if dist_coeffs is None:
+               dist_coeffs = np.array([0, 0, 0, 0, 0])
 
-            success, rvec, tvec = solve_qr_pose(np.array(detection["corners_wrt_image"]), portal_sizes[detection["short_id"]], cam_matrix, np.array([0, 0, 0, 0, 0]))
+            success, rvec, tvec = solve_qr_pose(np.array(detection["corners_wrt_image"]), portal_sizes[detection["short_id"]], cam_matrix, dist_coeffs)
             if not success:
                 logger.error(f"failed to solve_qr_pose")
                 failed_timestamps.append(timestamp)
