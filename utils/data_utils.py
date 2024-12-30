@@ -160,9 +160,14 @@ def load_qr_detections_csv(csv_path):
                 np.array(pos)
             )
 
+            # Remarks: the coordinates recorded is reference to image bottom right
+            # and the order is top-right, bottom-right, bottom-left, and top-left of the portal
+            coordinates = [float(coord) for coord in row[9:]]
+
             detections_per_timestamp[timestamp] = {
                 "pose": qr_pose,
-                "short_id": row[1]
+                "short_id": row[1],
+                "portal_corners": [(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
             }
 
     return detections_per_timestamp
