@@ -62,7 +62,7 @@ def load_portals_json(file_path):
     # This function however loads raw poses from domain which are not rotated 90 deg.
     # This comes from the misconception where apps treat identity quaternions as "floor" while domains are "wall".
     # This should be changed in the DMT recorder to capture same as domain format correctly.
-    rot90 = pycolmap.Rotation3d(np.array([np.pi/2, 0.0, 0.0]))
+    # rot90 = pycolmap.Rotation3d(np.array([np.pi/2, 0.0, 0.0]))
 
     with open(file_path) as f:
         json_data = json.load(f)
@@ -71,7 +71,6 @@ def load_portals_json(file_path):
             quat = np.array([entry["rx"], entry["ry"], entry["rz"], entry["rw"]])
 
             # quat = (pycolmap.Rotation3d(quat) * rot90).quat # TODO: remove later (see above)
-
             pos, quat = convert_pose_opengl_to_colmap(pos, quat)
 
             portal_poses[entry["short_id"]] = pycolmap.Rigid3d(pycolmap.Rotation3d(quat), pos)
@@ -262,12 +261,115 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
 
     return qr_world_detections
 
+def get_world_space_cam_poses(reconstruction, timestamps_per_image, to_opengl=False, logger_name=None):
+    logger = logging.getLogger(logger_name)
+    cam_poses = {}
+    for image in reconstruction.images.values():
+        if image.name not in timestamps_per_image:
+            logger.warning(f"Image {image.name} not found in timestamps_per_image. Skipping.")
+            continue
+        timestampNs = timestamps_per_image[image.name]
+        cam_to_world = image.cam_from_world.inverse()
+        pos, quat = cam_to_world.translation, cam_to_world.rotation.quat
+        if to_opengl:
+            pos, quat = convert_pose_colmap_to_opengl(pos, quat)
+        cam_poses[timestampNs] = {
+            "position": pos,
+            "rotation": quat
+        }
 
+    # Sort chronologically
+    sorted_cam_poses = {}
+    for timestampNs in sorted(cam_poses.keys()):
+        sorted_cam_poses[timestampNs] = cam_poses[timestampNs   ]
+
+    logger.info(f"Got {len(sorted_cam_poses)} world space camera poses from colmap reconstruction.")
+    return sorted_cam_poses
+
+def save_world_space_cam_poses_csv(reconstruction, timestamps_per_image, csv_path, logger_name=None):
+    logger = logging.getLogger(logger_name)
+    cam_poses = get_world_space_cam_poses(reconstruction, timestamps_per_image, to_opengl=True, logger_name=logger_name)
+
+    logger.info(f"Saving {len(cam_poses)} world space camera poses to {csv_path}")
+    with open(csv_path, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        for timestampNs, pose in cam_poses.items():
+            timestamp = timestampNs / 1e9
+            csv_writer.writerow([timestamp, pose["position"][0], pose["position"][1], pose["position"][2], pose["rotation"][0], pose["rotation"][1], pose["rotation"][2], pose["rotation"][3]])
+
+def get_world_space_portal_detections(reconstruction, timestamps_per_image,
+                                      detections_per_qr, image_ids_per_qr,
+                                      to_opengl=False, logger_name=None):
+    logger = logging.getLogger(logger_name)
+    detections_per_timestamp = {}
+
+    for qr_id, cam_space_detections in detections_per_qr.items():
+        corresponding_image_ids = image_ids_per_qr[qr_id]
+        
+        for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
+            image = reconstruction.images[image_id]
+            
+            if image.name not in timestamps_per_image:
+                logger.warning(f"Image {image.name} not found in timestamps_per_image. Skipping. (qr id: {qr_id})")
+                continue
+            
+            timestampNs = timestamps_per_image[image.name]
+            cam_to_world = image.cam_from_world.inverse()
+            qr_world_pose = cam_to_world * qr_pose_in_cam
+            pos, quat = qr_world_pose.translation, qr_world_pose.rotation.quat
+            if to_opengl:
+                pos, quat = convert_pose_colmap_to_opengl(pos, quat)
+
+        
+            detections_per_timestamp[timestampNs] = {
+                "short_id": qr_id,
+                "position": pos,
+                "rotation": quat
+            }
+    
+    # Sort chronologically
+    sorted_detections = {}
+    for timestampNs in sorted(detections_per_timestamp.keys()):
+        sorted_detections[timestampNs] = detections_per_timestamp[timestampNs]
+    
+    logger.info(f"Got {len(sorted_detections)} world space portal detections from colmap reconstruction.")
+
+    return sorted_detections
+
+
+def save_world_space_portal_detections_csv(reconstruction, timestamps_per_image,
+                                           detections_per_qr, image_ids_per_qr,
+                                           csv_path, logger_name=None):
+    logger = logging.getLogger(logger_name)
+    detections_per_timestamp = get_world_space_portal_detections(reconstruction, timestamps_per_image,
+                                                                 detections_per_qr, image_ids_per_qr,
+                                                                 to_opengl=True, logger_name=logger_name)
+
+    logger.info(f"Saving {len(detections_per_timestamp)} world space portal detections to {csv_path}")
+    with open(csv_path, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        for timestampNs, detection in detections_per_timestamp.items():
+            timestamp = timestampNs / 1e9
+            csv_writer.writerow([
+                timestamp, detection["short_id"], 
+                detection["position"][0], detection["position"][1], detection["position"][2], 
+                detection["rotation"][0], detection["rotation"][1], detection["rotation"][2], detection["rotation"][3]
+            ])
+
+# Saves portal poses to csv file.
+# Input a dictionary of portal IDs, each mapped to a single pose or a list of poses:
+# short ID -> pycolmap.Rigid3d
+# short ID -> [pycolmap.Rigid3d]
 def save_qr_poses_csv(poses_per_qr, csv_path):
     with open(csv_path, mode='w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile)
 
         for short_id, qr_poses in poses_per_qr.items():
+            if not isinstance(qr_poses, (list, tuple, np.ndarray)):
+                qr_poses = [qr_poses]
+
             for qr_pose in qr_poses:
 
                 pos, quat = convert_pose_colmap_to_opengl(qr_pose.translation, qr_pose.rotation.quat)

@@ -17,7 +17,9 @@ def run_triangulation(
     reference_model: pycolmap.Reconstruction,
     options: Dict[str, Any],
     timestamp_per_image: Optional[Dict[str, int]] = None,
-    arkit_precomputed=None
+    detections_per_qr = None,
+    image_ids_per_qr = None,
+    arkit_precomputed = None
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
@@ -107,7 +109,14 @@ def run_triangulation(
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
-        bundle_adjuster.set_up_problem(reconstruction, loss, timestamp_per_image=timestamp_per_image, arkit_precomputed=arkit_precomputed)
+        bundle_adjuster.set_up_problem(
+            reconstruction,
+            loss,
+            timestamp_per_image,
+            detections_per_qr,
+            image_ids_per_qr,
+            arkit_precomputed
+        )
 
         solver_options = bundle_adjuster.set_up_solver_options(
             bundle_adjuster.problem, ba_options.solver_options
@@ -178,7 +187,9 @@ def triangulate_model(
     verbose: bool = False,
     mapper_options: Optional[Dict[str, Any]] = None,
     timestamp_per_image: Optional[Dict[str, int]] = None,
-    arkit_precomputed=None
+    detections_per_qr = None,
+    image_ids_per_qr = None,
+    arkit_precomputed = None
 
 ) -> pycolmap.Reconstruction:
     assert reference_model.exists(), reference_model
@@ -204,8 +215,14 @@ def triangulate_model(
     assert skip_geometric_verification and not estimate_two_view_geometries # TODO: support this later as well?
 
     reconstruction = run_triangulation(
-        database, image_dir, reference, mapper_options if mapper_options is not None else {},
-        timestamp_per_image, arkit_precomputed
+        database,
+        image_dir,
+        reference,
+        mapper_options if mapper_options is not None else {},
+        timestamp_per_image,
+        detections_per_qr,
+        image_ids_per_qr,
+        arkit_precomputed
     )
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')

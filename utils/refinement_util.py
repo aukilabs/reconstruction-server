@@ -6,6 +6,7 @@ from numpy.linalg import norm
 import logging
 import shutil
 import os
+from utils.data_utils import save_qr_poses_csv
 
 
 from utils.triangulation import triangulate_model
@@ -16,10 +17,11 @@ from utils.data_utils import (
     mean_pose,
     setup_logger,
     mp4_to_frames,
-    add_file_handler
+    add_file_handler,
+    rectify_floor_portal,
+    save_world_space_cam_poses_csv,
+    save_world_space_portal_detections_csv
 )
-from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
-
 
 from hloc import (
     extract_features,
@@ -36,10 +38,7 @@ def refine_dataset(
     remove_outputs=False,
     domain_id="",
     job_id="",
-    log_level="INFO",
-    measure_pairs=None, 
-    truth_pairs=None, 
-    truth_portal_poses=None
+    log_level="INFO"
 ):
 
     ############################
@@ -248,6 +247,8 @@ def refine_dataset(
                 np.array(pos)
             )
 
+            qr_pose = rectify_floor_portal(qr_pose)
+
             qr_detections_per_timestamp[timestamp] = {
                 "pose": qr_pose,
                 "short_id": row[1]
@@ -255,6 +256,18 @@ def refine_dataset(
 
     # Display the result
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+
+    #----------------------
+    # Save unrefined portal poses
+    unrefined_detections_per_qr = {}
+    for ts, detection in qr_detections_per_timestamp.items():
+        id = detection["short_id"]
+        if id not in unrefined_detections_per_qr:
+            unrefined_detections_per_qr[id] = []
+        unrefined_detections_per_qr[id].append(detection["pose"])
+
+    unrefined_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in unrefined_detections_per_qr.items()}
+    logger.info(f"Saving {len(unrefined_mean_qr_poses)} unrefined portal poses")
 
     #----------------------
     # Check if each qr detection has at least one image within [references] array
@@ -427,40 +440,26 @@ def refine_dataset(
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
 
-    # Add more truth measurements if available.
-    # Uses portal poses from JSON.
-    # Only if portal poses are manually measured very carefully.
-    if truth_portal_poses is not None:
-        measure_pairs = []
-        truth_pairs = []
-        all_detected_qr_ids = list(detections_per_qr.keys())
-
-        #First to last
-        measure_pairs.append([all_detected_qr_ids[0], all_detected_qr_ids[-1]])
-        truth_pairs.append(
-            norm(truth_portal_poses[all_detected_qr_ids[0]].translation - truth_portal_poses[all_detected_qr_ids[-1]].translation)
-        )
-
-        # From each to next in order of first scan.
-        for i, short_id in enumerate(all_detected_qr_ids[1:]):
-            prev_short_id = all_detected_qr_ids[i - 1]
-            measure_pairs.append([prev_short_id, short_id])
-            truth_pairs.append(
-                norm(truth_portal_poses[short_id].translation - truth_portal_poses[prev_short_id].translation)
-            )
-
+    save_world_space_cam_poses_csv(rec, timestamps_per_image, outputs / "UnrefinedARposes.csv")
+    save_world_space_portal_detections_csv(rec, timestamps_per_image,
+                                           detections_per_qr, image_ids_per_qr,
+                                           outputs / "UnrefinedPortalDetections.csv",
+                                           logger_name="refine_dataset")
+    save_qr_poses_csv(unrefined_mean_qr_poses, outputs / "UnrefinedPortalPoses.csv")
 
     logger.info("Start triangulation")
     refined_rec = triangulate_model(
-        sfm_dir, 
-        colmap_rec_path, 
-        images, 
-        sfm_pairs, 
-        features, 
+        sfm_dir,
+        colmap_rec_path,
+        images,
+        sfm_pairs,
+        features,
         matches,
         skip_geometric_verification=True,
         verbose=True,
         timestamp_per_image=timestamps_per_image,
+        detections_per_qr=detections_per_qr,
+        image_ids_per_qr=image_ids_per_qr,
         arkit_precomputed=arkit_precomputed
     )
     refined_rec.write(sfm_dir)
@@ -474,102 +473,22 @@ def refine_dataset(
     for qr_id, pose in stitched_mean_qr_poses.items():
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
-        logger.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
+        logger.info(f'QR code id: {qr_id}, position {pose.translation} (deviation: {deviation:.5f}, count: {len(stitched_qr_detections[qr_id])})')
 
     if remove_outputs:
         logger.info('Remove output directory')
         shutil.rmtree(outputs)
     
+    save_world_space_cam_poses_csv(refined_rec, timestamps_per_image, outputs / "RefinedARposes.csv")
+    save_world_space_portal_detections_csv(refined_rec, timestamps_per_image,
+                                           detections_per_qr, image_ids_per_qr,
+                                           outputs / "RefinedPortalDetections.csv",
+                                           logger_name="refine_dataset")
+    save_qr_poses_csv(stitched_mean_qr_poses, outputs / "RefinedPortalPoses.csv")
+
     logger.info('Finished local refinement!')
     logger.info('========================================================================')
     logger.info('')
     logger.info('========================================================================')
 
     return refined_rec, rec
-
-
-
-def tri_ba_iteration(refined_rec, 
-                     sorted_image_ids, 
-                     detections_per_qr,
-                     image_ids_per_qr,
-                     timestamps_per_image,
-                     arkit_precomputed,
-                     ba_options,
-                     sfm_dir,
-                     images,
-                     sfm_pairs,
-                     features,
-                     matches,
-                     reproj_error_history,
-                     skip_geometric_verification=True,
-                     refinement_config={}):
-    # Avoid degeneracies in bundle adjustment
-    refined_rec.filter_observations_with_negative_depth()
-
-
-    # Configure bundle adjustment
-    ba_config = pycolmap.BundleAdjustmentConfig()
-
-    for image_id in sorted_image_ids:
-        ba_config.add_image(image_id)
-
-    # Fix 7-DOFs of the bundle adjustment problem
-    ba_config.set_constant_cam_pose(sorted_image_ids[0])
-    ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
-
-    print("Start Global Bundle Adjustment")
-    summary, loss_details = dmt_ba_solve_bundle_adjustment(detections_per_qr,
-                                                            image_ids_per_qr,
-                                                            timestamps_per_image,
-                                                            arkit_precomputed,
-                                                            refined_rec,
-                                                            ba_options,
-                                                            ba_config,
-                                                            refinement_config)
-
-    ##print("\n".join(summary.BriefReport().split(",")))
-    print("\n".join(summary.FullReport().split(",")))
-
-    refined_rec.write(sfm_dir)
-
-    refined_rec = triangulation.main(sfm_dir, 
-                                     sfm_dir, 
-                                     images, 
-                                     sfm_pairs, 
-                                     features, matches, 
-                                     skip_geometric_verification=skip_geometric_verification,
-                                     verbose=True)
-
-
-    reproj_error_history.append(refined_rec.compute_mean_reprojection_error())
-    print(f"Mean reprojection error {len(reproj_error_history)} = {reproj_error_history[-1]}")
-
-    return refined_rec, loss_details, reproj_error_history
-
-
-def triangulator(
-        reconstruction, 
-        sfm_dir,
-        BA_iters=3,
-        max_reprojection_err=4.0, 
-        min_triangulation_angle=2.0
-    ):
-
-    mapper = pycolmap.IncrementalMapper(pycolmap.DatabaseCache())
-    mapper.begin_reconstruction(reconstruction)
-
-    for BA_iter in range(BA_iters):
-        # Initial BA
-        ba_options = prepare_ba_options()
-        pycolmap.bundle_adjustment(reconstruction, ba_options)
-
-        # Filter reconstrucion
-        mapper.observation_manager.filter_all_points3D(max_reprojection_err, min_triangulation_angle)
-
-    mapper.end_reconstruction(False)
-
-    reconstruction.write(sfm_dir)
-
-    return reconstruction
-    

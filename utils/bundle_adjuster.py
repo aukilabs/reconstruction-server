@@ -62,49 +62,48 @@ class PyBundleAdjuster(object):
                         camera = reconstruction.cameras[image.camera_id]
                         qr_center_camspace = detection.translation
 
-                        angle_from_cam_forward = vec3_angle(qr_center_camspace, np.array([0,0,1]))
                         """
+                        angle_from_cam_forward = vec3_angle(qr_center_camspace, np.array([0,0,1]))
                         if angle_from_cam_forward > 10:
                             if verbose:
                                 print(f"QR {qr_id} in image {image_id} is more than 10 deg away from cam center, SKIP loop closure.",
                                     f"(angle_from_cam_forward={angle_from_cam_forward}, qr_center_camspace={qr_center_camspace})")
-                        else:
+                            continue
                         """
-                        if True: # TODO not good practise to do this
 
-                            if image_id not in qr_detections_by_image_id.keys():
-                                qr_detections_by_image_id[image_id] = []
+                        if image_id not in qr_detections_by_image_id.keys():
+                            qr_detections_by_image_id[image_id] = []
 
-                            qr_detections_by_image_id[image_id].append(detection)
+                        qr_detections_by_image_id[image_id].append(detection)
 
-                            #if image_id not in qr_world_points_per_image_id.keys():
-                            #    qr_world_points_per_image_id[image_id] = []
+                        #if image_id not in qr_world_points_per_image_id.keys():
+                        #    qr_world_points_per_image_id[image_id] = []
 
-                            #qr_center_imgspace = camera.img_from_cam(qr_center_camspace)
+                        #qr_center_imgspace = camera.img_from_cam(qr_center_camspace)
 
-                            # Don't do world point distance scaling for visually unreliable images
-                            #if image.camera_id not in self.featureless_camera_ids:
-                            #    pixel_radius = 70 # TODO calculate this better, or maybe check in world-space instead
-                            #
-                            #    # Find list of 3D feature points on the floor around the QR code
-                            #    for point2D in image.points2D:
-                            #        if not point2D.has_point3D():
-                            #            continue
-                            #
-                            #        pixel_offset = norm(point2D.xy - qr_center_imgspace)
-                            #        if pixel_offset > pixel_radius:
-                            #            continue
-                            #
-                            #        point3D = reconstruction.points3D[point2D.point3D_id]
-                            #        qr_world_points_per_image_id[image_id].append(point3D)
-                            #
-                            #if debug_this_qr:
-                            #    print(f"QR {qr_id} in",
-                            #        f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
-                            #        qr_center_imgspace, ", Cam-space center: ", qr_center_camspace,
-                            #        f", {len(qr_world_points_per_image_id[image_id])} 3D features with height deviation",
-                            #        f"{np.std([point.xyz[0] for point in qr_world_points_per_image_id[image_id]]):.6f}",
-                            #        ", pose: ", detection)
+                        # Don't do world point distance scaling for visually unreliable images
+                        #if image.camera_id not in self.featureless_camera_ids:
+                        #    pixel_radius = 70 # TODO calculate this better, or maybe check in world-space instead
+                        #
+                        #    # Find list of 3D feature points on the floor around the QR code
+                        #    for point2D in image.points2D:
+                        #        if not point2D.has_point3D():
+                        #            continue
+                        #
+                        #        pixel_offset = norm(point2D.xy - qr_center_imgspace)
+                        #        if pixel_offset > pixel_radius:
+                        #            continue
+                        #
+                        #        point3D = reconstruction.points3D[point2D.point3D_id]
+                        #        qr_world_points_per_image_id[image_id].append(point3D)
+                        #
+                        #if debug_this_qr:
+                        #    print(f"QR {qr_id} in",
+                        #        f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
+                        #        qr_center_imgspace, ", Cam-space center: ", qr_center_camspace,
+                        #        f", {len(qr_world_points_per_image_id[image_id])} 3D features with height deviation",
+                        #        f"{np.std([point.xyz[0] for point in qr_world_points_per_image_id[image_id]]):.6f}",
+                        #        ", pose: ", detection)
 
 
                     added = self.add_qr_detections_to_problem_upd(reconstruction,

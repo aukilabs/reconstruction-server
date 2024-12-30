@@ -162,7 +162,9 @@ def load_partial(
                 int(row[5]), int(row[6])      # image resolution (w, h)
             ]
     if len(intrinsics_per_timestamp) != original_image_count:
-        raise Exception("Mismatching number of Frames and Camera Intrinsics. "
+        #raise Exception("Mismatching number of Frames and Camera Intrinsics. "
+        #                f"{original_image_count} images {len(intrinsics_per_timestamp)} intrinsics")
+        logger.warning(f"WARNING: Mismatching number of Frames and Camera Intrinsics. "
                         f"{original_image_count} images {len(intrinsics_per_timestamp)} intrinsics")
     logger.info(f"{len(intrinsics_per_timestamp)} camera frame intrinsics loaded")
 
@@ -170,9 +172,15 @@ def load_partial(
     #--------------------
     # Unrefined Poses
 
-    ar_poses_csv_path = str(dataset / "ARposes.csv")
+    local_refined_dir = Path(dataset_dir).parent / "refined" / "local" / unzip_folder.name
+    
+    ar_poses_csv_path = local_refined_dir / "RefinedARposes.csv"
+    if not ar_poses_csv_path.exists():
+        logger.warning(f"WARNING: RefinedARPoses.csv not found in {local_refined_dir}. Using unrefined ARposes.csv instead.")
+        ar_poses_csv_path = dataset / "ARposes.csv"
+    ar_poses_csv_path = str(ar_poses_csv_path)
 
-    logger.info(f"Loading unrefined AR poses from {ar_poses_csv_path} ...")
+    logger.info(f"Loading AR poses from {ar_poses_csv_path} ...")
 
     # Read and process the CSV file
     ar_poses_per_timestamp = {}
@@ -184,7 +192,9 @@ def load_partial(
             ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]] 
 
     if len(ar_poses_per_timestamp) != original_image_count:
-        raise Exception("Mismatching number of Frames and Poses. "
+        #raise Exception("Mismatching number of Frames and Poses. "
+        #                f"{original_image_count} images {len(ar_poses_per_timestamp)} poses")
+        logger.warning(f"WARNING: Mismatching number of Frames and Poses. "
                         f"{original_image_count} images {len(ar_poses_per_timestamp)} poses")
     logger.info(f"{len(ar_poses_per_timestamp)} AR poses loaded")
 
@@ -199,9 +209,12 @@ def load_partial(
 
     #--------------------
     # QR detections
-    qr_detections_csv_path = dataset / "PortalDetections.csv"
-    if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
-        qr_detections_csv_path = dataset / "Observations.csv"
+    qr_detections_csv_path = local_refined_dir / "RefinedPortalDetections.csv"
+    if not qr_detections_csv_path.exists():
+        logger.warning(f"WARNING: RefinedPortalDetections.csv not found in {local_refined_dir}. Using unrefined PortalDetections.csv instead.")
+        qr_detections_csv_path = dataset / "PortalDetections.csv"
+        if not qr_detections_csv_path.exists() and (dataset / "Observations.csv").exists():
+            qr_detections_csv_path = dataset / "Observations.csv"
         logger.info("WARNING: PortalDetections.csv not found, but found Observations.csv (old filename convention).")
     qr_detections_csv_path = str(qr_detections_csv_path)
     
@@ -593,69 +606,73 @@ def portals_to_evo_path(pose_per_qr, flatten=False):
     return PosePath3D(positions_xyz, quats_wxyz)
 
 
-def compare_portals(initial, estimate, reference, align=False, correct_scale=False, verbose=False):
+def compare_portals(initial, estimate, reference, align=False, correct_scale=False, verbose=False, flatten=True):
 
-    filtered_reference = {qr_id: reference[qr_id] for qr_id in estimate.keys()}
+    filtered_reference = {qr_id: reference[qr_id] for qr_id in estimate.keys()} if reference else None
 
-    ini_pose_path = portals_to_evo_path(initial, flatten=True)
-    est_pose_path = portals_to_evo_path(estimate, flatten=True)
-    ref_pose_path = portals_to_evo_path(filtered_reference, flatten=True)
+    ini_pose_path = portals_to_evo_path(initial, flatten=flatten) if initial else None
+    est_pose_path = portals_to_evo_path(estimate, flatten=flatten) if estimate else None
+    ref_pose_path = portals_to_evo_path(filtered_reference, flatten=flatten) if filtered_reference else None
 
     if verbose:
         print("Initial:", ini_pose_path)
-        print(", ".join(f"{qr_id}: {initial[qr_id].rotation.quat}" for qr_id in initial))
+        if ini_pose_path:
+            print(", ".join(f"{qr_id}: {initial[qr_id].rotation.quat}" for qr_id in initial))
         print("Estimate:", est_pose_path)
-        print(", ".join(f"{qr_id}: {estimate[qr_id].rotation.quat}" for qr_id in estimate))
+        if est_pose_path:
+            print(", ".join(f"{qr_id}: {estimate[qr_id].rotation.quat}" for qr_id in estimate))
         print("Reference:", ref_pose_path)
-        print(", ".join(f"{qr_id}: {filtered_reference[qr_id].rotation.quat}" for qr_id in filtered_reference))
+        if ref_pose_path:
+            print(", ".join(f"{qr_id}: {filtered_reference[qr_id].rotation.quat}" for qr_id in filtered_reference))
         print("")
 
-    if align or correct_scale:
-        # ONLY rotate around world up (don't rely on alignment to fix height drift)
-        # Load again temporarily to flatten and compute alignment.
-        # Then apply alignment on original paths which we DON'T flatten.
-        # This gives a more fair measurement and also works with wall portals
-        """
-        def flatten(points):
-            return np.array([np.array([0.0, p[1], p[2]]) for p in points])
+    if (align or correct_scale) and ref_pose_path:
+        try:
+            if ini_pose_path:
+                rot, trans, scale = geometry.umeyama_alignment(
+                    ini_pose_path.positions_xyz.T,
+                    ref_pose_path.positions_xyz.T,
+                    correct_scale
+                )
 
-        rotation, translation, scaling = geometry.umeyama_alignment(flatten(est_pose_path.positions_xyz).T,
-                                                                    flatten(ref_pose_path.positions_xyz).T,
-                                                                    correct_scale)
+                if correct_scale:
+                    ini_pose_path.scale(scale)
+                if align:
+                    ini_pose_path.transform(evo_lie.se3(rot, trans))
+        
+            if est_pose_path:
+                rot, trans, scale = geometry.umeyama_alignment(
+                    est_pose_path.positions_xyz.T,
+                    ref_pose_path.positions_xyz.T,
+                    correct_scale
+                )
+                
+                if correct_scale:
+                    est_pose_path.scale(scale)
+                if align:
+                    est_pose_path.transform(evo_lie.se3(rot, trans))
+        except geometry.GeometryException as e:
+            print(f"Could not align poses - {str(e)}")
+            return None, None
 
+    if not ref_pose_path or not est_pose_path:
+        print("Cannot compare poses - missing reference or estimate")
+        return None, None
 
-        #print(f"Umeyama: translation={translation},\nrotation=\n{rotation},\nscaling={scaling}")
+    ini_pos_comparison = None
+    ini_rot_comparison = None
+    if ini_pose_path:
+        ini_pos_comparison = evo_ape(ref_pose_path, ini_pose_path, PoseRelation.point_distance,
+                             align=False, correct_scale=False)
 
-        if correct_scale:
-            est_pose_path.scale(scaling)
-        if align:
-            est_pose_path.transform(evo_lie.se3(rotation, translation))
-
-            # Align again without flattening, to get also the height right (but not rotating again)
-            _, translation_2, scaling_2 = geometry.umeyama_alignment(est_pose_path.positions_xyz.T,
-                                                                     ref_pose_path.positions_xyz.T,
-                                                                     correct_scale)
-
-            #print(f"Umeyama 2: translation={translation_2},\nscaling={scaling_2}")
-            if correct_scale:
-                est_pose_path.scale(scaling_2)
-            if align:
-                est_pose_path.transform(evo_lie.se3(np.identity(3), translation_2))
-        """
-
-
-        rotation, translation, scaling = geometry.umeyama_alignment(est_pose_path.positions_xyz.T,
-                                                                    ref_pose_path.positions_xyz.T,
-                                                                    correct_scale)
-        ini_pose_path.scale(scaling)
-        ini_pose_path.transform(evo_lie.se3(rotation, translation))
-
+        ini_rot_comparison = evo_ape(ref_pose_path, ini_pose_path, PoseRelation.rotation_angle_deg,
+                             align=False, correct_scale=False)
 
     pos_comparison = evo_ape(ref_pose_path, est_pose_path, PoseRelation.point_distance,
-                             align=align, correct_scale=correct_scale)
+                             align=False, correct_scale=False)  # We've already aligned if needed
 
     rot_comparison = evo_ape(ref_pose_path, est_pose_path, PoseRelation.rotation_angle_deg,
-                             align=align, correct_scale=correct_scale)
+                             align=False, correct_scale=False)  # We've already aligned if needed
 
     if verbose:
         print(pos_comparison.pretty_str())
@@ -678,8 +695,9 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         color_1 = np.array(colors[1]).reshape(1,-1)
         color_2 = np.array(colors[2]).reshape(1,-1)
 
-        ax.scatter(ini_pose_path.positions_xyz[:, 1], ini_pose_path.positions_xyz[:, 2], label='initial',
-                   c=color_0, marker="x", s=30)
+        if ini_pose_path:
+            ax.scatter(ini_pose_path.positions_xyz[:, 1], ini_pose_path.positions_xyz[:, 2], label='initial',
+                      c=color_0, marker="x", s=30)
 
         ax.scatter(est_pose_path.positions_xyz[:, 1], est_pose_path.positions_xyz[:, 2], label='optimized',
                    c=color_1, marker="x", s=15)
@@ -692,10 +710,19 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         ax.legend()
         plt.show()
 
+        save_path = "portal_comparison.png"
+        plt.savefig(save_path)
+        plt.close()
+
     if verbose:
         print()
         print("Absolute Position Error (m):", pos_comparison.stats)
         print("Absolute Rotation Error (°):", rot_comparison.stats)
+
+    if ini_pos_comparison and ini_rot_comparison:
+        print(f"Initial Portal Accuracy (APE):",
+                f" RMSE: {ini_pos_comparison.stats['rmse']:.5f} m, {ini_rot_comparison.stats['rmse']:.5f}°",
+                f"  Max: {ini_pos_comparison.stats['max']:.5f} m, {ini_rot_comparison.stats['max']:.5f}°")
 
     print(f"Portal Accuracy (APE):",
           f" RMSE: {pos_comparison.stats['rmse']:.5f} m, {rot_comparison.stats['rmse']:.5f}°",
@@ -805,7 +832,7 @@ def stitching_helper(
             logger.info(f"Already aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} left")
 
         except NoOverlapException:
-            # If the dataset didn't have any overlap, add back to queue and retry again later,
+            # If the dataset didn't have any overlap, add back to queue and retry again,
             # since it may overlap with other chunks which have not yet been added.
             datasets_to_align.append(dataset_path)
             logger.warn(f"NO OVERLAP! Add back to queue to retry later: {dataset_path}")
@@ -879,7 +906,7 @@ def stitching_helper(
     if basic_stitch_only:
         logger.info("Basic stitch flag true! Only use stitch SE3 optimization, no global bundle adjustment.")
         if truth_portal_poses:
-            compare_portals(basic_stitch_mean_qr_poses, optimized_stitch_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+            compare_portals(basic_stitch_mean_qr_poses, optimized_stitch_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=False)
 
         logger.info('Finished Global Merge!')
         logger.info('========================================================================')
@@ -935,7 +962,7 @@ def stitching_helper(
         export_rec_as_ply(bundle_adjusted_rec, refined_ply_path)
 
     if truth_portal_poses:
-        compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=True)
+        compare_portals(basic_stitch_mean_qr_poses, bundle_adjusted_mean_qr_poses, truth_portal_poses, align=True, verbose=True, correct_scale=False)
 
     logger.info('========================================================================')
     logger.info('Finished Global refinement!')

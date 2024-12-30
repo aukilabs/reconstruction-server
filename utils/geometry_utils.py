@@ -125,7 +125,7 @@ def run_stitching(detections_per_qr,
     combined_rec.write(combined_out_dir)
 
     combined_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
-    #save_qr_poses_csv(combined_detections, combined_out_dir / "refined_portal_poses.csv")
+    save_qr_poses_csv(combined_detections, combined_out_dir / "refined_portal_poses.csv")
     
     print("\n-------------\n")
 
