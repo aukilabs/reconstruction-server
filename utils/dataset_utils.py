@@ -85,11 +85,18 @@ def solve_qr_pose(image_points, qr_size, camera_matrix, dist_coeffs):
     # Define the 3D coordinates of the QR code corners in the world coordinate system
     # Assuming the QR code lies in the Z=0 plane, with its center at the origin
     half_size = qr_size / 2.0
+    # object_points = np.array([
+    #     [-half_size, -half_size, 0],  # Top-left corner
+    #     [ half_size, -half_size, 0],  # Top-right corner
+    #     [ half_size,  half_size, 0],  # Bottom-right corner
+    #     [-half_size,  half_size, 0],  # Bottom-left corner
+    # ], dtype=np.float32)
+
     object_points = np.array([
-        [-half_size, -half_size, 0],  # Top-left corner
         [ half_size, -half_size, 0],  # Top-right corner
         [ half_size,  half_size, 0],  # Bottom-right corner
         [-half_size,  half_size, 0],  # Bottom-left corner
+        [-half_size, -half_size, 0],  # Top-left corner        
     ], dtype=np.float32)
 
     # Solve for the pose using solvePnP
@@ -307,7 +314,10 @@ def load_partial(
             cam_matrix, dist_coeffs = get_camera_matrix(loaded_rec.cameras[nearest_image.camera_id])
             if dist_coeffs is None:
                dist_coeffs = np.array([0, 0, 0, 0, 0])
-
+            width = loaded_rec.cameras[nearest_image.camera_id].width
+            height = loaded_rec.cameras[nearest_image.camera_id].height
+            # Switch to OpenCV Coordinates
+            detection["corners_wrt_image"] = [ (width - coordinate[0], height - coordinate[1]) for coordinate in detection["corners_wrt_image"]]
             success, rvec, tvec = solve_qr_pose(np.array(detection["corners_wrt_image"]), portal_sizes[detection["short_id"]], cam_matrix, dist_coeffs)
             if not success:
                 logger.error(f"failed to solve_qr_pose")
@@ -318,19 +328,19 @@ def load_partial(
             new_cam_space_qr_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(rvec), tvec)
             new_cam_space_qr_pose_mat = np.vstack([new_cam_space_qr_pose.matrix(), np.array([0, 0, 0, 1])])
 
-            # Opencv Image Coordinate is different from Recording Image Coordinate
-            # opencv start from top left, recording start from bottom right
-            tf_mat = np.array([[-1, 0, 0, 0],
-                               [0, -1, 0, 0],
-                               [0, 0, 1, 0],
-                               [0, 0, 0, 1]])
-            # Definition of qr coordinate needs to be confirmed
-            rot_tf_mat = np.array([[0, 1, 0, 0],
-                                   [-1, 0, 0, 0],
-                                   [0, 0, 1, 0],
-                                   [0, 0, 0, 1]])
-            new_cam_space_qr_pose_mat_flip = tf_mat @ new_cam_space_qr_pose_mat @ rot_tf_mat
-
+            # # Opencv Image Coordinate is different from Recording Image Coordinate
+            # # opencv start from top left, recording start from bottom right
+            # tf_mat = np.array([[-1, 0, 0, 0],
+            #                    [0, -1, 0, 0],
+            #                    [0, 0, 1, 0],
+            #                    [0, 0, 0, 1]])
+            # # Definition of qr coordinate needs to be confirmed
+            # rot_tf_mat = np.array([[0, 1, 0, 0],
+            #                        [-1, 0, 0, 0],
+            #                        [0, 0, 1, 0],
+            #                        [0, 0, 0, 1]])
+            # new_cam_space_qr_pose_mat_flip = tf_mat @ new_cam_space_qr_pose_mat @ rot_tf_mat
+            new_cam_space_qr_pose_mat_flip = new_cam_space_qr_pose_mat
             new_cam_space_qr_pose = pycolmap.Rigid3d(new_cam_space_qr_pose_mat_flip[:3, :])
             # Original
             portal_pose = detection["pose"]
