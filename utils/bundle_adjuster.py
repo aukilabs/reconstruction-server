@@ -586,7 +586,7 @@ class PyBundleAdjuster(object):
             if not self.options.refine_principal_point:
                 const_camera_params.extend(camera.principal_point_idxs())
             if not self.options.refine_extra_params:
-                const_camera_params.extend(camera.extra_point_idxs())
+                const_camera_params.extend(camera.extra_params_idxs())
             if len(const_camera_params) > 0 and camera_id not in self.featureless_camera_ids:
                 self.problem.set_manifold(
                     camera.params,
