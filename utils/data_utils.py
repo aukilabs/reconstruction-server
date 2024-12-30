@@ -296,7 +296,7 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
             corresponding_corners = corners_per_qr[short_id]
 
             for image_id, qr_pose, qr_corners in zip(corresponding_image_ids, qr_poses, corresponding_corners):
-                pos, quat = convert_pose_colmap_to_opengl(qr_pose.translation, qr_pose.rotation.quat)
+                pos, quat = qr_pose.translation, qr_pose.rotation.quat
                 corner_array = [coord for coords in qr_corners for coord in coords]
                 # Create a row for the CSV
                 # Format 

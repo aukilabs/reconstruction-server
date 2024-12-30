@@ -6,6 +6,8 @@ import open3d
 import yaml
 import trimesh
 import uuid
+import csv
+from utils.data_utils import (convert_pose_colmap_to_opengl)
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"]
@@ -19,7 +21,9 @@ BaseImage = collections.namedtuple(
 Point3D = collections.namedtuple(
     "Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"]
 )
-
+Portal = collections.namedtuple(
+    "Portal", ["id", "short_id", "qvec", "tvec", "image_id", "corners", "size"]
+)
 
 CAMERA_MODELS = {
     CameraModel(model_id=0, model_name="SIMPLE_PINHOLE", num_params=3),
@@ -333,6 +337,28 @@ def read_points3D_binary(path_to_model_file):
             )
     return points3D
 
+def read_portal_csv(path_to_model_file):
+    portals = {}
+    with open(path_to_model_file, newline='')  as csvfile:
+        csv_reader = csv.reader(csvfile)
+        for i, row in enumerate(csv_reader):
+            image_id = int(row[0])
+            short_id = row[1]
+            size = row[2]
+            tvec = row[3:6]
+            qvec = row[6:10]
+            coordinates = [float(coord) for coord in row[10:]]
+
+            portals[i] = Portal(
+                id=i,
+                short_id=short_id,
+                qvec=np.array(qvec, dtype=np.float64),
+                tvec=np.array(tvec, dtype=np.float64),
+                image_id=image_id,
+                size=float(size),
+                corners=[(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
+            )
+    return portals
 
 def read_model(path, ext=""):
     # try to detect the extension automatically
@@ -362,10 +388,12 @@ class Model:
         self.cameras = []
         self.images = []
         self.points3D = []
+        self.portals=[]
         self.__vis = None
 
     def read_model(self, path, ext=""):
         self.cameras, self.images, self.points3D = read_model(path, ext)
+        self.portals = read_portal_csv(os.path.join(path, "portals.csv"))
 
     def add_points(self, min_track_len=3, remove_statistical_outlier=True):
         pcd = open3d.geometry.PointCloud()
@@ -473,6 +501,24 @@ class Model:
             return pcd.transform(transformation_matrix)
         
         return pcd
+
+    def get_portals(self, in_opengl=False):
+        portals = []
+        for portal in self.portals.values():
+            tvec, qvec = portal.tvec, portal.qvec
+            if in_opengl:
+                tvec, qvec = convert_pose_colmap_to_opengl(tvec, qvec)
+            portals.append(
+                {
+                    "short_id": portal.short_id, 
+                    "tvec": tvec,
+                    "qvec": qvec,
+                    "image_id": portal.image_id, 
+                    "size": portal.size, 
+                    "corners": portal.corners
+                }
+            )
+        return portals
 
     def create_window(self):
         self.__vis = open3d.visualization.Visualizer()

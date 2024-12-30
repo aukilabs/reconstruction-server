@@ -235,36 +235,6 @@ def create_grid(size=1.0, divisions=10, plane="xy"):
     line_set.colors = o3d.utility.Vector3dVector(colors)
     
     return line_set
-####################################################
-# IO
-####################################################
-def read_portal(file):
-
-    print(f'Loading QR detections from, {file}, ...')
-    # Initialize the dictionary
-    portal_detections = {}
-
-    # Read and process the CSV file
-    with open(file, newline='') as csvfile:
-        csv_reader = csv.reader(csvfile)
-        for row in csv_reader:
-            timestamp = round(float(row[0]) * 1e9) # s to ns
-            pose_values = [float(val) for val in row[2:9]] # px, py, pz, rx, ry, rz, rw
-            pos = pose_values[:3]
-            quat = pose_values[3:]
-
-            qr_pose = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quat)),
-                np.array(pos)
-            )
-
-            portal_detections[timestamp] = {
-                "pose": qr_pose,
-                "short_id": row[1]
-            }
-
-    return portal_detections
-
 
 ####################################################
 # Main Script
@@ -274,10 +244,10 @@ def main(args):
     # Read Model
     model = Model()
     model.read_model(path=args.sfm_folder, ext='.bin')
-    pcd = model.get_points(in_opengl=True)
+    pcd = model.get_points(in_opengl=args.opengl)
 
     # Read Portals
-    portal_detections = read_portal(args.portal_file)
+    portal_detections = model.get_portals(in_opengl=args.opengl)
 
     geo = []
     # Construct Origin Axis Visual
@@ -287,10 +257,9 @@ def main(args):
     geo.append(create_grid(20.0, 20, plane="xz"))
 
     # Construct Portals Visual Object
-    for _, portal in portal_detections.items():
-        pose = portal["pose"]
-        geo.append(create_pose_lineset(pose.translation, pose.rotation.quat))
-        geo.append(create_square_plane(pose.translation, pose.rotation.quat, 0.2))
+    for portal in portal_detections:
+        geo.append(create_pose_lineset(portal["tvec"], portal["qvec"]))
+        geo.append(create_square_plane(portal["tvec"], portal["qvec"], portal["size"]))
 
     # Create Open3d Visualizer
     vis1 = o3d.visualization.Visualizer()
@@ -315,7 +284,7 @@ def main(args):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Display SFM and Portal results")
     parser.add_argument('--sfm-folder', type=str, help='Path to sfm result folder with .bin extensions', default='./refined/local/2024-12-16_12-57-48/sfm')
-    parser.add_argument('--portal-file', type=str, help='Path to csv file with portal information', default='./datasets/2024-12-16_12-57-48/PortalDetections.csv')
+    parser.add_argument('--opengl', type=bool, help='Display In Opengl Coordinate or not', default=False)
     return parser.parse_args()
 
 if __name__ == "__main__":
