@@ -77,8 +77,10 @@ func main() {
 		reqBodyString := string(reqBodyBytes)
 		logs.Infof("Request body: %s", reqBodyString)
 
+		reconstructionServerURL := r.Host
+
 		// Create job metadata
-		j, err := CreateJobMetadata("jobs", reqBodyString)
+		j, err := CreateJobMetadata("jobs", reqBodyString, reconstructionServerURL)
 		if err != nil {
 			logs.Error(errors.New("Job creation failed with error: " + err.Error()))
 			http.Error(w, err.Error(), http.StatusInternalServerError)

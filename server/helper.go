@@ -1,10 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
+	"sort"
 
 	"fmt"
 	"io"
@@ -46,18 +47,37 @@ func (js *jobList) AddJob(j *job) {
 	js.list[j.ID] = *j
 }
 
+func ParseStatusFromManifest(manifestPath string) (string, error) {
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+
+	var parsedManifest map[string]interface{}
+	if err := json.Unmarshal(content, &parsedManifest); err != nil {
+		return "", err
+	}
+
+	status, ok := parsedManifest["jobStatus"].(string)
+	if !ok {
+		return "", fmt.Errorf("cannot parse jobStatus in existing manifest json file: %s", manifestPath)
+	}
+	return status, nil
+}
+
 func WriteJobManifestFile(j *job, status string) {
 	if status == "failed" {
-		/*
-			outputCount, err := UploadRefinedOutputsToDomain(j)
-			if err != nil {
-				log.Printf("job %s failed inside 'UpdateJobManifestFile', couldn't upload refined outputs: %s", j.ID, err)
-			}
-			if outputCount == 0 {
-				log.Printf("job %s python produced no refined outputs. Upload basic failed manifest instead.", j.ID)
-			}
-		*/
-		WriteFailedJobManifestFile(j, "Reconstruction job script failed")
+		// If python script has already written a manifest with status "failed", don't overwrite it
+		statusFromManifest, err := ParseStatusFromManifest(path.Join(j.JobPath, "job_manifest.json"))
+
+		if err == nil && statusFromManifest == "failed" {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("job %s python script has already written a failed manifest, won't overwrite.", j.ID)
+		} else {
+			WriteFailedJobManifestFile(j, "Reconstruction job script failed")
+		}
+
 	} else if status == "processing" {
 		progress := 0
 		WriteJobManifestFileHelper(j, status, progress, "Request received by reconstruction server")
@@ -112,18 +132,23 @@ var jobs = jobList{
 	list: map[string]job{},
 }
 
+type JobMetadata struct {
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	DomainID                string    `json:"domain_id"`
+	ProcessingType          string    `json:"processing_type"`
+	CreatedAt               time.Time `json:"created_at"`
+	DomainServerURL         string    `json:"domain_server_url"`
+	ReconstructionServerURL string    `json:"reconstruction_server_url"`
+	AccessToken             string    `json:"-"`
+	DataIDs                 []string  `json:"data_ids"`
+}
+
 type job struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	DataIDs         []string          `json:"data_ids"`
-	DomainID        string            `json:"domain_id"`
+	JobMetadata
 	JobPath         string            `json:"job_path"`
-	ProcessingType  string            `json:"processing_type"`
 	Status          string            `json:"status"`
 	UploadedDataIDs map[string]string `json:"-"`
-	CreatedAt       time.Time         `json:"created_at"`
-	AccessToken     string            `json:"-"`
-	DomainServerURL string            `json:"domain_server_url"`
 }
 
 type JobRequestData struct {
@@ -162,6 +187,103 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry, summaryJsonPath string) error {
+	scanCount := 0
+	totalFrameCount := 0
+	totalScanDuration := 0.0
+	scanDurations := []float64{}
+	uniquePortalIDs := []string{}
+	portalSizes := []float64{} // Size list is used when saving manifest, to output same physical size, without asking domain server
+	devicesUsed := []string{}
+	appVersionsUsed := []string{}
+
+	for _, scanFolder := range allScanFolders {
+		if !scanFolder.IsDir() {
+			continue
+		}
+
+		manifestPath := path.Join(datasetsRootPath, scanFolder.Name(), "Manifest.json")
+		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+			continue
+		}
+
+		manifestData, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return err
+		}
+
+		var manifest map[string]interface{}
+		if err := json.Unmarshal(manifestData, &manifest); err != nil {
+			return err
+		}
+
+		scanCount++
+
+		frameCount := int(manifest["frameCount"].(float64))
+		duration := manifest["duration"].(float64)
+		totalFrameCount += frameCount
+		totalScanDuration += duration
+		scanDurations = append(scanDurations, duration)
+
+		if portals, ok := manifest["portals"].([]interface{}); ok {
+			for _, portal := range portals {
+				if portalMap, ok := portal.(map[string]interface{}); ok {
+					if portalID, ok := portalMap["shortId"].(string); ok {
+						if !slices.Contains(uniquePortalIDs, portalID) {
+							uniquePortalIDs = append(uniquePortalIDs, portalID)
+							portalSizes = append(portalSizes, portalMap["physicalSize"].(float64))
+						}
+					}
+				}
+			}
+		}
+
+		device := manifest["brand"].(string) + " " + manifest["model"].(string) + " " + manifest["systemName"].(string) + " " + manifest["systemVersion"].(string)
+		device = strings.TrimSpace(device)
+		if !slices.Contains(devicesUsed, device) {
+			devicesUsed = append(devicesUsed, device)
+		}
+
+		appVersion := manifest["appVersion"].(string) + " (build " + manifest["buildId"].(string) + ")"
+		if !slices.Contains(appVersionsUsed, appVersion) {
+			appVersionsUsed = append(appVersionsUsed, appVersion)
+		}
+	}
+
+	sort.Float64s(scanDurations)
+	shortestScanDuration := scanDurations[0]
+	longestScanDuration := scanDurations[len(scanDurations)-1]
+	medianScanDuration := scanDurations[len(scanDurations)/2]
+
+	averageScanDuration := totalScanDuration / float64(len(allScanFolders))
+	averageScanFrameCount := float64(totalFrameCount) / float64(len(allScanFolders))
+	averageScanFrameRate := float64(totalFrameCount) / totalScanDuration
+
+	summary := map[string]interface{}{
+		"scanCount":             scanCount,
+		"totalFrameCount":       totalFrameCount,
+		"totalScanDuration":     totalScanDuration,
+		"averageScanDuration":   averageScanDuration,
+		"averageScanFrameCount": averageScanFrameCount,
+		"averageFrameRate":      averageScanFrameRate,
+		"shortestScanDuration":  shortestScanDuration,
+		"longestScanDuration":   longestScanDuration,
+		"medianScanDuration":    medianScanDuration,
+		"portalCount":           len(uniquePortalIDs),
+		"portalIDs":             uniquePortalIDs,
+		"portalSizes":           portalSizes,
+		"deviceVersionsUsed":    devicesUsed,
+		"appVersionsUsed":       appVersionsUsed,
+	}
+
+	summaryJson, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(summaryJsonPath, summaryJson, 0644)
+}
+
 func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Type", "application/octet-stream")
@@ -185,7 +307,7 @@ func WriteDomainData(mw *multipart.Writer, data *DomainData) error {
 func WriteFailedJobManifestFile(j *job, errorMessage string) error {
 	pythonSnippet := `
 from utils.data_utils import save_failed_manifest_json; 
-save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + errorMessage + `')
+save_failed_manifest_json('` + j.JobPath + `/job_manifest.json', '` + j.JobPath + `', '` + errorMessage + `')
 `
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
@@ -203,9 +325,10 @@ func WriteJobManifestFileHelper(j *job, status string, progress int, statusDetai
 from utils.data_utils import save_manifest_json;
 save_manifest_json({},
 	'` + j.JobPath + `/job_manifest.json',
-	jobStatus='` + status + `',
-	jobProgress=` + strconv.Itoa(progress) + `,
-	jobStatusDetails='` + statusDetails + `'
+	'` + j.JobPath + `',
+	job_status='` + status + `',
+	job_progress=` + strconv.Itoa(progress) + `,
+	job_status_details='` + statusDetails + `'
 )`
 
 	logs.WithTag("job_id", j.ID).
@@ -404,10 +527,6 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 		return fmt.Errorf("domain server returned status %d", resp.StatusCode)
 	}
 
-	//if err := os.MkdirAll(path.Join(j.JobPath, "Frames"), 0755); err != nil {
-	//	return err
-	//}
-
 	_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil {
 		return err
@@ -492,30 +611,6 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 	return nil
 }
 
-func ParseFramesCsv(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// frames.csv is a csv file has two columns, the first column is the timestamp, and the second column is the data id
-	// we need to extract the data ids from the second column
-	var ids []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, ",")
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("invalid line: %s", line)
-		}
-		ids = append(ids, parts[1])
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
 func ReadDispositionParams(part *multipart.Part) (map[string]string, error) {
 	d := part.Header.Get("Content-Disposition")
 	var err error
@@ -558,7 +653,7 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 	return &jobRequest, nil
 }
 
-func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
+func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerURL string) (*job, error) {
 
 	logs.Info("Will mkdir path ", dirPath)
 	if err := os.MkdirAll(dirPath, 0750); err != nil {
@@ -599,18 +694,21 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 	jobName := "job_" + jobID
 
 	j := job{
-		CreatedAt:       startTime,
-		ID:              jobID,
-		Name:            jobName,
-		DomainID:        jobRequest.DomainID,
-		DataIDs:         jobRequest.DataIDs,
-		ProcessingType:  jobRequest.ProcessingType,
+		JobMetadata: JobMetadata{
+			CreatedAt:               startTime,
+			ID:                      jobID,
+			Name:                    jobName,
+			DomainID:                jobRequest.DomainID,
+			DataIDs:                 jobRequest.DataIDs,
+			ProcessingType:          jobRequest.ProcessingType,
+			DomainServerURL:         domainServerURL,
+			ReconstructionServerURL: reconstructionServerURL,
+			AccessToken:             jobRequest.AccessToken,
+		},
 		Status:          "started",
-		DomainServerURL: domainServerURL,
-		AccessToken:     jobRequest.AccessToken,
 		UploadedDataIDs: map[string]string{},
+		JobPath:         path.Join(dirPath, jobRequest.DomainID, jobName),
 	}
-	j.JobPath = path.Join(dirPath, jobRequest.DomainID, jobName)
 
 	if err := os.MkdirAll(j.JobPath, 0755); err != nil {
 		return nil, errors.New("failed to create job directory").Wrap(err).
@@ -618,38 +716,40 @@ func CreateJobMetadata(dirPath string, requestJson string) (*job, error) {
 			WithTag("domain_id", j.DomainID)
 	}
 
-	f, err := os.Create(path.Join(j.JobPath, "jobrequest"+j.ID))
+	// write the requestJson to file, for debugging purposes
+	requestFile := path.Join(j.JobPath, "job_request.json")
+	if err := os.WriteFile(requestFile, []byte(requestJson), 0644); err != nil {
+		return nil, errors.New("failed to write jobrequest json file to disk").Wrap(err).
+			WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID)
+	}
+
+	// write job metadata to file, gets added into refined manifest file
+	metadataFile := path.Join(j.JobPath, "job_metadata.json")
+	jobMetadataJson, err := json.Marshal(j.JobMetadata)
 	if err != nil {
-		return nil, errors.New("failed to create jobrequest file").Wrap(err).
+		return nil, errors.New("failed to marshal job metadata to json").Wrap(err).
 			WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID)
 	}
-	defer f.Close()
-
-	// write the requestJson to the file for later checking
-	if _, err := f.WriteString(requestJson); err != nil {
-		return nil, errors.New("failed to write jobrequest file").Wrap(err).
+	if err := os.WriteFile(metadataFile, jobMetadataJson, 0644); err != nil {
+		return nil, errors.New("failed to write job metadata json file to disk").Wrap(err).
 			WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID)
 	}
 
-	//dataString := buf.String()
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Info("Data File:", f.Name())
-
-	//destPath, err := unzipFile(f.Name(), path.Join(dirPath, "datasets"))
-	//if err != nil {
-	//	return nil, err
-	//}
+		Infof("Job Request File: %s", requestFile)
 
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Info("Adding job to job list")
+		Infof("Job Metadata File: %s", metadataFile)
+
 	jobs.AddJob(&j)
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Info("Job added to job list")
+		Infof("Job added to job list: %s", j.ID)
 
 	return &j, nil
 }
@@ -680,19 +780,18 @@ func executeJob(j *job) {
 
 	refinementPython := "main.py"
 
-	jobRootPath := path.Join(j.JobPath) // Parent of 'datasets' folder. Output will be under 'refined' subfolder.
 	outputPath := path.Join(j.JobPath, "refined")
 	logFilePath := path.Join(j.JobPath, "log.txt")
 
 	params := []string{
 		refinementPython,
 		"--mode", j.ProcessingType,
-		"--job_root_path", jobRootPath,
+		"--job_root_path", j.JobPath,
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
 		"--job_id", j.Name}
 
-	datasetsRootPath := path.Join(jobRootPath, "datasets")
+	datasetsRootPath := path.Join(j.JobPath, "datasets")
 	if allScanFolders, err := os.ReadDir(datasetsRootPath); err != nil {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
@@ -703,6 +802,10 @@ func executeJob(j *job) {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
 			Infof("read %d scan folders", len(allScanFolders))
+
+		scanDataSummaryPath := path.Join(j.JobPath, "scan_data_summary.json")
+		WriteScanDataSummary(datasetsRootPath, allScanFolders, scanDataSummaryPath)
+
 		for _, folder := range allScanFolders {
 			params = append(params, folder.Name())
 		}
@@ -713,6 +816,7 @@ func executeJob(j *job) {
 		WithTag("domain_id", j.DomainID).
 		Debugf("executing main.py with params: %s", params)
 	cmd := exec.Command("python3", params...)
+
 	// Create log file
 	logFile, err := os.Create(logFilePath)
 	if err != nil {
@@ -742,21 +846,19 @@ func executeJob(j *job) {
 		jobs.UpdateJob(j.ID, "failed")
 		return
 	}
+
 	// Monitor progress in a separate goroutine
 	progressDone := make(chan bool)
 	go func() {
-		datasetsPath := path.Join(jobRootPath, "datasets")
-		refinedPath := path.Join(jobRootPath, "refined", "local")
+		refinedPath := path.Join(outputPath, "local")
 
 		for {
 			select {
 			case <-progressDone:
 				return
 			default:
-				time.Sleep(10 * time.Second)
-
 				// Get total number of datasets
-				datasetFolders, err := os.ReadDir(datasetsPath)
+				datasetFolders, err := os.ReadDir(datasetsRootPath)
 				if err != nil {
 					logs.WithTag("job_id", j.ID).
 						WithTag("domain_id", j.DomainID).
@@ -801,7 +903,7 @@ func executeJob(j *job) {
 						Error(errors.Newf("failed to upload job manifest").Wrap(err))
 				}
 
-				time.Sleep(10 * time.Second)
+				time.Sleep(30 * time.Second)
 			}
 		}
 	}()
