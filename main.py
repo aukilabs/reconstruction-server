@@ -120,7 +120,7 @@ def main(args):
         path_suffix, function = mode_config[args.mode]
         if not args.output_path:
             args.output_path = args.job_root_path / "refined" / path_suffix
-        
+
         function(args, logger)
     else:
         raise ValueError(f"Invalid mode: {args.mode}")
