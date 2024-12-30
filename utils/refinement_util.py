@@ -5,7 +5,7 @@ import numpy as np
 from numpy.linalg import norm
 import shutil
 import os
-
+import json
 
 from utils.triangulation import triangulate_model
 from utils.data_utils import (
@@ -57,6 +57,7 @@ def refine_dataset(
     features = sfm_dir / 'features.h5'
     matches = sfm_dir / 'matches.h5'
     log_file = log_path + "/local_logs"
+    job_root_path = scan_folder_path.parent.parent
 
     # Setup Loggging
     logger = setup_logger(
@@ -104,6 +105,17 @@ def refine_dataset(
     ############################
     # LOAD DATASET
     ############################
+    #--------------------
+    # Job scan summary
+    portal_sizes = {}
+    try:
+        scan_data_summary_path = job_root_path / "scan_data_summary.json"
+        if scan_data_summary_path.exists():
+            scan_data_summary = json.load(open(scan_data_summary_path))
+            for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
+                portal_sizes[portal_id] = portal_size
+    except:
+        logger.fatal(f"Failed to read job scan summary Path: {scan_data_summary_path}")
 
     #--------------------
     # RGB Frames
