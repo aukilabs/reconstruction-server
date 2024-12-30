@@ -4,7 +4,7 @@ import argparse
 from local_main import main as local_main
 from global_main import main as global_main
 from occlusion_box import main as occlusion_box_main
-from utils.data_utils import setup_logger
+from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
 
@@ -121,7 +121,14 @@ def main(args):
         if not args.output_path:
             args.output_path = args.job_root_path / "refined" / path_suffix
 
-        function(args, logger)
+        try: 
+            function(args, logger)
+        except Exception as e:
+            logger.error(f"Refinement failed with exception: {e}")
+            manifest_out_path =  args.output_path / "refined_manifest.json"
+            logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
+            save_failed_manifest_json(manifest_out_path, args.output_path, str(e))
+            raise e
     else:
         raise ValueError(f"Invalid mode: {args.mode}")
 
