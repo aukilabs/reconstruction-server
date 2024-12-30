@@ -14,7 +14,8 @@ from utils.data_utils import (
     get_world_space_qr_codes,
     mean_pose,
     setup_logger,
-    mp4_to_frames
+    mp4_to_frames,
+    load_qr_detections_csv
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -226,29 +227,8 @@ def refine_dataset(
     qr_detections_csv_path = str(qr_detections_csv_path)
 
     logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
-    # Initialize the dictionary
-    qr_detections_per_timestamp = {}
 
-    # Read and process the CSV file
-    with open(qr_detections_csv_path, newline='') as csvfile:
-        csv_reader = csv.reader(csvfile)
-        for row in csv_reader:
-            timestamp = round(float(row[0]) * 1e9) # s to ns
-            pose_values = [float(val) for val in row[2:9]] # px, py, pz, rx, ry, rz, rw
-            pos = pose_values[:3]
-            quat = pose_values[3:]
-
-            pos, quat = convert_pose_opengl_to_colmap(pos, quat)
-
-            qr_pose = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quat)),
-                np.array(pos)
-            )
-
-            qr_detections_per_timestamp[timestamp] = {
-                "pose": qr_pose,
-                "short_id": row[1]
-            }
+    qr_detections_per_timestamp = load_qr_detections_csv(qr_detections_csv_path)
 
     # Display the result
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
