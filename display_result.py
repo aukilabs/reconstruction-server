@@ -1,11 +1,10 @@
 import argparse
-import csv
-import pycolmap
-import os, sys
 import numpy as np
 from scipy.spatial.transform import Rotation
-from utils.io import Model
 import open3d as o3d
+
+from utils.io import Model
+
 
 ####################################################
 # Create Open3D Objects
