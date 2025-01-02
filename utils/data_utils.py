@@ -172,6 +172,95 @@ def load_qr_detections_csv(csv_path):
 
     return detections_per_timestamp
 
+def is_rotation_parallel_to_yz_plane(quaternion, tolerance=1e-6):
+    """
+    Checks if a quaternion rotation is parallel to the YZ plane.
+    
+    Parameters:
+        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
+        tolerance (float): Numerical tolerance for the check (default 1e-6).
+        
+    Returns:
+        bool: True if the rotation axis is parallel to the YZ plane, False otherwise.
+    """
+    if len(quaternion) != 4:
+        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
+    
+    # Normalize the quaternion
+    x, y, z, w = quaternion
+    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    
+    # Rotation matrix from quaternion
+    rotation_matrix = np.array([
+        [1 - 2*(y**2 + z**2), 2*(x*y - z*w), 2*(x*z + y*w)],
+        [2*(x*y + z*w), 1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
+        [2*(x*z - y*w), 2*(y*z + x*w), 1 - 2*(x**2 + y**2)]
+    ])
+    
+    # The normal vector to the object's XY plane is the Z-axis of its local frame
+    object_z_axis = rotation_matrix[:, 2]
+    
+    # Check if the Z-axis aligns with the world's X-axis (parallel to YZ plane)
+    is_parallel = np.abs(object_z_axis[1]) < tolerance and np.abs(object_z_axis[2]) < tolerance
+    
+    return is_parallel
+
+def snap_to_yz_plane(quaternion):
+    """
+    Snaps the object's rotation so that its XY plane is parallel to the world's YZ plane,
+    while preserving its rotation about the X-axis.
+
+    Parameters:
+        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
+
+    Returns:
+        list: A new quaternion [x, y, z, w] with the snapped rotation.
+    """
+    if len(quaternion) != 4:
+        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
+
+    # Normalize the quaternion
+    x, y, z, w = quaternion
+    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+
+    # Convert quaternion to a rotation object
+    rotation = scipy_Rotation.from_quat([x, y, z, w])
+
+    # Decompose into Euler angles to extract X-axis rotation
+    euler_angles = rotation.as_euler('xyz', degrees=False)
+    y_rotation = euler_angles[1]  # Rotation about X-axis
+
+    # Reconstruct a quaternion with only X-axis rotation
+    snapped_rotation = scipy_Rotation.from_euler('y', y_rotation, degrees=False)
+
+    return snapped_rotation.as_quat()
+
+def floor_detection_and_snapping(detections, height_threshold= 0.2):
+    snapped_detections = {}
+    for ts, detection in detections.items():
+        snapped_detections[ts] = {}
+        position = detection["pose"].translation
+        quaternion = detection["pose"].rotation.quat
+        # It is in colmap coordinates
+        # Classify as floor portal if within height threshold and parallel to yz plane
+        if abs(position[0]) <=  height_threshold and is_rotation_parallel_to_yz_plane(quaternion, 0.0873):
+            # If 
+            position[0] = 0.0
+            # print(f"{detection['short_id']} before t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
+            detection["pose"] = pycolmap.Rigid3d(
+                pycolmap.Rotation3d(np.array(quaternion)),
+                np.array(position)
+            )
+            # print(f"{detection['short_id']} after t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
+        else:
+            print(f"{detection['short_id']} is not floor portal: t: {position}   q: {detection['pose'].rotation.quat}")
+            print(f"translation check: {abs(position[0]) <=  height_threshold}")
+            print(f"quaternion check: {is_rotation_parallel_to_yz_plane(detection['pose'].rotation.quat)}")
+        
+        snapped_detections[ts] = detection
+    return snapped_detections
 
 def quaternion_to_rotation_matrix(q):
     x, y, z, w = q

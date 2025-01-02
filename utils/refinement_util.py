@@ -16,7 +16,8 @@ from utils.data_utils import (
     setup_logger,
     mp4_to_frames,
     load_qr_detections_csv,
-    save_portal_csv
+    save_portal_csv, 
+    floor_detection_and_snapping
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -230,7 +231,7 @@ def refine_dataset(
     logger.info(f'Loading QR detections from, {qr_detections_csv_path}, ...')
 
     qr_detections_per_timestamp = load_qr_detections_csv(qr_detections_csv_path)
-
+    qr_detections_per_timestamp = floor_detection_and_snapping(qr_detections_per_timestamp)
     # Display the result
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
 
@@ -402,7 +403,6 @@ def refine_dataset(
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
         corners_per_qr[id].append(detection["portal_corners"])
-
 
     logger.info("Start triangulation")
     refined_rec = triangulate_model(
