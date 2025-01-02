@@ -415,7 +415,9 @@ def refine_dataset(
         skip_geometric_verification=True,
         verbose=True,
         timestamp_per_image=timestamps_per_image,
-        arkit_precomputed=arkit_precomputed
+        arkit_precomputed=arkit_precomputed,
+        detections_per_qr=detections_per_qr,
+        image_ids_per_qr=image_ids_per_qr
     )
     refined_rec.write(sfm_dir)
     logger.info("Finished triangulation")
