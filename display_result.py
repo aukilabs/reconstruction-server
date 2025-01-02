@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 from scipy.spatial.transform import Rotation
 import open3d as o3d
+import json, os
 
 from utils.io import Model
 
@@ -236,6 +237,52 @@ def create_grid(size=1.0, divisions=10, plane="xy"):
     return line_set
 
 ####################################################
+# Statistics
+####################################################
+def get_poses_stat(poses, opengl=False):
+    if opengl:
+        elevation_axis = 1
+    else:
+        elevation_axis = 0
+
+    elevation_values = []
+    for pose in poses:
+        translation = pose[0]
+        elevation_values.append(translation[elevation_axis])
+    
+    stat = {
+        "elevation": {
+            "mean": np.mean(elevation_values),
+            "median": np.median(elevation_values),
+            "std_dev": np.std(elevation_values),
+            "min": np.min(elevation_values),
+            "max": np.max(elevation_values)
+        }
+    }
+    return stat
+
+def extract_portal_stat(detections_per_id, output_dir, opengl=False):  
+    portal_stats = {}
+    poses = []
+
+    # For each portal
+    for id, detections in detections_per_id.items():
+        tmp_poses = []
+        for detection in detections:
+            tmp_poses.append((detection["tvec"], detection["qvec"]))
+        
+        poses.extend(tmp_poses)
+
+        portal_stats[id] = get_poses_stat(tmp_poses, opengl)
+            
+    # Overall Floor Portals
+    portal_stats["Overall"] = get_poses_stat(poses, opengl)
+    with open(os.path.join(output_dir, "portal_stats.json"), 'w') as jfile:
+        json.dump(portal_stats, jfile, indent=4, separators=(", ", ": "))
+    return
+
+
+####################################################
 # Main Script
 ####################################################
 def main(args):
@@ -256,9 +303,18 @@ def main(args):
     geo.append(create_grid(20.0, 20, plane="xz"))
 
     # Construct Portals Visual Object
+    portal_detections_per_id = {}
     for portal in portal_detections:
         geo.append(create_pose_lineset(portal["tvec"], portal["qvec"]))
         geo.append(create_square_plane(portal["tvec"], portal["qvec"], portal["size"]))
+
+        # add stat for portal elevation
+        if portal["short_id"] not in portal_detections_per_id.keys():
+            portal_detections_per_id[portal["short_id"]] = []
+        portal_detections_per_id[portal["short_id"]].append(portal)
+
+    extract_portal_stat(portal_detections_per_id, args.output, args.opengl)
+
 
     # Create Open3d Visualizer
     vis1 = o3d.visualization.Visualizer()
@@ -283,6 +339,7 @@ def main(args):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Display SFM and Portal results")
     parser.add_argument('--sfm-folder', type=str, help='Path to sfm result folder with .bin extensions', default='./refined/local/2024-12-16_12-57-48/sfm')
+    parser.add_argument('--output', type=str, help='Path to output directory', default='./')
     parser.add_argument('--opengl', action='store_true', help='Display In Opengl Coordinate or not')
     return parser.parse_args()
 
