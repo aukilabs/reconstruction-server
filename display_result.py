@@ -338,11 +338,16 @@ def main(args):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Display SFM and Portal results")
-    parser.add_argument('--sfm-folder', type=str, help='Path to sfm result folder with .bin extensions', default='./refined/local/2024-12-16_12-57-48/sfm')
-    parser.add_argument('--output', type=str, help='Path to output directory', default='./')
+    parser.add_argument('--sfm_folder', type=str, help='Path to sfm result folder with .bin extensions', default='./refined/local/2024-12-16_12-57-48/sfm')
+    parser.add_argument('--output', type=str, help='Path to output directory')
     parser.add_argument('--opengl', action='store_true', help='Display In Opengl Coordinate or not')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
+
+    # Set default if not specified
+    if not args.output:
+        args.output = args.sfm_folder
+        
     main(args)
