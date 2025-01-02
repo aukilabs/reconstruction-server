@@ -284,7 +284,7 @@ def main(args):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Display SFM and Portal results")
     parser.add_argument('--sfm-folder', type=str, help='Path to sfm result folder with .bin extensions', default='./refined/local/2024-12-16_12-57-48/sfm')
-    parser.add_argument('--opengl', type=bool, help='Display In Opengl Coordinate or not', default=False)
+    parser.add_argument('--opengl', action='store_true', help='Display In Opengl Coordinate or not')
     return parser.parse_args()
 
 if __name__ == "__main__":
