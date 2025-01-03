@@ -288,13 +288,17 @@ class PyBundleAdjuster(object):
                 elif self.is_constant_cam_position(image.image_id - 1):
                     const_prev_pos = prev_pose.translation
 
-                cost = DistanceMovedCostFunction(arkit_offset_moved, arkit_offset_rotated, arkit_gravity_direction,
-                                                const_prev_pos=const_prev_pos,
-                                                const_prev_quat=const_prev_quat,
-                                                offset_weight=offset_weight,
-                                                gravity_weight=gravity_weight,
-                                                image_id_debug=image_id,
-                                                debugging=debugging)
+                cost = DistanceMovedCostFunction(
+                    arkit_offset_moved, 
+                    arkit_offset_rotated, 
+                    arkit_gravity_direction,
+                    const_prev_pos=const_prev_pos,
+                    const_prev_quat=const_prev_quat,
+                    offset_weight=offset_weight,
+                    gravity_weight=gravity_weight,
+                    image_id_debug=image_id,
+                    debugging=debugging
+                )
 
                 params = [
                     pose.translation,
@@ -477,12 +481,14 @@ class PyBundleAdjuster(object):
                         parameter_blocks.append(image.cam_from_world.rotation.quat)
 
 
-                cost = CustomLoopClosureCostFunction(one_pair,
-                                                     qr_world_points_per_image_id=None, #qr_world_points_per_image_id,
-                                                     weight=self.refinement_config.get("loop_closure_loss_weight", 1.0),
-                                                     const_positions=const_positions,
-                                                     const_quaternions=const_quaternions,
-                                                     debugging=debugging)
+                cost = CustomLoopClosureCostFunction(
+                    one_pair,
+                    qr_world_points_per_image_id=None, #qr_world_points_per_image_id,
+                    weight=self.refinement_config.get("loop_closure_loss_weight", 1.0),
+                    const_positions=const_positions,
+                    const_quaternions=const_quaternions,
+                    debugging=debugging
+                )
 
 
                 self.add_residual_block("QrLoopClosure", cost, None, parameter_blocks)
@@ -505,10 +511,13 @@ class PyBundleAdjuster(object):
             for j, image_id_j in enumerate(list(detections_per_image_id.keys())[i+1:]):
                 assert len(detections_per_image_id[image_id_j]) == 1
                 cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 1.0)
-                cost = RelativeTransformationSE3ViaObservationsCostFunction(detections_per_image_id[image_id_i][0].rotation.quat,
-                                                                            detections_per_image_id[image_id_i][0].translation,
-                                                                            detections_per_image_id[image_id_j][0].rotation.quat,
-                                                                            detections_per_image_id[image_id_j][0].translation, np.eye(6) / cov_scale)
+                cost = RelativeTransformationSE3ViaObservationsCostFunction(
+                    detections_per_image_id[image_id_i][0].rotation.quat,
+                    detections_per_image_id[image_id_i][0].translation,
+                    detections_per_image_id[image_id_j][0].rotation.quat,
+                    detections_per_image_id[image_id_j][0].translation, 
+                    np.eye(6) / cov_scale
+                )
                 params = [
                     reconstruction.images[image_id_j].cam_from_world.rotation.quat,
                     reconstruction.images[image_id_j].cam_from_world.translation,

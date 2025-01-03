@@ -2,7 +2,6 @@ from pathlib import Path
 import csv
 import pycolmap
 import numpy as np
-from numpy.linalg import norm
 import shutil
 import os
 import json
@@ -447,22 +446,23 @@ def refine_dataset(
     return refined_rec, rec
 
 
-
-def tri_ba_iteration(refined_rec, 
-                     sorted_image_ids, 
-                     detections_per_qr,
-                     image_ids_per_qr,
-                     timestamps_per_image,
-                     arkit_precomputed,
-                     ba_options,
-                     sfm_dir,
-                     images,
-                     sfm_pairs,
-                     features,
-                     matches,
-                     reproj_error_history,
-                     skip_geometric_verification=True,
-                     refinement_config={}):
+def tri_ba_iteration(
+    refined_rec, 
+    sorted_image_ids, 
+    detections_per_qr,
+    image_ids_per_qr,
+    timestamps_per_image,
+    arkit_precomputed,
+    ba_options,
+    sfm_dir,
+    images,
+    sfm_pairs,
+    features,
+    matches,
+    reproj_error_history,
+    skip_geometric_verification=True,
+    refinement_config={}
+):
     # Avoid degeneracies in bundle adjustment
     refined_rec.filter_observations_with_negative_depth()
 
@@ -478,27 +478,31 @@ def tri_ba_iteration(refined_rec,
     ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
 
     print("Start Global Bundle Adjustment")
-    summary, loss_details = dmt_ba_solve_bundle_adjustment(detections_per_qr,
-                                                            image_ids_per_qr,
-                                                            timestamps_per_image,
-                                                            arkit_precomputed,
-                                                            refined_rec,
-                                                            ba_options,
-                                                            ba_config,
-                                                            refinement_config)
+    summary, loss_details = dmt_ba_solve_bundle_adjustment(
+        detections_per_qr,
+        image_ids_per_qr,
+        timestamps_per_image,
+        arkit_precomputed,
+        refined_rec,
+        ba_options,
+        ba_config,
+        refinement_config
+    )
 
     ##print("\n".join(summary.BriefReport().split(",")))
     print("\n".join(summary.FullReport().split(",")))
 
     refined_rec.write(sfm_dir)
 
-    refined_rec = triangulation.main(sfm_dir, 
-                                     sfm_dir, 
-                                     images, 
-                                     sfm_pairs, 
-                                     features, matches, 
-                                     skip_geometric_verification=skip_geometric_verification,
-                                     verbose=True)
+    refined_rec = triangulation.main(
+        sfm_dir, 
+        sfm_dir, 
+        images, 
+        sfm_pairs, 
+        features, matches, 
+        skip_geometric_verification=skip_geometric_verification,
+        verbose=True
+    )
 
 
     reproj_error_history.append(refined_rec.compute_mean_reprojection_error())
@@ -513,7 +517,7 @@ def triangulator(
         BA_iters=3,
         max_reprojection_err=4.0, 
         min_triangulation_angle=2.0
-    ):
+):
 
     mapper = pycolmap.IncrementalMapper(pycolmap.DatabaseCache())
     mapper.begin_reconstruction(reconstruction)
