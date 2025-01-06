@@ -14,6 +14,7 @@ import datetime
 import platform
 import psutil
 import GPUtil
+from typing import NamedTuple, Dict
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -596,6 +597,36 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
     capture.release()
 
 
+def process_frames(
+    paths,
+    every_nth_image,
+    logger
+):
+    """
+    Process and extract frames from video if necessary.
+    
+    Returns:
+        Tuple of (reference_list, use_frames_from_video)
+    """
+    frames_mp4 = paths.scan_folder / 'Frames.mp4'
+    logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
+    
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        logger.info(f"Frames mp4 found, unpacking into {paths.images}")
+        if not paths.images.exists():
+            paths.images.mkdir()
+        mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_")
+        use_frames_from_video = True
+
+    references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]
+
+    original_image_count = len(references)
+    references = references[::every_nth_image]
+    logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
+    return sorted(references), use_frames_from_video, original_image_count
+
+
 def export_rec_as_ply(rec, path, convert_to_opengl=True, logger_name=""):
     logger = logging.getLogger(logger_name)
 
@@ -770,3 +801,132 @@ def add_file_handler(logger, log_file):
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     return logger, file_handler
+
+
+class RefinementData(NamedTuple):
+    """Container for refinement data."""
+    timestamps_per_image: Dict
+    intrinsics_per_timestamp: Dict
+    ar_poses_per_timestamp: Dict
+    qr_detections_per_timestamp: Dict
+    portal_sizes: Dict
+
+
+def load_scan_summary(scan_folder_path, logger):
+    """
+    Load scan summary data from json file.
+    
+    Args:
+        job_root_path: Path to job root directory
+        logger: Logger instance
+        
+    Returns:
+        Dictionary of portal sizes
+    """
+    portal_sizes = {}
+    job_root_path = scan_folder_path.parent.parent
+    try:
+        scan_data_summary_path = job_root_path / "scan_data_summary.json"
+        if scan_data_summary_path.exists():
+            scan_data_summary = json.load(open(scan_data_summary_path))
+            for portal_id, portal_size in zip(
+                scan_data_summary["portalIDs"],
+                scan_data_summary["portalSizes"]
+            ):
+                portal_sizes[portal_id] = portal_size
+    except Exception as e:
+        logger.error(f"Failed to read job scan summary: {e}")
+        raise
+
+    return portal_sizes
+
+
+def load_dataset_metadata(
+    paths,
+    use_frames_from_video,
+    original_image_count,
+    logger
+):
+    """
+    Load all metadata for the dataset including timestamps, intrinsics, poses, and QR detections.
+    
+    Returns:
+        RefinementData containing all loaded metadata
+    """
+    # Load portal sizes
+    portal_sizes = load_scan_summary(paths.scan_folder, logger)
+
+
+    # Load timestamps
+    timestamps_per_image = {}
+    frames_csv_path = paths.scan_folder / "Frames.csv"
+    logger.info(f'Loading image timestamps from {frames_csv_path}')
+
+    with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            filename = (f"{paths.scan_folder.name}_{frame_index:06d}.jpg" if use_frames_from_video 
+                       else row[1])
+            frame_index += 1
+            timestamps_per_image[filename] = timestamp
+    logger.info(f'{len(timestamps_per_image)}, frame timestamps loaded')
+
+
+    # Load camera intrinsics
+    intrinsics_per_timestamp = {}
+    cam_intrinsics_path = paths.scan_folder / "CameraIntrinsics.csv"
+    logger.info(f'Loading camera intrinsics from {cam_intrinsics_path}')
+    
+    with open(cam_intrinsics_path, newline='') as csvfile:
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            intrinsics_per_timestamp[timestamp] = [
+                float(row[1]), float(row[2]), # focal distance (fx, fy)
+                float(row[3]), float(row[4]), # principal point (cx, cy)
+                int(row[5]), int(row[6])      # resolution (w, h)
+            ]
+    logger.info(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
+
+
+    # Load AR poses
+    ar_poses_per_timestamp = {}
+    ar_poses_path = paths.scan_folder / "ARposes.csv"
+    logger.info(f'Loading AR poses from {ar_poses_path}')
+    
+    with open(ar_poses_path, newline='') as csvfile:
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]]
+    logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
+
+
+    # Load QR detections
+    qr_detections_path = (paths.scan_folder / "PortalDetections.csv" 
+                         if (paths.scan_folder / "PortalDetections.csv").exists() 
+                         else paths.scan_folder / "Observations.csv")
+    logger.info(f'Loading QR detections from {qr_detections_path}')
+    
+    qr_detections = load_qr_detections_csv(str(qr_detections_path))
+    qr_detections_per_timestamp = floor_detection_and_snapping(qr_detections)
+    logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+
+
+    # Validate data
+    for data_dict, name in [
+        (timestamps_per_image, "Timestamps"),
+        (intrinsics_per_timestamp, "Camera Intrinsics"),
+        (ar_poses_per_timestamp, "AR Poses")
+    ]:
+        if len(data_dict) != original_image_count:
+            raise ValueError(f"Mismatching number of Frames and {name}. "
+                           f"Expected {original_image_count}, got {len(data_dict)}")
+        
+
+    return RefinementData(
+        timestamps_per_image=timestamps_per_image,
+        intrinsics_per_timestamp=intrinsics_per_timestamp,
+        ar_poses_per_timestamp=ar_poses_per_timestamp,
+        qr_detections_per_timestamp=qr_detections_per_timestamp,
+        portal_sizes=portal_sizes 
+    )
