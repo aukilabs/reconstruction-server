@@ -27,7 +27,8 @@ from hloc import (
     extract_features,
     match_features,
     triangulation,
-    pairs_from_poses
+    pairs_from_poses,
+    pairs_from_covisibility
 )
 
 
@@ -62,7 +63,7 @@ def refine_dataset(
     log_file = log_path + "/local_logs"
 
     # Setup Loggging
-    logger = setup_logger(name="refine_dataset", log_file=log_file, 
+    logger = setup_logger(name=f"refine_dataset", log_file=log_file, 
                         domain_id=domain_id, job_id=job_id, dataset_id=experiment_name,
                         level=log_level)
 
@@ -124,16 +125,22 @@ def refine_dataset(
         logger.info(f"Frames mp4 found, unpacking into {images}")
         if not images.exists():
             images.mkdir()
-        mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+
+        matching_unpacked_count = len(list(images.glob(f"{experiment_name}_*.jpg")))
+        if matching_unpacked_count == 0:
+            mp4_to_frames(frames_mp4, images, filename_prefix=experiment_name + "_")
+        else:
+            logger.info(f"Frames folder contains {matching_unpacked_count} matching jpg files already")
+            logger.info("Already unpacked! Skipping mp4 to frames (to save time)")
         use_frames_from_video = True
 
     references = [str(p.relative_to(images)) for p in (images).iterdir()]
     original_image_count = len(references)
     references = sorted(references) # Assume file name is time stamp, to get chronological sequence
 
-    references = references[0:-1:every_nth_image]
+    references = references[0::every_nth_image]
 
-    logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
+    logger.info(f'{len(references)} frames selected out of {original_image_count}')
 
 
     #--------------------
@@ -141,7 +148,7 @@ def refine_dataset(
 
     frames_csv_path = str(dataset / "Frames.csv")
 
-    logger.info(f'Loading image timestamps from, {frames_csv_path} ...')
+    logger.info(f'Loading image timestamps from {frames_csv_path} ...')
 
     # Initialize the dictionary
     timestamps_per_image = {}
@@ -247,7 +254,7 @@ def refine_dataset(
                 np.array(pos)
             )
 
-            qr_pose = rectify_floor_portal(qr_pose)
+            #qr_pose = rectify_floor_portal(qr_pose)
 
             qr_detections_per_timestamp[timestamp] = {
                 "pose": qr_pose,
@@ -365,8 +372,9 @@ def refine_dataset(
     ############################
     # IMAGE PAIRS
     ############################
+
     logger.info("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
+    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 5, rotation_threshold=180)
 
     ############################
     # FEATURE POINTS
