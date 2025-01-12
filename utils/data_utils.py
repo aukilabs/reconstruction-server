@@ -255,6 +255,9 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
         corresponding_image_ids = image_ids_per_qr[qr_id]
 
         for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
+            if image_id not in reconstruction.images:
+                print(f"Image {image_id} not found in reconstruction. Skipping. (get_world_space_qr_codes)")
+                continue
             cam_pose = reconstruction.images[image_id].cam_from_world.inverse()
             qr_world_pose = cam_pose * qr_pose_in_cam
             qr_world_detections[qr_id].append(qr_world_pose)
@@ -308,6 +311,9 @@ def get_world_space_portal_detections(reconstruction, timestamps_per_image,
         corresponding_image_ids = image_ids_per_qr[qr_id]
         
         for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
+            if image_id not in reconstruction.images:
+                logger.warning(f"Image {image_id} not found in reconstruction. Skipping. (qr id: {qr_id})")
+                continue
             image = reconstruction.images[image_id]
             
             if image.name not in timestamps_per_image:
@@ -771,6 +777,10 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level.upper()),)
     
+    # Clear existing handlers (if reusing same name)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
     if log_file:
         logger, _ = add_file_handler(logger, log_file)
 
