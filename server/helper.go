@@ -238,13 +238,19 @@ func WriteScanDataSummary(datasetsRootPath string, allScanFolders []os.DirEntry,
 			}
 		}
 
-		device := manifest["brand"].(string) + " " + manifest["model"].(string) + " " + manifest["systemName"].(string) + " " + manifest["systemVersion"].(string)
-		device = strings.TrimSpace(device)
+		device := "unknown"
+		if manifest["brand"] != nil && manifest["model"] != nil && manifest["systemName"] != nil && manifest["systemVersion"] != nil {
+			device = manifest["brand"].(string) + " " + manifest["model"].(string) + " " + manifest["systemName"].(string) + " " + manifest["systemVersion"].(string)
+			device = strings.TrimSpace(device)
+		}
 		if !slices.Contains(devicesUsed, device) {
 			devicesUsed = append(devicesUsed, device)
 		}
 
-		appVersion := manifest["appVersion"].(string) + " (build " + manifest["buildId"].(string) + ")"
+		appVersion := "unknown"
+		if manifest["appVersion"] != nil && manifest["buildId"] != nil {
+			appVersion = manifest["appVersion"].(string) + " (build " + manifest["buildId"].(string) + ")"
+		}
 		if !slices.Contains(appVersionsUsed, appVersion) {
 			appVersionsUsed = append(appVersionsUsed, appVersion)
 		}
