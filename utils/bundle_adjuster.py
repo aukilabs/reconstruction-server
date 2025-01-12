@@ -44,6 +44,7 @@ class PyBundleAdjuster(object):
         for image_id in self.config.image_ids:
             self.add_image_to_problem_upd(image_id, reconstruction, loss, timestamp_per_image, arkit_precomputed)
 
+        """
         # Add loop closure to ensure multiple detections of same QR code are at the same position
         # TODO rotations should also be same
         debug_first_qr = verbose
@@ -58,18 +59,24 @@ class PyBundleAdjuster(object):
                     qr_world_points_per_image_id = {}
                     for image_id, detection in zip(image_ids_per_qr[qr_id], cam_space_detections):
 
-                        image = reconstruction.images[image_id]
-                        camera = reconstruction.cameras[image.camera_id]
+                        try:
+                            image = reconstruction.images[image_id]
+                            camera = reconstruction.cameras[image.camera_id]
+                        except KeyError as err:
+                            print(f"KeyError for image_id {image_id} and qr_id {qr_id}")
+                            print(f"image_ids_per_qr: {image_ids_per_qr}")
+                            print(f"detections_per_qr: {detections_per_qr}")
+                            print(f"self.config.image_ids: {self.config.image_ids}")
+                            continue
+
                         qr_center_camspace = detection.translation
 
-                        """
                         angle_from_cam_forward = vec3_angle(qr_center_camspace, np.array([0,0,1]))
                         if angle_from_cam_forward > 10:
                             if verbose:
                                 print(f"QR {qr_id} in image {image_id} is more than 10 deg away from cam center, SKIP loop closure.",
                                     f"(angle_from_cam_forward={angle_from_cam_forward}, qr_center_camspace={qr_center_camspace})")
                             continue
-                        """
 
                         if image_id not in qr_detections_by_image_id.keys():
                             qr_detections_by_image_id[image_id] = []
@@ -96,7 +103,7 @@ class PyBundleAdjuster(object):
                         #
                         #        point3D = reconstruction.points3D[point2D.point3D_id]
                         #        qr_world_points_per_image_id[image_id].append(point3D)
-                        #
+                        #a
                         #if debug_this_qr:
                         #    print(f"QR {qr_id} in",
                         #        f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
@@ -106,14 +113,19 @@ class PyBundleAdjuster(object):
                         #        ", pose: ", detection)
 
 
-                    added = self.add_qr_detections_to_problem_upd(reconstruction,
-                                                            qr_detections_by_image_id,
-                                                            qr_world_points_per_image_id,
-                                                            debug_this_qr)
+                    if len(qr_detections_by_image_id) > 0:
+                        added = self.add_qr_detections_to_problem_upd(reconstruction,
+                                                                qr_detections_by_image_id,
+                                                                qr_world_points_per_image_id,
+                                                                debug_this_qr)
+                    else:
+                        print(f"Skipping loop closure for QR {qr_id} because no detections found.")
+
                     if verbose and not added:
                         print("Skipped adding loop closure for QR", qr_id)
 
                     debug_first_qr = False
+        """
 
         def needs_manifold(param):
             return self.problem.has_parameter_block(param) and not self.problem.is_parameter_block_constant(param)
@@ -497,9 +509,10 @@ class PyBundleAdjuster(object):
             print(f"Cannot add QR loop closure with less than two images. Skipping! (got {len(detections_per_image_id)} detections)")
             return False
 
-        for i, image_id_i in enumerate(list(detections_per_image_id.keys())[:-1]):
+        image_ids = list(detections_per_image_id.keys())
+        for i, image_id_i in enumerate(image_ids[:-1]):
             assert len(detections_per_image_id[image_id_i]) == 1
-            for j, image_id_j in enumerate(list(detections_per_image_id.keys())[i+1:]):
+            for j, image_id_j in enumerate(image_ids[i+1:]):
                 assert len(detections_per_image_id[image_id_j]) == 1
                 cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 1.0)
                 cost = RelativeTransformationSE3ViaObservationsCostFunction(detections_per_image_id[image_id_i][0].rotation.quat,
@@ -515,12 +528,39 @@ class PyBundleAdjuster(object):
 
                 self.add_residual_block("QrLoopClosure", cost, None, params, image_id_i)
 
-                for image_id in (image_id_i, image_id_j):
-                    if self.is_constant_cam_pose(image_id):
-                        self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.rotation.quat)
-                        self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.translation)
-                    elif self.is_constant_cam_position(image_id):
-                        self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.translation)
+        for image_id in image_ids:
+            if self.is_constant_cam_pose(image_id):
+                self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.rotation.quat)
+                self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.translation)
+            elif self.is_constant_cam_position(image_id):
+                self.problem.set_parameter_block_constant(reconstruction.images[image_id].cam_from_world.translation)
+
+        # Ensure any floor QR code is kept flat and at height 0.
+        # Flat portal in origin! BUT we set covariance to 0 for side-ways positions and rotation around world up (x is up).
+        # So the cost function only cares about the X dimension (UP) to ensure portal is flat on floor height 0.
+        floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
+        floor_position = np.zeros(3)
+        i_from_j_prior = pycolmap.Rigid3d(pycolmap.Rotation3d(), np.zeros(3))
+        covariance_j = np.zeros((6, 6))
+        weight = 10
+        covariance_j[0, 0] = weight
+
+        for image_id in image_ids:
+            if image_id in detections_per_image_id and len(detections_per_image_id[image_id]) == 1:
+                detection = detections_per_image_id[image_id][0]
+
+                cost = pycolmap.cost_functions.MetricRelativePoseErrorCost(
+                    i_from_j_prior, covariance_j
+                )
+                
+                params = [
+                    reconstruction.images[image_id].cam_from_world.rotation.quat,
+                    reconstruction.images[image_id].cam_from_world.translation,
+                    floor_rotation.quat,
+                    floor_position
+                ]
+
+                self.add_residual_block("QrLoopClosure", cost, None, params, image_id)
 
         return True
 
