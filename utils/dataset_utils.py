@@ -26,7 +26,9 @@ from utils.data_utils import (
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
     save_manifest_json,
-    export_rec_as_ply
+    export_rec_as_ply,
+    save_world_space_portal_detections_csv,
+    save_qr_poses_csv
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 
@@ -868,7 +870,16 @@ def stitching_helper(
     logger.info('========================================================================')
     logger.info("ALL DETECTIONS (basic stitch):")
     logger.info('========================================================================')
+
     basic_stitch_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in basic_stitch_qr_detections.items()}
+
+    save_world_space_portal_detections_csv(combined_rec,
+                                           timestamp_per_image, detections_per_qr, image_ids_per_qr,
+                                           output_path / 'BasicStitchPortalDetections.csv',
+                                           logger_name)
+    
+    save_qr_poses_csv(basic_stitch_mean_qr_poses, output_path / 'BasicStitchPortalPoses.csv')
+
     for qr_id, pose in basic_stitch_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(basic_stitch_qr_detections[qr_id])
         logger.info(f"{qr_id}, translation:{pose.translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
@@ -888,16 +899,25 @@ def stitching_helper(
     logger.info('========================================================================')
     logger.info("ALL DETECTIONS (optimized stitch):")
     logger.info('========================================================================')
+
     optimized_stitch_mean_qr_poses = {qr_id: [mean_pose(poses)] for qr_id, poses in optimized_stitch_qr_detections.items()}
+    
+    save_world_space_portal_detections_csv(combined_rec,
+                                           timestamp_per_image, detections_per_qr, image_ids_per_qr,
+                                           output_path / 'RefinedPortalDetections.csv',
+                                           logger_name)
+
+    save_qr_poses_csv(optimized_stitch_mean_qr_poses, output_path / 'RefinedPortalPoses.csv')
+
     for qr_id, pose in optimized_stitch_mean_qr_poses.items():
         min_dev, avg_dev, med_dev, max_dev, rmse_dev = detection_position_stats(optimized_stitch_qr_detections[qr_id])
         logger.info(f"{qr_id}, translation:{pose[0].translation}, min_dev: {min_dev:.6f}, avg_dev: {avg_dev:.6f}, med_dev: {med_dev:.6f}, max_dev: {max_dev:.6f}, rmse_dev: {rmse_dev:.6f}")
     
-    optimized_stitch_ply_path = refined_group_dir / 'global' / "OptimizedStitchPointCloud.ply"
-    refined_ply_path = refined_group_dir / 'global' / "RefinedPointCloud.ply"
+    optimized_stitch_ply_path = output_path / "OptimizedStitchPointCloud.ply"
+    refined_ply_path = output_path / "RefinedPointCloud.ply"
 
     if with_3dpoints:
-        optimized_stitch_sfm = refined_group_dir / 'global' / 'optimized_stitch_sfm'
+        optimized_stitch_sfm = output_path / 'optimized_stitch_sfm'
         logger.info(f"Saving optimized stitch sfm to: {optimized_stitch_sfm}")
         Path.mkdir(optimized_stitch_sfm, parents=True, exist_ok=True)
         combined_rec.write(optimized_stitch_sfm)
@@ -921,6 +941,7 @@ def stitching_helper(
         manifest_out_path = output_path / 'refined_manifest.json'
         logger.info(f"Saving refined manifest with {len(optimized_stitch_mean_qr_poses)} detections, to: {manifest_out_path}")
         save_manifest_json(optimized_stitch_mean_qr_poses, manifest_out_path, parent_dir, job_status="refined", job_progress=100)
+
         return (
             combined_rec, basic_stitch_qr_detections, basic_stitch_mean_qr_poses,
             combined_rec, optimized_stitch_qr_detections, optimized_stitch_mean_qr_poses,
