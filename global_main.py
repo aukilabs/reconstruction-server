@@ -9,8 +9,13 @@ def main(args):
     output_path = args.data_dir.parent / "refined" / "global"
     os.makedirs(output_path, exist_ok=True)
     global_log_file = str(output_path) + "/global_logs"
-    logger = setup_logger(name="global_refinement", log_file=global_log_file,
-                          domain_id=args.domain_id, job_id=args.job_id, level=args.log_level)
+    logger = setup_logger(
+        name="global_refinement", 
+        log_file=global_log_file,
+        domain_id=args.domain_id, 
+        job_id=args.job_id, 
+        level=args.log_level
+    )
 
     # Find all stitch paths
     truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, "global_refinement")
@@ -38,12 +43,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, 
                         default="./datasets")
-    parser.add_argument("--dataset_group", type=str, default="my_domain")
-    parser.add_argument("--all_observations", action='store_true', default=False)
-    parser.add_argument("--all_poses", action='store_true', default=False)
-    parser.add_argument("--use_refined_outputs", action='store_true', default=False)
-    parser.add_argument("--add_3dpoints", action='store_true', default=False)
-    parser.add_argument("--basic_stitch_only", action='store_true', default=False)
+    parser.add_argument("--dataset_group", type=str, default="my_domain", help="Dataset group name")
+    parser.add_argument("--all_observations", action='store_true', default=False, help="Use all observations")
+    parser.add_argument("--all_poses", action='store_true', default=False, help="Use all poses")
+    parser.add_argument("--use_refined_outputs", action='store_true', default=False, help="Use refined outputs")
+    parser.add_argument("--add_3dpoints", action='store_true', default=False, help="Consider whole 3D points")
+    parser.add_argument("--basic_stitch_only", action='store_true', default=False, help="Perform basic stitching only")
     parser.add_argument("--domain_id", type=str, default="")
     parser.add_argument("--job_id", type=str, default="")
     parser.add_argument("--log_level", type=str, default="INFO", 
