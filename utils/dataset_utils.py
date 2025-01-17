@@ -29,7 +29,7 @@ from utils.data_utils import (
     export_rec_as_ply
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
-
+from utils.io import Model
 
 class NoOverlapException(Exception):
     def __init__(self, message='No overlaps!'):
@@ -42,6 +42,254 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+def load_partial_2(
+    unzip_folder, 
+    dataset_dir, 
+    dataset_group, 
+    truth_portal_poses, 
+    next_image_id, 
+    placed_portal, 
+    partial_rec_dir, 
+    combined_rec, 
+    timestamp_per_image, 
+    arkit_precomputed, 
+    detections_per_qr, 
+    image_ids_per_qr, 
+    chunks_image_ids, 
+    all_observations=True, 
+    all_poses=True, 
+    gt_observations=False, 
+    with_3dpoints=False,
+    logger_name=None
+):
+    logger = logging.getLogger(logger_name)
+
+    #----------------------
+    # Load Refined Dataset
+    #----------------------
+    loaded_rec = None
+    if partial_rec_dir is not None and partial_rec_dir.exists():
+        loaded_rec = Model()
+        loaded_rec.read_model(partial_rec_dir)
+        logger.info(f"Using loaded refined reconstruction from {partial_rec_dir}")
+    else:
+        logger.error(f"this method only support refined dataset, and no refined data is found, Path: {partial_rec_dir}")
+        return next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
+               arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
+    
+    #--------------------
+    # Frames Metadata  #Sam: Really wanna skip this part, but there is no time info stored in sfm folder
+    dataset = unzip_folder
+    experiment_name = unzip_folder.name
+    frames_mp4 = unzip_folder / 'Frames.mp4'
+    if frames_mp4.exists():
+        use_frames_from_video = True
+    frames_csv_path = dataset / "Frames.csv"
+    if not frames_csv_path.exists():
+        logger.info("Dataset has no Frames.csv. SKIPPING!")
+        return next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
+               arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
+
+    frames_csv_path = str(frames_csv_path)
+
+    logger.info(f"Loading image timestamps from {frames_csv_path} ...")
+
+    # Read and process the CSV file
+    timestamp_per_image_chunk = {}
+    with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
+        csv_reader = csv.reader(csvfile)
+        for row in csv_reader:
+            timestamp = round(float(row[0]) * 1e9) # s to ns
+            if use_frames_from_video:
+                filename = f"{experiment_name}_{frame_index:06d}.jpg" # Match with how frames are unpacked to images, by mp4_to_frames
+            else:
+                filename = row[1]
+            frame_index += 1
+            timestamp_per_image_chunk[filename] = timestamp
+
+    logger.info(f"{len(timestamp_per_image_chunk)} frame timestamps loaded")
+
+    #----------------------
+    # Extract QR Code Data
+    #----------------------
+    qr_detections = loaded_rec.get_portals()
+    for detection in qr_detections:
+        detection["pose"] = pycolmap.Rigid3d(
+            pycolmap.Rotation3d(np.array( detection["qvec"])),
+            detection["tvec"]
+        )
+
+    #----------------------
+    # Align Placed Portals
+    #----------------------
+    this_chunk_detections_per_qr = {}
+    for detection in qr_detections:
+        id = detection["short_id"]
+
+        if id not in this_chunk_detections_per_qr.keys():
+            this_chunk_detections_per_qr[id] = [detection["pose"]]
+        else:
+            this_chunk_detections_per_qr[id].append(detection["pose"])
+
+    if gt_observations:
+        this_chunk_mean_qr_poses = {qr_id: truth_portal_poses[qr_id] for qr_id, poses in this_chunk_detections_per_qr.items()}
+    else:
+        this_chunk_mean_qr_poses = {qr_id: mean_pose(poses) for qr_id, poses in this_chunk_detections_per_qr.items()}
+    logger.info(f"There are {len(this_chunk_mean_qr_poses.keys())} of unique QR codes")
+
+    #----------------------
+    # Find all overlapping portal poses
+    #----------------------
+    target_poses = {
+        qr_id: placed_portal[qr_id]
+        for qr_id in this_chunk_mean_qr_poses.keys()
+        if qr_id in placed_portal.keys()
+    }
+    has_overlap = len(target_poses) > 0
+
+    is_first_chunk = len(placed_portal) == 0
+    logger.info(f"Portals already placed: {len(placed_portal)}.")
+    if is_first_chunk:
+        logger.info(f"FIRST CHUNK -> put origin portal")
+    else:
+        logger.info("NOT FIRST -> align based on overlapping portals.")
+
+    if not has_overlap and not is_first_chunk:
+        raise NoOverlapException  # handled outside, to retry again after other chunks are added
+
+    #----------------------
+    # Register timestamp to Image
+    #----------------------
+    for filename, timestamp in timestamp_per_image_chunk.items():
+        assert filename not in timestamp_per_image
+        timestamp_per_image[filename] = timestamp
+
+    #----------------------
+    # Find Alilgnment Transform
+    #----------------------
+    if has_overlap:
+        qr_ids = target_poses.keys()
+
+        overlap_ids = list(qr_ids)
+        alignment_transforms = []
+        for overlap_qr_id in overlap_ids:
+            transform = target_poses[overlap_qr_id] * this_chunk_mean_qr_poses[overlap_qr_id].inverse()
+            alignment_transforms.append(transform)
+
+        alignment_transform = mean_pose(alignment_transforms)
+        logger.info(f"TRANSFORM: Aligning with overlapping QR(s): ({overlap_ids})")
+        logger.info(alignment_transform)
+
+    elif is_first_chunk:
+        origin_portal_id = list(this_chunk_mean_qr_poses.keys())[0]
+        logger.info(f"SET ORIGIN PORTAL: {origin_portal_id}")
+        alignment_transform = floor_origin_portal_pose * this_chunk_mean_qr_poses[origin_portal_id].inverse()
+        logger.info(f"TRANSFORM: Aligning origin portal to zero using single QR overlapping QR.")
+        logger.info(alignment_transform)
+
+
+    #----------------------
+    # Register Placed Portal
+    #----------------------
+    for qr_id, pose in this_chunk_mean_qr_poses.items():
+        if alignment_transform is not None:
+            pose = alignment_transform * pose
+        #placed_portal[qr_id] = rectify_floor_portal(pose)
+        placed_portal[qr_id] = pose
+        logger.info(f"Portal: {qr_id} Pose: {pose}")
+
+    #----------------------
+    # Init unrefined Reconstruction
+    #----------------------
+    # Convert Model to Reconstruction()
+    rec = pycolmap.Reconstruction()
+    rec.read(partial_rec_dir)
+
+    # Transform This Chunk
+    if alignment_transform is not None:
+        rec.transform(pycolmap.Sim3d(1.0, alignment_transform.rotation.quat, alignment_transform.translation))
+        for detection in qr_detections:
+            detection["pose"] = alignment_transform * detection["pose"]
+
+    # Add to combined_rec
+    image_id_old_to_new = {}
+    arkit_cam_from_world_transforms = {}
+    rec2 = pycolmap.Reconstruction()
+    for i in range(1, rec.num_images()+1):
+        image_id = next_image_id
+        camera_id = image_id # always 1-to-1 for us
+        cam = rec.cameras[i]
+        cam2 = pycolmap.Camera(
+            model=cam.model,
+            width=cam.width,
+            height=cam.height,
+            params=cam.params,
+            camera_id=camera_id
+        ) # Use new camera ID when combining many scans!
+        combined_rec.add_camera(cam2)
+        rec2.add_camera(cam2)
+
+        img = rec.images[i]
+        list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in img.points2D ]
+        img2 = pycolmap.Image(
+            img.name, 
+            pycolmap.ListPoint2D(list_point_2d), 
+            img.cam_from_world, 
+            camera_id, 
+            image_id)
+        combined_rec.add_image(img2)
+        combined_rec.register_image(image_id)
+        rec2.add_image(img2)
+        rec2.register_image(image_id)
+        image_id_old_to_new[i] = image_id
+
+        arkit_cam_from_world_transforms[image_id] = img.cam_from_world.inverse()
+
+        next_image_id += 1
+
+    logger.info(f"number of image: {combined_rec.num_images()}")
+    # Add 3d Points
+    if with_3dpoints:
+        for point3D in rec.points3D.values():
+            point3D_id_new = combined_rec.add_point3D(point3D.xyz, pycolmap.Track(), point3D.color)
+            point3D_track = point3D.track
+            for element in point3D_track.elements:
+                element.image_id = image_id_old_to_new[element.image_id]
+                combined_rec.add_observation(point3D_id_new, element)
+
+    ############################
+    # PRE-PROCESSING
+    ############################
+
+    # SORT images (since order may be wrong in captured dataset)
+    sorted_image_ids = list(rec2.images.keys())
+    sorted_image_ids.sort()
+
+    chunks_image_ids.append(sorted_image_ids)
+
+    # PRE-COMPUTE some offsets & gravity from the unrefined ARKit poses, which will remain constant during refinement.
+    # These are used in the loss function to guide the refinement, not to diverge too far off from original.
+
+    arkit_precomputed = precompute_arkit_offsets(sorted_image_ids, arkit_cam_from_world_transforms, arkit_precomputed) # skip first since these are offsets to previous image
+
+    # PRE-LOAD QR DATA FOR LOOP CLOSURE To prepare T_qr_cam
+    for detection in qr_detections:
+        id = detection["short_id"]
+
+        if id not in detections_per_qr.keys():
+            detections_per_qr[id] = []
+        if id not in image_ids_per_qr.keys():
+            image_ids_per_qr[id] = []
+
+        cam_space_qr_pose = rec.images[detection["image_id"]].cam_from_world * detection["pose"]
+        detections_per_qr[id].append(cam_space_qr_pose)
+        image_ids_per_qr[id].append(image_id_old_to_new[detection["image_id"]])
+
+    
+
+    return next_image_id, placed_portal, partial_rec_dir, combined_rec, \
+        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr, chunks_image_ids
 
 def load_partial(
     unzip_folder, 
@@ -783,7 +1031,7 @@ def stitching_helper(
         try:
             next_image_id, placed_portal, partial_rec_dir, combined_rec, timestamp_per_image, \
             arkit_precomputed, detections_per_qr, image_ids_per_qr, \
-            chunks_image_ids = load_partial(
+            chunks_image_ids = load_partial_2(
                 unzip_folder,
                 dataset_dir,
                 dataset_group,
