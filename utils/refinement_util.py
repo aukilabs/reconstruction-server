@@ -82,7 +82,7 @@ def refine_dataset(
     feature_conf = {
         "output": features,
         "model": {
-            "name": "aliked",
+            "name": "aliked_cpp",
             "model_name": "aliked-n16rot",
             "max_num_keypoints": 1024,
         },
@@ -108,7 +108,15 @@ def refine_dataset(
 
     logger.info(f"Feature conf: {feature_conf}")
     #matcher_conf = match_features.confs["superpoint+lightglue"]
-    matcher_conf = match_features.confs["aliked+lightglue"]
+    matcher_conf = {
+        "model": {
+            "name": "lightglue_cpp",
+            "features": "aliked",
+            "depth_confidence": 0.95,
+            "width_confidence": 0.99,
+        },
+        "path": matches,
+    }
 
     ############################
     # LOAD DATASET
