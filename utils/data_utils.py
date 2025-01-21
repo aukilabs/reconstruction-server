@@ -20,6 +20,61 @@ floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
 VERSION = "develop"
 
+
+
+def is_floor_portal(translation, quaternion, y_threshold=0.01):
+    """
+    Check if the object is parallel to the floor (XZ plane), facing upward, and near the floor.
+    
+    Args:
+        translation (list or np.ndarray): Translation vector [x, y, z].
+        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
+        y_threshold (float): Threshold to consider the Y position as near zero.
+    
+    Returns:
+        bool: True if the object is parallel to the XZ plane, facing upward, and near the floor, False otherwise.
+    """
+    # Normalize the quaternion
+    r = scipy_Rotation.from_quat(quaternion)
+
+    # Extract the rotation matrix
+    rot_matrix = r.as_matrix()
+
+    # Extract the Y-axis of the rotated object (up direction in local coordinates)
+    up_vector = rot_matrix[:, 1]  # Assuming the object's local up is along its Y-axis
+
+    # Check if the up vector is parallel to the world's Y-axis
+    world_up = np.array([0, 1, 0])
+    parallel = np.allclose(up_vector, world_up, atol=1e-3)
+    # Check if the translation Y value is near zero
+    near_floor = abs(translation[1]) < y_threshold
+
+    return parallel and near_floor
+
+def rectify_floor_portal(translation, quaternion):
+    """
+    Rectify the object's pose to be parallel to the XZ plane and adjust translation Y to zero.
+    
+    Args:
+        translation (list or np.ndarray): Translation vector [x, y, z].
+        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
+    
+    Returns:
+        tuple: (rectified_quaternion, rectified_translation)
+    """
+    # Set quaternion to represent no rotation around X or Z axes, only identity or Y-axis rotation
+    r = scipy_Rotation.from_quat(quaternion)
+    euler = r.as_euler('xyz', degrees=False)  # Convert quaternion to Euler angles
+    euler[0] = 0  # Remove rotation around X-axis
+    euler[2] = 0  # Remove rotation around Z-axis
+    rectified_quaternion = scipy_Rotation.from_euler('xyz', euler).as_quat()
+
+    # Set translation Y to zero
+    rectified_translation = list(translation)
+    rectified_translation[1] = 0
+
+    return rectified_translation, rectified_quaternion.tolist()
+
 def convert_pose_opengl_to_colmap(position, quaternion):
     
     position = np.array([
@@ -522,6 +577,10 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
 
         pose = poses_for_qr[0]
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+
+        # Rectify Floor Portals
+        if is_floor_portal(pos, quat):
+            pos, quat = rectify_floor_portal(pos, quat)
 
         manifest_data["portals"].append({
             "shortId": short_id,
