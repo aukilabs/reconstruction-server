@@ -616,6 +616,12 @@ def _handle_basic_stitch(
         dst_ply = paths.refined_group_dir / 'global' / "RefinedPointCloud.ply"
         shutil.copy(src_ply, dst_ply)
 
+        # Save basic stitch sfm
+        sfm_dir = paths.output_path / "basic_sfm_combined"
+        os.makedirs(sfm_dir, exist_ok=True)
+        basic_results.rec.write(sfm_dir)
+
+
     manifest_path = paths.output_path / 'refined_manifest.json'
     save_manifest_json(
         {qr_id: [pose] for qr_id, pose in basic_results.poses.items()},
