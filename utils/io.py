@@ -564,11 +564,13 @@ class Model:
         self.images = []
         self.points3D = []
         self.portals=[]
-        self.__vis = None
+        self.__vis=None
+        self._path=None
 
     def read_model(self, path, ext=""):
         self.cameras, self.images, self.points3D = read_model(path, ext)
         self.portals = read_portal_csv(os.path.join(path, "portals.csv"))
+        self._path = path
 
     def write_model(self, path, ext=".bin"):
         write_model(self.cameras, self.images, self.points3D, path)
@@ -700,6 +702,9 @@ class Model:
                 }
             )
         return portals
+    
+    def get_path(self):
+        return self._path
 
     def create_window(self):
         self.__vis = open3d.visualization.Visualizer()

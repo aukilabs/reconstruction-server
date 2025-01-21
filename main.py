@@ -85,9 +85,6 @@ def global_main_wrapper(args, logger):
 
     global_args = argparse.Namespace(
         data_dir=Path(args.job_root_path) / "datasets",
-        dataset_group=None,
-        all_observations=True,
-        all_poses=True,
         use_refined_outputs=True,
         add_3dpoints=True,
         basic_stitch_only=True,
