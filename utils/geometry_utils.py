@@ -8,7 +8,7 @@ from pathlib import Path
 from utils.data_utils import get_world_space_qr_codes
 from utils.bundle_adjuster import PyBundleAdjuster
 
-from src.cost_functions import RelativeTransformationSim3CostFunction
+#from src.cost_functions import RelativeTransformationSim3CostFunction
 
 
 def dmt_global_stitching(detections_per_qr,

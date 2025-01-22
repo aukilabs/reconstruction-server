@@ -9,7 +9,7 @@ import torch
 import logging
 import cv2
 import time
-from src.ply_export import export_ply_text
+#from src.ply_export import export_ply_text
 import datetime
 import platform
 import psutil
@@ -140,6 +140,52 @@ def get_data_paths(group_folder, logger_name=None):
         logger.info("No truth provided (portals.json). Will skip comparison with ground truth.")
 
     return truth_portal_poses, dataset_paths
+
+
+def load_portals_csv(file_path):
+    portal_poses = {}
+    with open(file_path, newline='') as csvfile:
+        csv_reader = csv.reader(csvfile)
+
+        for row in csv_reader:
+            if len(row) < 4:
+                continue
+            qr_id = row[0]
+            pos = [float(val) for val in row[1:4]] # px, py, pz
+            if len(pos) >= 8:
+                quat = [float(val) for val in row[4:8]] # rx, ry, rz, rw
+            else:
+                quat = [0.0, -0.7071068, 0.0, 0.7071068]
+            portal_poses[qr_id] = pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(quat)), np.array(pos))
+
+    return portal_poses
+
+
+def load_qr_detections_csv(csv_path):
+    detections_per_timestamp = {}
+    with open(csv_path, newline='') as csvfile:
+        csv_reader = csv.reader(csvfile)
+        for row in csv_reader:
+            timestamp = round(float(row[0]) * 1e9) # s to ns
+            pose_values = [float(val) for val in row[2:9]] # px, py, pz, rx, ry, rz, rw
+            pos = pose_values[:3]
+            quat = pose_values[3:]
+
+            pos, quat = convert_pose_opengl_to_colmap(pos, quat)
+
+            rot3d = pycolmap.Rotation3d(np.array(quat))
+
+            qr_pose = pycolmap.Rigid3d(
+                rot3d,
+                np.array(pos)
+            )
+
+            detections_per_timestamp[timestamp] = {
+                "pose": qr_pose,
+                "short_id": row[1]
+            }
+
+    return detections_per_timestamp
 
 
 def load_qr_detections_csv(csv_path):

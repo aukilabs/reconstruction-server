@@ -5,7 +5,7 @@ from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle
 from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
-from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction
+#from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction
 
 
 class PyBundleAdjuster(object):

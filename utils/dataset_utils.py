@@ -593,13 +593,15 @@ def portals_to_evo_path(pose_per_qr, flatten=False):
     return PosePath3D(positions_xyz, quats_wxyz)
 
 
-def compare_portals(initial, estimate, reference, align=False, correct_scale=False, verbose=False):
+def compare_portals(initial, estimate, reference, align=False, correct_scale=False, verbose=False, flatten=True):
 
+    filtered_reference_ini = {qr_id: reference[qr_id] for qr_id in initial.keys()}
     filtered_reference = {qr_id: reference[qr_id] for qr_id in estimate.keys()}
 
-    ini_pose_path = portals_to_evo_path(initial, flatten=True)
-    est_pose_path = portals_to_evo_path(estimate, flatten=True)
-    ref_pose_path = portals_to_evo_path(filtered_reference, flatten=True)
+    ini_pose_path = portals_to_evo_path(initial, flatten=flatten)
+    est_pose_path = portals_to_evo_path(estimate, flatten=flatten)
+    ref_pose_path_ini = portals_to_evo_path(filtered_reference_ini, flatten=flatten)
+    ref_pose_path = portals_to_evo_path(filtered_reference, flatten=flatten)
 
     if verbose:
         print("Initial:", ini_pose_path)
@@ -608,6 +610,8 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         print(", ".join(f"{qr_id}: {estimate[qr_id].rotation.quat}" for qr_id in estimate))
         print("Reference:", ref_pose_path)
         print(", ".join(f"{qr_id}: {filtered_reference[qr_id].rotation.quat}" for qr_id in filtered_reference))
+        print("Reference ini:", ref_pose_path_ini)
+        print(", ".join(f"{qr_id}: {filtered_reference_ini[qr_id].rotation.quat}" for qr_id in filtered_reference_ini))
         print("")
 
     if align or correct_scale:
@@ -647,6 +651,12 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         rotation, translation, scaling = geometry.umeyama_alignment(est_pose_path.positions_xyz.T,
                                                                     ref_pose_path.positions_xyz.T,
                                                                     correct_scale)
+        est_pose_path.scale(scaling)
+        est_pose_path.transform(evo_lie.se3(rotation, translation))
+
+        rotation, translation, scaling = geometry.umeyama_alignment(ini_pose_path.positions_xyz.T,
+                                                                    ref_pose_path_ini.positions_xyz.T,
+                                                                    correct_scale)
         ini_pose_path.scale(scaling)
         ini_pose_path.transform(evo_lie.se3(rotation, translation))
 
@@ -657,7 +667,7 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
     rot_comparison = evo_ape(ref_pose_path, est_pose_path, PoseRelation.rotation_angle_deg,
                              align=align, correct_scale=correct_scale)
 
-    if verbose:
+    if True: #verbose:
         print(pos_comparison.pretty_str())
         print(rot_comparison.pretty_str())
         
@@ -678,10 +688,10 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         color_1 = np.array(colors[1]).reshape(1,-1)
         color_2 = np.array(colors[2]).reshape(1,-1)
 
-        ax.scatter(ini_pose_path.positions_xyz[:, 1], ini_pose_path.positions_xyz[:, 2], label='initial',
+        ax.scatter(ini_pose_path.positions_xyz[:, 1], ini_pose_path.positions_xyz[:, 2], label='stable AWS',
                    c=color_0, marker="x", s=30)
 
-        ax.scatter(est_pose_path.positions_xyz[:, 1], est_pose_path.positions_xyz[:, 2], label='optimized',
+        ax.scatter(est_pose_path.positions_xyz[:, 1], est_pose_path.positions_xyz[:, 2], label='Robin speed-up',
                    c=color_1, marker="x", s=15)
 
         ax.scatter(ref_pose_path.positions_xyz[:, 1], ref_pose_path.positions_xyz[:, 2], label='measured truth',
@@ -691,6 +701,8 @@ def compare_portals(initial, estimate, reference, align=False, correct_scale=Fal
         ax.set_ylabel('Z axis')
         ax.legend()
         plt.show()
+        print("PLOTTTES")
+        plt.savefig("plot.png")
 
     if verbose:
         print()
