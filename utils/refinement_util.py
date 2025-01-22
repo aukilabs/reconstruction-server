@@ -28,6 +28,8 @@ from hloc import (
     pairs_from_poses
 )
 
+import utils.pairs_from_sequential as pairs_from_sequential
+
 
 def refine_dataset(
     scan_folder_path, 
@@ -77,6 +79,7 @@ def refine_dataset(
 
     feature_conf = extract_features.confs["superpoint_max"]
     feature_conf["output"] = features
+    feature_conf["model"]["max_keypoints"] = 1024
 
     """
     feature_conf = {
@@ -337,7 +340,19 @@ def refine_dataset(
     # IMAGE PAIRS
     ############################
     logger.info("Pairs from poses")
-    pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
+    use_pairs_from_sequential = True
+    if use_pairs_from_sequential:
+        pairs_from_sequential.main(
+            sfm_pairs, references, features,
+            window_size=5,
+            quadratic_overlap=True,
+            #use_loop_closure=False,
+            #retrieval_path=None,
+            #retrieval_interval=2,
+            #num_loc=5
+        )
+    else:
+        pairs_from_poses.main(colmap_rec_path, sfm_pairs, 20, rotation_threshold=360)
 
     ############################
     # FEATURE POINTS
