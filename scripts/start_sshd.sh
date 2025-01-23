@@ -1,12 +1,12 @@
 #!/bin/bash
 
 KEY=$SSH_PUBKEY
-if [ -z $KEY ]; then
-  if [ -z $1 ]; then
+if [ -z "$KEY" ]; then
+  if [ -z "$1" ]; then
     echo "ERROR: SSH public key expected as first argument, or in SSH_PUBKEY environment variable."
     exit 1
   else
-    KEY=$1
+    KEY="$1"
   fi
 fi
 
