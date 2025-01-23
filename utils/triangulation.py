@@ -1,12 +1,13 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import logging
 
 import pycolmap
 import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
+from hloc import pairs_from_poses, extract_features, match_features
 
 from utils.bundle_adjuster import PyBundleAdjuster
 
@@ -17,7 +18,9 @@ def run_triangulation(
     reference_model: pycolmap.Reconstruction,
     options: Dict[str, Any],
     timestamp_per_image: Optional[Dict[str, int]] = None,
-    arkit_precomputed=None
+    arkit_precomputed=None,
+    detections_per_qr=None,
+    image_ids_per_qr=None
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
@@ -31,14 +34,7 @@ def run_triangulation(
     image_names = set()
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
 
-    #reconstruction = deepcopy(reference_model)
-    reconstruction = pycolmap.Reconstruction()
-    for img in reference_model.images.values():
-        if database_cache.exists_image(img.image_id):
-            reconstruction.add_image(img)
-    for cam in reference_model.cameras.values():
-        if database_cache.exists_camera(cam.camera_id):
-            reconstruction.add_camera(cam)
+    reconstruction = deepcopy(reference_model)
 
     clear_points = True
     if clear_points:
@@ -108,7 +104,14 @@ def run_triangulation(
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
-        bundle_adjuster.set_up_problem(reconstruction, loss, timestamp_per_image=timestamp_per_image, arkit_precomputed=arkit_precomputed)
+        bundle_adjuster.set_up_problem(
+            reconstruction, 
+            loss, 
+            timestamp_per_image=timestamp_per_image, 
+            arkit_precomputed=arkit_precomputed, 
+            detections_per_qr=detections_per_qr,
+            image_ids_per_qr=image_ids_per_qr
+        )
 
         solver_options = bundle_adjuster.set_up_solver_options(
             bundle_adjuster.problem, ba_options.solver_options
@@ -166,6 +169,7 @@ def run_triangulation(
 
     return reconstruction
 
+
 def triangulate_model(
     sfm_dir: Path,
     reference_model: Path,
@@ -179,8 +183,9 @@ def triangulate_model(
     verbose: bool = False,
     mapper_options: Optional[Dict[str, Any]] = None,
     timestamp_per_image: Optional[Dict[str, int]] = None,
-    arkit_precomputed=None
-
+    arkit_precomputed=None,
+    detections_per_qr=None,
+    image_ids_per_qr=None
 ) -> pycolmap.Reconstruction:
     assert reference_model.exists(), reference_model
     assert features.exists(), features
@@ -206,9 +211,50 @@ def triangulate_model(
 
     reconstruction = run_triangulation(
         database, image_dir, reference, mapper_options if mapper_options is not None else {},
-        timestamp_per_image, arkit_precomputed
+        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr
     )
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
     logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction
+
+
+def process_features_and_matching(
+    references,
+    colmap_rec_path,
+    paths,
+    logger
+):
+    """Process feature extraction and matching."""
+    # Generate pairs from poses
+    logger.info("Generating image pairs from poses")
+    pairs_from_poses.main(
+        colmap_rec_path,  # Input reconstruction path
+        paths.sfm_pairs,   # Output pairs file path
+        num_matched=20,    # Number of closest images to match
+        rotation_threshold=360  # Maximum rotation difference in degrees
+    )
+
+    # Feature extraction
+    feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf["output"] = paths.features
+    logger.info(f"Extracting features with config: {feature_conf}")
+
+    extract_features.main(
+        feature_conf,
+        paths.images,
+        paths.sfm_dir,
+        feature_path=paths.features,
+        as_half=True,
+        image_list=references
+    )
+
+    # Feature matching
+    logger.info("Matching features")
+    matcher_conf = match_features.confs["superpoint+lightglue"]
+    match_features.main(
+        matcher_conf, 
+        paths.sfm_pairs, 
+        features=paths.features, 
+        matches=paths.matches
+    )

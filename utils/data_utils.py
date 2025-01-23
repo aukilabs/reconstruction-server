@@ -14,10 +14,66 @@ import datetime
 import platform
 import psutil
 import GPUtil
+from typing import NamedTuple, Dict
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
 VERSION = "develop"
+
+
+
+def is_floor_portal(translation, quaternion, y_threshold=0.01):
+    """
+    Check if the object is parallel to the floor (XZ plane), facing upward, and near the floor.
+    
+    Args:
+        translation (list or np.ndarray): Translation vector [x, y, z].
+        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
+        y_threshold (float): Threshold to consider the Y position as near zero.
+    
+    Returns:
+        bool: True if the object is parallel to the XZ plane, facing upward, and near the floor, False otherwise.
+    """
+    # Normalize the quaternion
+    r = scipy_Rotation.from_quat(quaternion)
+
+    # Extract the rotation matrix
+    rot_matrix = r.as_matrix()
+
+    # Extract the Y-axis of the rotated object (up direction in local coordinates)
+    up_vector = rot_matrix[:, 1]  # Assuming the object's local up is along its Y-axis
+
+    # Check if the up vector is parallel to the world's Y-axis
+    world_up = np.array([0, 1, 0])
+    parallel = np.allclose(up_vector, world_up, atol=1e-3)
+    # Check if the translation Y value is near zero
+    near_floor = abs(translation[1]) < y_threshold
+
+    return parallel and near_floor
+
+def rectify_floor_portal(translation, quaternion):
+    """
+    Rectify the object's pose to be parallel to the XZ plane and adjust translation Y to zero.
+    
+    Args:
+        translation (list or np.ndarray): Translation vector [x, y, z].
+        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
+    
+    Returns:
+        tuple: (rectified_quaternion, rectified_translation)
+    """
+    # Set quaternion to represent no rotation around X or Z axes, only identity or Y-axis rotation
+    r = scipy_Rotation.from_quat(quaternion)
+    euler = r.as_euler('xyz', degrees=False)  # Convert quaternion to Euler angles
+    euler[0] = 0  # Remove rotation around X-axis
+    euler[2] = 0  # Remove rotation around Z-axis
+    rectified_quaternion = scipy_Rotation.from_euler('xyz', euler).as_quat()
+
+    # Set translation Y to zero
+    rectified_translation = list(translation)
+    rectified_translation[1] = 0
+
+    return rectified_translation, rectified_quaternion.tolist()
 
 def convert_pose_opengl_to_colmap(position, quaternion):
     
@@ -52,6 +108,7 @@ def rectify_floor_portal(qr_pose):
             pos[0] = 0.0
 
     return pycolmap.Rigid3d(rot3d, pos)
+
 
 def load_portals_json(file_path):
     portal_poses = {}
@@ -159,13 +216,107 @@ def load_qr_detections_csv(csv_path):
                 np.array(pos)
             )
 
+            # Remarks: the coordinates recorded is reference to image bottom right
+            # and the order is top-right, bottom-right, bottom-left, and top-left of the portal
+            coordinates = [float(coord) for coord in row[9:]]
+
             detections_per_timestamp[timestamp] = {
                 "pose": qr_pose,
-                "short_id": row[1]
+                "short_id": row[1],
+                "portal_corners": [(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
             }
 
     return detections_per_timestamp
 
+def is_rotation_parallel_to_yz_plane(quaternion, tolerance=1e-6):
+    """
+    Checks if a quaternion rotation is parallel to the YZ plane.
+    
+    Parameters:
+        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
+        tolerance (float): Numerical tolerance for the check (default 1e-6).
+        
+    Returns:
+        bool: True if the rotation axis is parallel to the YZ plane, False otherwise.
+    """
+    if len(quaternion) != 4:
+        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
+    
+    # Normalize the quaternion
+    x, y, z, w = quaternion
+    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    
+    # Rotation matrix from quaternion
+    rotation_matrix = np.array([
+        [1 - 2*(y**2 + z**2), 2*(x*y - z*w), 2*(x*z + y*w)],
+        [2*(x*y + z*w), 1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
+        [2*(x*z - y*w), 2*(y*z + x*w), 1 - 2*(x**2 + y**2)]
+    ])
+    
+    # The normal vector to the object's XY plane is the Z-axis of its local frame
+    object_z_axis = rotation_matrix[:, 2]
+    
+    # Check if the Z-axis aligns with the world's X-axis (parallel to YZ plane)
+    is_parallel = np.abs(object_z_axis[1]) < tolerance and np.abs(object_z_axis[2]) < tolerance
+    
+    return is_parallel
+
+def snap_to_yz_plane(quaternion):
+    """
+    Snaps the object's rotation so that its XY plane is parallel to the world's YZ plane,
+    while preserving its rotation about the X-axis.
+
+    Parameters:
+        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
+
+    Returns:
+        list: A new quaternion [x, y, z, w] with the snapped rotation.
+    """
+    if len(quaternion) != 4:
+        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
+
+    # Normalize the quaternion
+    x, y, z, w = quaternion
+    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+
+    # Convert quaternion to a rotation object
+    rotation = scipy_Rotation.from_quat([x, y, z, w])
+
+    # Decompose into Euler angles to extract X-axis rotation
+    euler_angles = rotation.as_euler('xyz', degrees=False)
+    y_rotation = euler_angles[1]  # Rotation about X-axis
+
+    # Reconstruct a quaternion with only X-axis rotation
+    snapped_rotation = scipy_Rotation.from_euler('y', y_rotation, degrees=False)
+
+    return snapped_rotation.as_quat()
+
+def floor_detection_and_snapping(detections, height_threshold= 0.2):
+    snapped_detections = {}
+    for ts, detection in detections.items():
+        snapped_detections[ts] = {}
+        position = detection["pose"].translation
+        quaternion = detection["pose"].rotation.quat
+        # It is in colmap coordinates
+        # Classify as floor portal if within height threshold and parallel to yz plane
+        if abs(position[0]) <=  height_threshold and is_rotation_parallel_to_yz_plane(quaternion, 0.0873):
+            # If 
+            position[0] = 0.0
+            # print(f"{detection['short_id']} before t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
+            detection["pose"] = pycolmap.Rigid3d(
+                pycolmap.Rotation3d(np.array(quaternion)),
+                np.array(position)
+            )
+            # print(f"{detection['short_id']} after t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
+        else:
+            print(f"{detection['short_id']} is not floor portal: t: {position}   q: {detection['pose'].rotation.quat}")
+            print(f"translation check: {abs(position[0]) <=  height_threshold}")
+            print(f"quaternion check: {is_rotation_parallel_to_yz_plane(detection['pose'].rotation.quat)}")
+        
+        snapped_detections[ts] = detection
+    return snapped_detections
 
 def quaternion_to_rotation_matrix(q):
     x, y, z, w = q
@@ -280,6 +431,32 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 # Write the row to the CSV file
                 csv_writer.writerow(row)
 
+def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corners_per_qr):
+    with open(csv_path, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        for short_id, qr_poses in poses_per_qr.items():
+
+            corresponding_image_ids = image_ids_per_qr[short_id]
+            corresponding_corners = corners_per_qr[short_id]
+
+            for image_id, qr_pose, qr_corners in zip(corresponding_image_ids, qr_poses, corresponding_corners):
+                pos, quat = qr_pose.translation, qr_pose.rotation.quat
+                corner_array = [coord for coords in qr_corners for coord in coords]
+                # Create a row for the CSV
+                # Format 
+                # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
+                row = [
+                    image_id,
+                    short_id,
+                    portal_sizes[short_id],
+                    pos[0], pos[1], pos[2],
+                    quat[0], quat[1], quat[2], quat[3]
+                ]
+
+                row.extend(corner_array)
+                # Write the row to the CSV file
+                csv_writer.writerow(row)
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
@@ -401,6 +578,10 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         pose = poses_for_qr[0]
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
 
+        # Rectify Floor Portals
+        if is_floor_portal(pos, quat):
+            pos, quat = rectify_floor_portal(pos, quat)
+
         manifest_data["portals"].append({
             "shortId": short_id,
             "pose": {
@@ -473,6 +654,36 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
         frame_count += 1
     print(f"Unpacked {frame_count} frames from mp4")
     capture.release()
+
+
+def process_frames(
+    paths,
+    every_nth_image,
+    logger
+):
+    """
+    Process and extract frames from video if necessary.
+    
+    Returns:
+        Tuple of (reference_list, use_frames_from_video)
+    """
+    frames_mp4 = paths.scan_folder / 'Frames.mp4'
+    logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
+    
+    use_frames_from_video = False
+    if frames_mp4.exists():
+        logger.info(f"Frames mp4 found, unpacking into {paths.images}")
+        if not paths.images.exists():
+            paths.images.mkdir()
+        mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_")
+        use_frames_from_video = True
+
+    references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]
+
+    original_image_count = len(references)
+    references = references[::every_nth_image]
+    logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
+    return sorted(references), use_frames_from_video, original_image_count
 
 
 def export_rec_as_ply(rec, path, convert_to_opengl=True, logger_name=""):
@@ -589,6 +800,7 @@ def pycolmap_to_batch_matrix(
 
     return points3D, extrinsics, intrinsics, extra_params
 
+
 class JsonFormatter(logging.Formatter):
     """Formatter to dump error message into JSON"""
 
@@ -645,9 +857,139 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
 
     return logger
 
+
 def add_file_handler(logger, log_file):
     file_formatter = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s')   
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     return logger, file_handler
+
+
+class RefinementData(NamedTuple):
+    """Container for refinement data."""
+    timestamps_per_image: Dict
+    intrinsics_per_timestamp: Dict
+    ar_poses_per_timestamp: Dict
+    qr_detections_per_timestamp: Dict
+    portal_sizes: Dict
+
+
+def load_scan_summary(scan_folder_path, logger):
+    """
+    Load scan summary data from json file.
+    
+    Args:
+        job_root_path: Path to job root directory
+        logger: Logger instance
+        
+    Returns:
+        Dictionary of portal sizes
+    """
+    portal_sizes = {}
+    job_root_path = scan_folder_path.parent.parent
+    try:
+        scan_data_summary_path = job_root_path / "scan_data_summary.json"
+        if scan_data_summary_path.exists():
+            scan_data_summary = json.load(open(scan_data_summary_path))
+            for portal_id, portal_size in zip(
+                scan_data_summary["portalIDs"],
+                scan_data_summary["portalSizes"]
+            ):
+                portal_sizes[portal_id] = portal_size
+    except Exception as e:
+        logger.error(f"Failed to read job scan summary: {e}")
+        raise
+
+    return portal_sizes
+
+
+def load_dataset_metadata(
+    paths,
+    use_frames_from_video,
+    original_image_count,
+    logger
+):
+    """
+    Load all metadata for the dataset including timestamps, intrinsics, poses, and QR detections.
+    
+    Returns:
+        RefinementData containing all loaded metadata
+    """
+    # Load portal sizes
+    portal_sizes = load_scan_summary(paths.scan_folder, logger)
+
+
+    # Load timestamps
+    timestamps_per_image = {}
+    frames_csv_path = paths.scan_folder / "Frames.csv"
+    logger.info(f'Loading image timestamps from {frames_csv_path}')
+
+    with open(frames_csv_path, newline='') as csvfile:
+        frame_index = 0
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            filename = (f"{paths.scan_folder.name}_{frame_index:06d}.jpg" if use_frames_from_video 
+                       else row[1])
+            frame_index += 1
+            timestamps_per_image[filename] = timestamp
+    logger.info(f'{len(timestamps_per_image)}, frame timestamps loaded')
+
+
+    # Load camera intrinsics
+    intrinsics_per_timestamp = {}
+    cam_intrinsics_path = paths.scan_folder / "CameraIntrinsics.csv"
+    logger.info(f'Loading camera intrinsics from {cam_intrinsics_path}')
+    
+    with open(cam_intrinsics_path, newline='') as csvfile:
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            intrinsics_per_timestamp[timestamp] = [
+                float(row[1]), float(row[2]), # focal distance (fx, fy)
+                float(row[3]), float(row[4]), # principal point (cx, cy)
+                int(row[5]), int(row[6])      # resolution (w, h)
+            ]
+    logger.info(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
+
+
+    # Load AR poses
+    ar_poses_per_timestamp = {}
+    ar_poses_path = paths.scan_folder / "ARposes.csv"
+    logger.info(f'Loading AR poses from {ar_poses_path}')
+    
+    with open(ar_poses_path, newline='') as csvfile:
+        for row in csv.reader(csvfile):
+            timestamp = round(float(row[0]) * 1e9)  # s to ns
+            ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]]
+    logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
+
+
+    # Load QR detections
+    qr_detections_path = (paths.scan_folder / "PortalDetections.csv" 
+                         if (paths.scan_folder / "PortalDetections.csv").exists() 
+                         else paths.scan_folder / "Observations.csv")
+    logger.info(f'Loading QR detections from {qr_detections_path}')
+    
+    qr_detections = load_qr_detections_csv(str(qr_detections_path))
+    qr_detections_per_timestamp = floor_detection_and_snapping(qr_detections)
+    logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+
+
+    # Validate data
+    for data_dict, name in [
+        (timestamps_per_image, "Timestamps"),
+        (intrinsics_per_timestamp, "Camera Intrinsics"),
+        (ar_poses_per_timestamp, "AR Poses")
+    ]:
+        if len(data_dict) != original_image_count:
+            raise ValueError(f"Mismatching number of Frames and {name}. "
+                           f"Expected {original_image_count}, got {len(data_dict)}")
+        
+
+    return RefinementData(
+        timestamps_per_image=timestamps_per_image,
+        intrinsics_per_timestamp=intrinsics_per_timestamp,
+        ar_poses_per_timestamp=ar_poses_per_timestamp,
+        qr_detections_per_timestamp=qr_detections_per_timestamp,
+        portal_sizes=portal_sizes 
+    )
