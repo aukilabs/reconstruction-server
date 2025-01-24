@@ -14,6 +14,7 @@ import datetime
 import platform
 import psutil
 import GPUtil
+import subprocess
 from dateutil import parser
 from pathlib import Path
 from typing import NamedTuple, Dict
