@@ -234,7 +234,7 @@ def process_features_and_matching(
     if use_pairs_from_sequential:
         pairs_from_sequential.main(
             paths.sfm_pairs, references, None,
-            window_size=6
+            window_size=6,
             quadratic_overlap=True,
             #use_loop_closure=False,
             #retrieval_path=None,
