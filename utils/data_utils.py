@@ -14,6 +14,8 @@ import datetime
 import platform
 import psutil
 import GPUtil
+from dateutil import parser
+from pathlib import Path
 from typing import NamedTuple, Dict
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
@@ -463,13 +465,34 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
 
 
 def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None):
+
+    job_root_path = Path(job_root_path)
+
+    version = VERSION
+    if VERSION == "develop":
+        git_branch = None
+        git_commit = None
+        try:
+            git_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
+        except:
+            pass
+        try:
+            git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+        except:
+            pass
+
+        if git_branch and git_commit:
+            version = f"{git_branch}-{git_commit}"
+        elif git_commit:
+            version = f"{git_commit}"
+
     manifest_data = {
         "portals": [],
-        "reconstructionServerVersion": VERSION,
+        "reconstructionServerVersion": version,
         "jobStatus": job_status if job_status is not None else "unknown",
         "jobProgress": job_progress if job_progress is not None else 0,
         "jobStatusDetails": job_status_details if job_status_details is not None else "",
-        "updatedAt": datetime.datetime.now().isoformat()
+        "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
 
     # Lots of try catch to just skip data that is not available but still keep the rest
@@ -483,10 +506,11 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         if job_metadata_json_path.exists():
             job_metadata_json = json.load(open(job_metadata_json_path))
 
-            created_datetime = datetime.datetime.fromisoformat(job_metadata_json["created_at"])
+            created_datetime = parser.isoparse(job_metadata_json["created_at"])
+            current_datetime = datetime.datetime.now(datetime.timezone.utc)
             
             manifest_data["createdAt"] = job_metadata_json["created_at"]
-            manifest_data["jobDuration"] = float((datetime.datetime.now() - created_datetime).total_seconds())
+            manifest_data["jobDuration"] = float((current_datetime - created_datetime).total_seconds())
             manifest_data["jobID"] = job_metadata_json["id"]
             manifest_data["jobName"] = job_metadata_json["name"]
             manifest_data["reconstructionServerURL"] = job_metadata_json.get("reconstruction_server_url", None)
@@ -494,7 +518,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             manifest_data["domainServerURL"] = job_metadata_json.get("domain_server_url", None)
             manifest_data["processingType"] = job_metadata_json["processing_type"]
             manifest_data["dataIDs"] = job_metadata_json["data_ids"]
-    except:
+    except Exception as e:
+        print("No job metadata found for manifest")
+        print(e)
         pass
 
     #-------------------------
@@ -509,7 +535,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             manifest_data["scanDataSummary"] = scan_data_summary
             for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
                 portal_sizes[portal_id] = portal_size
-    except:
+    except Exception as e:
+        print("No scan data summary found for manifest")
+        print(e)
         pass
 
     #-------------------------
@@ -520,7 +548,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
 
     try:
         manifest_data["serverDetails"]["os"] = platform.platform()
-    except:
+    except Exception as e:
+        print("Could not get OS details for manifest")
+        print(e)
         pass
 
     try:
@@ -530,7 +560,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             "threads": psutil.cpu_count(logical=True),
             "load": psutil.cpu_percent(interval=1),
         }
-    except:
+    except Exception as e:
+        print("Could not get CPU info for manifest")
+        print(e)
         pass
 
     try:
@@ -540,7 +572,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             "used": psutil.virtual_memory().used,
             "usedPercent": psutil.virtual_memory().percent
         }
-    except:
+    except Exception as e:
+        print("Could not get memory info for manifest")
+        print(e)
         pass
     
     try:
@@ -549,7 +583,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             manifest_data["serverDetails"]["cudaVersion"] = torch.version.cuda
         else:
             manifest_data["serverDetails"]["cudaAvailable"] = False
-    except:
+    except Exception as e:
+        print("Could not get CUDA info for manifest")
+        print(e)
         manifest_data["serverDetails"]["cudaAvailable"] = False
         pass
 
@@ -564,7 +600,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             }
             for gpu in GPUtil.getGPUs()
         ] if len(GPUtil.getGPUs()) > 0 else [],
-    except:
+    except Exception as e:
+        print("Could not get GPU info for manifest")
+        print(e)
         pass
 
     #-------------------------
