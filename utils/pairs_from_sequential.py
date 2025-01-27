@@ -76,10 +76,7 @@ def main(
                 q = 2 ** (j - i)
                 if q > window_size and i + q < N:
                     pairs.append((names_q[i], names_q[i + q]))
-    
-        if i == 0:
-            print("Pairs from sequential (image 0), quadratic_overlap=", quadratic_overlap)
-            print(pairs)
+
 
     if use_loop_closure:
         retrieval_pairs_tmp: Path = output.parent / "retrieval-pairs-tmp.txt"
@@ -100,15 +97,9 @@ def main(
                     match_mask[i][i * retrieval_interval + k] = 1
 
                 if quadratic_overlap:
-                    if (
-                        i * retrieval_interval - 2**k >= 0
-                        and i * retrieval_interval - 2**k < N
-                    ):
+                    if i * retrieval_interval - 2**k >= 0 and i * retrieval_interval - 2**k < N:
                         match_mask[i][i * retrieval_interval - 2**k] = 1
-                    if (
-                        i * retrieval_interval + 2**k >= 0
-                        and i * retrieval_interval + 2**k < N
-                    ):
+                    if i * retrieval_interval + 2**k >= 0 and i * retrieval_interval + 2**k < N:
                         match_mask[i][i * retrieval_interval + 2**k] = 1
 
         pairs_from_retrieval.main(

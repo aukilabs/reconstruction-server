@@ -233,13 +233,15 @@ def process_features_and_matching(
     use_pairs_from_sequential = True
     if use_pairs_from_sequential:
         pairs_from_sequential.main(
-            paths.sfm_pairs, references, None,
+            paths.sfm_pairs, 
+            references, 
+            features=None,
             window_size=6,
             quadratic_overlap=True,
-            #use_loop_closure=False,
-            #retrieval_path=None,
-            #retrieval_interval=2,
-            #num_loc=5
+            use_loop_closure=False,
+            retrieval_path=None,
+            retrieval_interval=2,
+            num_loc=5
         )
     else:
         pairs_from_poses.main(
