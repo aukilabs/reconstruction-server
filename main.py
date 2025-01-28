@@ -87,7 +87,7 @@ def global_main_wrapper(args, logger):
         data_dir=Path(args.job_root_path) / "datasets",
         use_refined_outputs=True,
         add_3dpoints=True,
-        basic_stitch_only=True,
+        basic_stitch_only=False,
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level
