@@ -23,7 +23,9 @@ from utils.data_utils import (
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
     save_manifest_json,
-    export_rec_as_ply
+    export_rec_as_ply,
+    flatten_quaternion,
+    flatten_portal_rotation
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 from utils.io import Model
@@ -227,7 +229,8 @@ def load_partial(
     alignment_transform = _calculate_alignment_transform(
         chunk_mean_qr_poses,
         stitch_data.placed_portal,
-        logger
+        logger,
+        rectify_portals=True
     )
 
     # Update placed portals
@@ -315,11 +318,13 @@ def _calculate_mean_qr_poses(
     return {qr_id: mean_pose(poses) 
             for qr_id, poses in detections_per_qr.items()}
 
+
 def _calculate_alignment_transform(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
-    logger
-) -> Optional[pycolmap.Rigid3d]:
+    logger,
+    rectify_portals: bool = False
+) -> pycolmap.Rigid3d:
     """Calculate alignment transform between current and placed portals."""
     target_poses = {
         qr_id: placed_portal[qr_id]
@@ -330,25 +335,32 @@ def _calculate_alignment_transform(
     has_overlap = len(target_poses) > 0
     is_first_chunk = len(placed_portal) == 0
 
-    if not has_overlap and not is_first_chunk:
-        raise NoOverlapException()
-
     if has_overlap:
-        alignment_transforms = [
-            target_poses[qr_id] * mean_qr_poses[qr_id].inverse()
-            for qr_id in target_poses.keys()
-        ]
-        return mean_pose(alignment_transforms)
+        alignment_transforms = []
+        for qr_id in target_poses.keys():
+            from_pose = mean_qr_poses[qr_id]
+            to_pose = target_poses[qr_id]
+            if rectify_portals:
+                from_pose.rotation = pycolmap.Rotation3d(flatten_portal_rotation(from_pose.rotation.matrix()))
+                to_pose.rotation = pycolmap.Rotation3d(flatten_portal_rotation(to_pose.rotation.matrix()))
+            
+            transform = to_pose * from_pose.inverse()
+            if rectify_portals:
+                transform.rotation.quat = flatten_quaternion(transform.rotation.quat)
+            alignment_transforms.append(transform)
+
+        
+        alignment_transform = mean_pose(alignment_transforms)
+        if rectify_portals:
+            alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
+        
+        return alignment_transform
     
     if is_first_chunk:
-        origin_portal_id = list(mean_qr_poses.keys())[0]
-        clean_origin_portal_pose = pycolmap.Rigid3d(
-            pycolmap.Rotation3d(np.array([0.0, 0.0, 0.0, 1.0])),
-            mean_qr_poses[origin_portal_id].translation
-        )
-        return clean_origin_portal_pose.inverse()
+        origin_id = list(mean_qr_poses.keys())[0]
+        return floor_origin_portal_pose * mean_qr_poses[origin_id].inverse()
     
-    return None
+    raise NoOverlapException()
 
 def _update_placed_portals(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
@@ -579,6 +591,7 @@ def _get_basic_stitch_results(
         stitch_data.image_ids_per_qr
     )
     
+
     mean_qr_poses = {qr_id: mean_pose(poses) 
                     for qr_id, poses in qr_detections.items()}
 
