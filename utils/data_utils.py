@@ -38,18 +38,66 @@ def convert_pose_opengl_to_colmap(position, quaternion):
     return position, quaternion
 
 
-def rectify_floor_portal(qr_pose):
+def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
+    current_z = rotation_matrix[:, 2]
+    downwards = np.array([0, 0, -1])
+    angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+    return angle < angle_threshold
+
+
+def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
+    if rotation_matrix.shape != (3, 3):
+        raise ValueError("Input must be a 3x3 matrix")
+
+    # Extract the current Z-axis from the rotation matrix
+    current_z = rotation_matrix[:, 2]
+    downwards = np.array([-1, 0, 0])
+
+    # If clearly not flat don't change
+    if not is_portal_almost_flat(rotation_matrix, angle_threshold):
+        return rotation_matrix
+
+    # Compute the rotation axis to align current Z with desired Z
+    rotation_axis = np.cross(current_z, downwards)
+    rotation_axis_norm = np.linalg.norm(rotation_axis)
+
+    if rotation_axis_norm > 1e-6:  # Avoid division by zero
+        rotation_axis /= rotation_axis_norm
+
+        # Compute the angle to rotate current Z to desired Z
+        angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+
+        # Create the rotation matrix to align Z
+        K = np.array([
+            [0, -rotation_axis[2], rotation_axis[1]],
+            [rotation_axis[2], 0, -rotation_axis[0]],
+            [-rotation_axis[1], rotation_axis[0], 0]
+        ])
+        R_align_z = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
+        # Apply the alignment rotation
+        rotation_matrix = np.dot(R_align_z, rotation_matrix)
+
+    # Adjust X and Y to ensure orthonormality
+    x_axis = rotation_matrix[:, 0]
+    y_axis = np.cross(downwards, x_axis)
+    y_axis /= np.linalg.norm(y_axis)
+    x_axis = np.cross(y_axis, downwards)
+    x_axis /= np.linalg.norm(x_axis)
+
+    # Reconstruct the rotation matrix
+    flattened_rotation = np.column_stack((x_axis, y_axis, downwards))
+    return flattened_rotation
+
+
+def rectify_floor_portal(qr_pose, angle_threshold=20, height_threshold=0.5):
     pos = qr_pose.translation
     rot3d = qr_pose.rotation
 
-    world_forward = rot3d.matrix() @ np.array([0.0, 0.0, 1.0])
-    if world_forward[0] < -0.9:
-        rot3d = rot3d * floor_rotation
-        rot3d.quat = flatten_quaternion(rot3d.quat)
-        rot3d = rot3d * floor_rotation_inv
+    if is_portal_almost_flat(rot3d.matrix(), angle_threshold):
+        rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold))
         
         # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
-        if np.abs(pos[0]) < 0.5:
+        if np.abs(pos[0]) < height_threshold:
             pos = pos.copy() # avoid modifying input pose
             pos[0] = 0.0
 
