@@ -236,7 +236,7 @@ def process_features_and_matching(
             paths.sfm_pairs, 
             references, 
             features=None,
-            window_size=6,
+            window_size=5,
             quadratic_overlap=True,
             use_loop_closure=False,
             retrieval_path=None,
