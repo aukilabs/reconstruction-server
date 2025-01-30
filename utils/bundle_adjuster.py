@@ -5,7 +5,7 @@ from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle
 from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
-from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction
+from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction
 
 
 class PyBundleAdjuster(object):
@@ -505,12 +505,36 @@ class PyBundleAdjuster(object):
         if len(detections_per_image_id) <= 1:
             print(f"Cannot add QR loop closure with less than two images. Skipping! (got {len(detections_per_image_id)} detections)")
             return False
-
+        
+        for i, image_id in enumerate(detections_per_image_id.keys()):
+            assert len(detections_per_image_id[image_id]) == 1
+            
+            # Add floor alignment constraint for this QR detection
+            floor_height_weight = self.refinement_config.get('floor_height_weight', 100000.0)
+            floor_direction_weight = self.refinement_config.get('floor_direction_weight', 10000.0)
+            
+            cost = FloorAlignmentCostFunction(
+                detections_per_image_id[image_id][0].rotation.quat,
+                detections_per_image_id[image_id][0].translation,
+                floor_height_weight,
+                floor_direction_weight
+            )
+            
+            params = [
+                reconstruction.images[image_id].cam_from_world.rotation.quat,
+                reconstruction.images[image_id].cam_from_world.translation
+            ]
+            
+            self.add_residual_block("QrFloorAlignment", cost, None, params, image_id)
+            
+            if debugging:
+                print(f"Added floor alignment constraint for QR in image {image_id}")
+        
         for i, image_id_i in enumerate(list(detections_per_image_id.keys())[:-1]):
             assert len(detections_per_image_id[image_id_i]) == 1
             for j, image_id_j in enumerate(list(detections_per_image_id.keys())[i+1:]):
                 assert len(detections_per_image_id[image_id_j]) == 1
-                cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 1.0)
+                cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 100.0)
                 cost = RelativeTransformationSE3ViaObservationsCostFunction(
                     detections_per_image_id[image_id_i][0].rotation.quat,
                     detections_per_image_id[image_id_i][0].translation,

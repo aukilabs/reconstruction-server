@@ -1001,9 +1001,9 @@ def load_dataset_metadata(
                          else paths.scan_folder / "Observations.csv")
     logger.info(f'Loading QR detections from {qr_detections_path}')
     
-    qr_detections = load_qr_detections_csv(str(qr_detections_path))
-    qr_detections_per_timestamp = floor_detection_and_snapping(qr_detections)
+    qr_detections_per_timestamp = load_qr_detections_csv(str(qr_detections_path))
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+    logger.info(qr_detections_per_timestamp)
 
 
     # Validate data
