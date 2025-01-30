@@ -228,12 +228,23 @@ def process_features_and_matching(
     """Process feature extraction and matching."""
     # Generate pairs from poses
     logger.info("Generating image pairs from poses")
-    pairs_from_poses.main(
-        colmap_rec_path,  # Input reconstruction path
-        paths.sfm_pairs,   # Output pairs file path
-        num_matched=20,    # Number of closest images to match
-        rotation_threshold=360  # Maximum rotation difference in degrees
-    )
+
+    use_pairs_from_sequential = True
+    if use_pairs_from_sequential:
+        pairs_from_sequential.main(
+            paths.sfm_pairs, 
+            references, 
+            features=None,
+            window_size=7,
+            quadratic_overlap=True
+        )
+    else:
+        pairs_from_poses.main(
+            colmap_rec_path,  # Input reconstruction path
+            paths.sfm_pairs,   # Output pairs file path
+            num_matched=20,    # Number of closest images to match
+            rotation_threshold=360  # Maximum rotation difference in degrees
+        )
 
     # Feature extraction
     feature_conf = extract_features.confs["superpoint_max"]

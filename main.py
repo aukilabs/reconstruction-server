@@ -6,6 +6,7 @@ from global_main import main as global_main
 from occlusion_box import main as occlusion_box_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
+import multiprocessing
 
 
 def occlusion_box_wrapper(path, output_dir, logger):
@@ -34,7 +35,7 @@ def occlusion_box_wrapper(path, output_dir, logger):
     logger.info("Done with occlusion box extraction!")
 
 
-def process_local_refinement(args, scan):
+def process_local_refinement(args, scan, worker_pool=None):
     """Process local refinement for a single scan.
     
     Args:
@@ -50,7 +51,7 @@ def process_local_refinement(args, scan):
         job_id=args.job_id,
         log_level=args.log_level
     )
-    local_main(local_args)
+    local_main(local_args, worker_pool)
 
 
 def local_main_wrapper(args, logger):
@@ -67,10 +68,19 @@ def local_main_wrapper(args, logger):
     logger.info(f"Scans: {args.scans}")
     logger.info("--------------------------------")
 
-    for scan in args.scans:
-        logger.info(f"Refining scan {scan}...")
-        process_local_refinement(args, scan)
-        logger.info(f"Done refining scan {scan}")
+    def process_all(worker_pool=None):
+        for scan in args.scans:
+            logger.info(f"Refining scan {scan}...")
+            process_local_refinement(args, scan, worker_pool)
+            logger.info(f"Done refining scan {scan}")
+
+    if args.num_workers and args.num_workers >= 1:
+        with multiprocessing.Pool(args.num_workers) as worker_pool:
+            process_all(worker_pool)
+            worker_pool.close()
+            worker_pool.join()
+    else:
+        process_all()
 
 
 def global_main_wrapper(args, logger):
@@ -106,6 +116,7 @@ def local_and_global_main_wrapper(args, logger):
     """
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
+    local_args.num_workers = 2
     
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
