@@ -74,8 +74,8 @@ def local_main_wrapper(args, logger):
             process_local_refinement(args, scan, worker_pool)
             logger.info(f"Done refining scan {scan}")
 
-    if args.num_workers and args.num_workers >= 1:
-        with multiprocessing.Pool(args.num_workers) as worker_pool:
+    if args.local_refinement_workers and args.local_refinement_workers >= 1:
+        with multiprocessing.Pool(args.local_refinement_workers) as worker_pool:
             process_all(worker_pool)
             worker_pool.close()
             worker_pool.join()
@@ -116,7 +116,6 @@ def local_and_global_main_wrapper(args, logger):
     """
     local_args = argparse.Namespace(**vars(args))
     local_args.output_path = args.job_root_path / "refined" / "local"
-    local_args.num_workers = 2
     
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
@@ -217,6 +216,7 @@ def parse_args():
     parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
+    parser.add_argument("--local_refinement_workers", type=int, default=0, help="Number of workers for multiprocessing of local refinements.")
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
