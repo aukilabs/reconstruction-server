@@ -43,7 +43,7 @@ def convert_pose_opengl_to_colmap(position, quaternion):
 
 def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
     current_z = rotation_matrix[:, 2]
-    downwards = np.array([0, 0, -1])
+    downwards = np.array([-1, 0, 0])
     angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
     return angle < angle_threshold
 
