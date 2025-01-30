@@ -236,12 +236,8 @@ def process_features_and_matching(
             paths.sfm_pairs, 
             references, 
             features=None,
-            window_size=5,
-            quadratic_overlap=True,
-            use_loop_closure=False,
-            retrieval_path=None,
-            retrieval_interval=2,
-            num_loc=5
+            window_size=7,
+            quadratic_overlap=True
         )
     else:
         pairs_from_poses.main(

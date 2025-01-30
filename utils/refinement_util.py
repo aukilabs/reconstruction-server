@@ -210,6 +210,67 @@ def process_QR(
         corners_per_qr
     )
 
+def refine_dataset_part_two(
+    paths,
+    arkit_cam_from_world_transforms,
+    metadata,
+    logger,
+    colmap_rec_path,
+    remove_outputs,
+    start_time
+):
+    # Prepare data for loop closure
+    refined_rec = pycolmap.Reconstruction()
+    refined_rec.read(paths.sfm_dir)
+    arkit_precomputed, detections_per_qr, image_ids_per_qr, corners_per_qr = prepare_data_for_loop_closure(
+        refined_rec, 
+        arkit_cam_from_world_transforms,
+        metadata,
+        logger
+    )
+
+    # Triangulation
+    logger.info("Start triangulation")
+    refined_rec = triangulate_model(
+        paths.sfm_dir, 
+        colmap_rec_path, 
+        paths.images, 
+        paths.sfm_pairs, 
+        paths.features, 
+        paths.matches,
+        skip_geometric_verification=True,
+        verbose=True,
+        timestamp_per_image=metadata.timestamps_per_image,
+        arkit_precomputed=arkit_precomputed,
+        detections_per_qr=detections_per_qr,
+        image_ids_per_qr=image_ids_per_qr
+    )
+    refined_rec.write(paths.sfm_dir)
+    logger.info("Finished triangulation")
+    reproj_error = refined_rec.compute_mean_reprojection_error()
+    logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
+
+    # Process QR codes
+    process_QR(
+        refined_rec, 
+        detections_per_qr, 
+        image_ids_per_qr, 
+        paths, 
+        metadata, 
+        corners_per_qr, 
+        logger
+    )
+
+    if remove_outputs:
+        logger.info('Remove output directory')
+        shutil.rmtree(paths.output)
+    
+    duration = datetime.now() - start_time
+    logger.info(f"Local refinement completed in {duration}")
+    logger.info('========================================================================')
+    logger.info('')
+    logger.info('========================================================================')
+
 
 def refine_dataset(
     scan_folder_path, 
@@ -218,7 +279,8 @@ def refine_dataset(
     remove_outputs=False,
     domain_id="",
     job_id="",
-    log_level="INFO"
+    log_level="INFO",
+    worker_pool=None
 ):
     """
     Refine a dataset using Structure from Motion techniques.
@@ -274,10 +336,7 @@ def refine_dataset(
         colmap_rec_path = paths.output / 'colmap_rec'
         colmap_rec_path.mkdir(parents=True, exist_ok=True)
         rec.write(colmap_rec_path)
-
-        refined_rec = pycolmap.Reconstruction()
-        refined_rec.read(colmap_rec_path)
-        refined_rec.write(paths.sfm_dir)
+        rec.write(paths.sfm_dir)
 
         # Process features and matching
         process_features_and_matching(
@@ -287,59 +346,40 @@ def refine_dataset(
             logger
         )
 
-        # Prepare data for loop closure
-        refined_rec.read(paths.sfm_dir)
-        arkit_precomputed, detections_per_qr, image_ids_per_qr, corners_per_qr = prepare_data_for_loop_closure(
-            refined_rec, 
-            arkit_cam_from_world_transforms,
-            metadata,
-            logger
-        )
+        def on_success(result):
+            logger.info(f"COMPLETED local refinement: {scan_folder_path.name}")
 
-        # Triangulation
-        logger.info("Start triangulation")
-        refined_rec = triangulate_model(
-            paths.sfm_dir, 
-            colmap_rec_path, 
-            paths.images, 
-            paths.sfm_pairs, 
-            paths.features, 
-            paths.matches,
-            skip_geometric_verification=True,
-            verbose=True,
-            timestamp_per_image=metadata.timestamps_per_image,
-            arkit_precomputed=arkit_precomputed,
-            detections_per_qr=detections_per_qr,
-            image_ids_per_qr=image_ids_per_qr
-        )
-        refined_rec.write(paths.sfm_dir)
-        logger.info("Finished triangulation")
-        reproj_error = refined_rec.compute_mean_reprojection_error()
-        logger.info(f'After triangulation, the mean reprojection error is {reproj_error}')
-
-        # Process QR codes
-        process_QR(
-            refined_rec, 
-            detections_per_qr, 
-            image_ids_per_qr, 
-            paths, 
-            metadata, 
-            corners_per_qr, 
-            logger
-        )
-
-        if remove_outputs:
-            logger.info('Remove output directory')
-            shutil.rmtree(paths.output)
+        def on_error(e):
+            logger.error(f"FAILED local refinement: {scan_folder_path.name} - {str(e)}")
+            raise Exception(f"FAILED local refinement: {scan_folder_path.name} - {str(e)}")
         
-        duration = datetime.now() - start_time
-        logger.info(f"Local refinement completed in {duration}")
-        logger.info('========================================================================')
-        logger.info('')
-        logger.info('========================================================================')
+        if worker_pool:
+            worker_pool.apply_async(
+                refine_dataset_part_two,
+                args = (
+                    paths,
+                    arkit_cam_from_world_transforms,
+                    metadata,
+                    logger,
+                    colmap_rec_path,
+                    remove_outputs,
+                    start_time
+                ),
+                callback=on_success,
+                error_callback=on_error
+            )
+        else:
+            refine_dataset_part_two(
+                paths,
+                arkit_cam_from_world_transforms,
+                metadata,
+                logger,
+                colmap_rec_path,
+                remove_outputs,
+                start_time
+            )
+            on_success()
 
-        return refined_rec, rec
-    
     except Exception as e:
         logger.error(f"Refinement failed: {str(e)}")
         raise

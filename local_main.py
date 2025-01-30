@@ -3,7 +3,7 @@ import argparse
 from utils.refinement_util import refine_dataset
 
 
-def main(args):
+def main(args, worker_pool=None):
     """
     Main function to run local refinement algorithm.
 
@@ -17,14 +17,15 @@ def main(args):
         log_level: Logging level
     """
 
-    refined_rec, unrefined_rec = refine_dataset(
+    refine_dataset(
         args.dataset_path, 
         args.output_path,
         args.every_nth_image,
         args.remove_outputs,
         args.domain_id,
         args.job_id,
-        args.log_level
+        args.log_level,
+        worker_pool=worker_pool
     )
 
 
