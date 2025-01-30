@@ -381,4 +381,61 @@ class PoseCenterConstraintCostFunction {
   Eigen::Vector3d pose_center_constraint_;
 };
 
+class FloorAlignmentCostFunction {
+ public:
+  FloorAlignmentCostFunction(
+      const Eigen::Vector4d& detection_rotation,
+      const Eigen::Vector3d& detection_translation,
+      const double height_weight = 1.0,
+      const double direction_weight = 1.0)
+      : detection_(Eigen::Quaterniond(detection_rotation.data()),
+                  detection_translation),
+        height_weight_(height_weight),
+        direction_weight_(direction_weight) {}
+
+  static ceres::CostFunction* Create(
+      const Eigen::Vector4d& detection_rotation,
+      const Eigen::Vector3d& detection_translation,
+      const double height_weight = 1.0,
+      const double direction_weight = 1.0) {
+    return new ceres::AutoDiffCostFunction<FloorAlignmentCostFunction, 2, 4, 3>(
+        new FloorAlignmentCostFunction(detection_rotation, detection_translation,
+                                     height_weight, direction_weight));
+  }
+
+  template <typename T>
+  bool operator()(const T* const cam_from_world_rotation,
+                 const T* const cam_from_world_translation,
+                 T* residuals) const {
+
+    // Create SE3 object and store it
+    const Sophus::SE3<T> cam_from_world = Sophus::SE3<T>(
+        EigenQuaternionMap<T>(cam_from_world_rotation),
+        Eigen::Matrix<T, 3, 1>(cam_from_world_translation));
+
+    // Transform detection from camera to world space
+    const Sophus::SE3<T> world_from_qr = 
+        cam_from_world.inverse() * detection_.cast<T>();
+
+    // Height error - in COLMAP space, x is up, so constrain x=0
+    residuals[0] = T(height_weight_) * world_from_qr.translation().x();
+
+    // Direction error - local z axis in world space should point towards (-1,0,0)
+    const Eigen::Matrix<T, 3, 1> local_z_in_world = 
+        world_from_qr.rotationMatrix() * Eigen::Matrix<T, 3, 1>(T(0), T(0), T(1));
+    
+    // Should align with (-1,0,0) in COLMAP world space
+    const Eigen::Matrix<T, 3, 1> target_direction(T(-1), T(0), T(0));
+    residuals[1] = T(direction_weight_) * 
+        (T(1) - local_z_in_world.dot(target_direction));
+
+    return true;
+  }
+
+ private:
+  const Sophus::SE3d detection_;  // QR detection in camera space
+  const double height_weight_;
+  const double direction_weight_;
+};
+
 }  // namespace auki

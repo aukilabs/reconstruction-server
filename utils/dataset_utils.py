@@ -230,7 +230,7 @@ def load_partial(
         chunk_mean_qr_poses,
         stitch_data.placed_portal,
         logger,
-        rectify_portals=True
+        rectify_portals=False
     )
 
     # Update placed portals

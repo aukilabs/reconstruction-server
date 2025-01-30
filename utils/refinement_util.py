@@ -14,7 +14,8 @@ from utils.data_utils import (
     setup_logger,
     save_portal_csv, 
     process_frames,
-    load_dataset_metadata
+    load_dataset_metadata,
+    rectify_floor_portal
 )
 from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
 
@@ -200,6 +201,8 @@ def process_QR(
         deviation = np.std([det.translation for det in stitched_qr_detections[qr_id]], axis=0)
         deviation = np.mean(deviation)
         logger.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
+
+    stitched_qr_detections = {qr_id: [rectify_floor_portal(p) for p in poses] for qr_id, poses in stitched_qr_detections.items()}
 
     stitched_qr_csv_path = paths.sfm_dir / "portals.csv"
     save_portal_csv(
