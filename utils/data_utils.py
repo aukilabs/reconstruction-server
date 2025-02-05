@@ -45,7 +45,7 @@ def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
     current_z = rotation_matrix[:, 2]
     downwards = np.array([-1, 0, 0])
     angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
-    return angle < angle_threshold
+    return np.rad2deg(angle) < angle_threshold
 
 
 def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
@@ -290,28 +290,10 @@ def snap_to_yz_plane(quaternion):
 
     return snapped_rotation.as_quat()
 
-def floor_detection_and_snapping(detections, height_threshold= 0.2):
+def floor_detection_and_snapping(detections):
     snapped_detections = {}
     for ts, detection in detections.items():
-        snapped_detections[ts] = {}
-        position = detection["pose"].translation
-        quaternion = detection["pose"].rotation.quat
-        # It is in colmap coordinates
-        # Classify as floor portal if within height threshold and parallel to yz plane
-        if abs(position[0]) <=  height_threshold and is_rotation_parallel_to_yz_plane(quaternion, 0.0873):
-            # If 
-            position[0] = 0.0
-            # print(f"{detection['short_id']} before t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
-            detection["pose"] = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quaternion)),
-                np.array(position)
-            )
-            # print(f"{detection['short_id']} after t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
-        else:
-            print(f"{detection['short_id']} is not floor portal: t: {position}   q: {detection['pose'].rotation.quat}")
-            print(f"translation check: {abs(position[0]) <=  height_threshold}")
-            print(f"quaternion check: {is_rotation_parallel_to_yz_plane(detection['pose'].rotation.quat)}")
-        
+        detection["pose"] = rectify_floor_portal(detection["pose"]) # Does nothing for non-floor portals
         snapped_detections[ts] = detection
     return snapped_detections
 
