@@ -3,7 +3,7 @@ import pyceres
 import numpy as np
 from numpy.linalg import norm
 
-from utils.data_utils import vec3_angle
+from utils.data_utils import vec3_angle, is_floor_portal
 from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
 from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction
 
@@ -506,16 +506,20 @@ class PyBundleAdjuster(object):
             print(f"Cannot add QR loop closure with less than two images. Skipping! (got {len(detections_per_image_id)} detections)")
             return False
         
+        # Bring floor portals to height 0 and flatten their rotation
+        floor_height_weight = self.refinement_config.get('floor_height_weight', 1.0)
+        floor_direction_weight = self.refinement_config.get('floor_direction_weight', 1.0)
+
         for i, image_id in enumerate(detections_per_image_id.keys()):
             assert len(detections_per_image_id[image_id]) == 1
-            
-            # Add floor alignment constraint for this QR detection
-            floor_height_weight = self.refinement_config.get('floor_height_weight', 100000.0)
-            floor_direction_weight = self.refinement_config.get('floor_direction_weight', 10000.0)
+
+            detection_pose = detections_per_image_id[image_id][0]
+            if not is_floor_portal(detection_pose.translation, detection_pose.rotation.quat):
+                continue
             
             cost = FloorAlignmentCostFunction(
-                detections_per_image_id[image_id][0].rotation.quat,
-                detections_per_image_id[image_id][0].translation,
+                detection_pose.rotation.quat,
+                detection_pose.translation,
                 floor_height_weight,
                 floor_direction_weight
             )
@@ -530,11 +534,12 @@ class PyBundleAdjuster(object):
             if debugging:
                 print(f"Added floor alignment constraint for QR in image {image_id}")
         
+        # Loop closure for multiple detections of same QR code
         for i, image_id_i in enumerate(list(detections_per_image_id.keys())[:-1]):
             assert len(detections_per_image_id[image_id_i]) == 1
             for j, image_id_j in enumerate(list(detections_per_image_id.keys())[i+1:]):
                 assert len(detections_per_image_id[image_id_j]) == 1
-                cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 100.0)
+                cov_scale = self.refinement_config.get('rel_qr_pose_cov_scale', 1.0)
                 cost = RelativeTransformationSE3ViaObservationsCostFunction(
                     detections_per_image_id[image_id_i][0].rotation.quat,
                     detections_per_image_id[image_id_i][0].translation,

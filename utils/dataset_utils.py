@@ -23,9 +23,7 @@ from utils.data_utils import (
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
     save_manifest_json,
-    export_rec_as_ply,
-    flatten_quaternion,
-    flatten_portal_rotation
+    export_rec_as_ply
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 from utils.io import Model
@@ -229,8 +227,7 @@ def load_partial(
     alignment_transform = _calculate_alignment_transform(
         chunk_mean_qr_poses,
         stitch_data.placed_portal,
-        logger,
-        rectify_portals=False
+        logger
     )
 
     # Update placed portals
@@ -322,8 +319,7 @@ def _calculate_mean_qr_poses(
 def _calculate_alignment_transform(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
-    logger,
-    rectify_portals: bool = False
+    logger
 ) -> pycolmap.Rigid3d:
     """Calculate alignment transform between current and placed portals."""
     target_poses = {
@@ -340,20 +336,10 @@ def _calculate_alignment_transform(
         for qr_id in target_poses.keys():
             from_pose = mean_qr_poses[qr_id]
             to_pose = target_poses[qr_id]
-            if rectify_portals:
-                from_pose.rotation = pycolmap.Rotation3d(flatten_portal_rotation(from_pose.rotation.matrix()))
-                to_pose.rotation = pycolmap.Rotation3d(flatten_portal_rotation(to_pose.rotation.matrix()))
-            
             transform = to_pose * from_pose.inverse()
-            if rectify_portals:
-                transform.rotation.quat = flatten_quaternion(transform.rotation.quat)
             alignment_transforms.append(transform)
-
         
         alignment_transform = mean_pose(alignment_transforms)
-        if rectify_portals:
-            alignment_transform.rotation.quat = flatten_quaternion(alignment_transform.rotation.quat)
-        
         return alignment_transform
     
     if is_first_chunk:
