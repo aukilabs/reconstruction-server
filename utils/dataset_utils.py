@@ -227,8 +227,7 @@ def load_partial(
     alignment_transform = _calculate_alignment_transform(
         chunk_mean_qr_poses,
         stitch_data.placed_portal,
-        logger,
-        rectify_portals=True
+        logger
     )
 
     # Update placed portals
