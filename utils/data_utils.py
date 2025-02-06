@@ -52,8 +52,9 @@ def is_portal_near_floor_height(position, height_threshold=0.5):
     return np.abs(position[0]) < height_threshold
 
 
-def is_floor_portal(position, rotation, height_threshold=0.5, angle_threshold=20):
-    return is_portal_near_floor_height(position, height_threshold) and is_portal_almost_flat(rotation, angle_threshold)
+def is_floor_portal(pose, height_threshold=0.5, angle_threshold=20):
+    return is_portal_near_floor_height(pose.translation, height_threshold) and \
+           is_portal_almost_flat(pose.rotation.matrix(), angle_threshold)
 
 
 def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
@@ -993,8 +994,6 @@ def load_dataset_metadata(
     
     qr_detections_per_timestamp = load_qr_detections_csv(str(qr_detections_path))
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
-    logger.info(qr_detections_per_timestamp)
-
 
     # Validate data
     for data_dict, name in [

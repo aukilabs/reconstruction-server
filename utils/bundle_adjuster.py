@@ -514,7 +514,7 @@ class PyBundleAdjuster(object):
             assert len(detections_per_image_id[image_id]) == 1
 
             detection_pose = detections_per_image_id[image_id][0]
-            if not is_floor_portal(detection_pose.translation, detection_pose.rotation.quat):
+            if not is_floor_portal(detection_pose):
                 continue
             
             cost = FloorAlignmentCostFunction(
