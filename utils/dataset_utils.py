@@ -23,9 +23,7 @@ from utils.data_utils import (
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
     save_manifest_json,
-    export_rec_as_ply,
-    flatten_quaternion,
-    flatten_portal_rotation
+    export_rec_as_ply
 )
 from utils.geometry_utils import align_reconstruction_chunks, run_stitching
 from utils.io import Model
@@ -322,8 +320,7 @@ def _calculate_mean_qr_poses(
 def _calculate_alignment_transform(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
-    logger,
-    rectify_portals: bool = False
+    logger
 ) -> pycolmap.Rigid3d:
     """Calculate alignment transform between current and placed portals."""
     target_poses = {
