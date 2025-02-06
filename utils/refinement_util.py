@@ -280,7 +280,7 @@ def refine_dataset(
     domain_id="",
     job_id="",
     log_level="INFO",
-    worker_pool=None
+    pool_executor=None
 ):
     """
     Refine a dataset using Structure from Motion techniques.
@@ -293,9 +293,9 @@ def refine_dataset(
         domain_id: Domain identifier
         job_id: Job identifier
         log_level: Logging level
-        
+        pool_executor: ThreadPoolExecutor instance for parallel processing
     Returns:
-        Tuple of (refined_reconstruction, original_reconstruction)
+        Future object if pool_executor is provided, otherwise None
     """
     start_time = datetime.now()
 
@@ -304,7 +304,7 @@ def refine_dataset(
         scan_folder_path, output_path
     )
 
-    # Setup Loggging
+    # Setup Logging
     logger = setup_logger(
         name="refine_dataset", 
         log_file=str(paths.log_path / "local_logs"), 
@@ -315,75 +315,59 @@ def refine_dataset(
     )
     logger.info(f'Starting local refinement of {scan_folder_path.name}')
 
-    try:
-        # Process frames and load data
-        references, use_frames_from_video, original_image_count = process_frames(
-            paths, every_nth_image, logger
-        )
+    # Process frames and load data
+    references, use_frames_from_video, original_image_count = process_frames(
+        paths, every_nth_image, logger
+    )
 
-        # Load dataset metadata
-        metadata = load_dataset_metadata(
-            paths,  
-            use_frames_from_video, 
-            original_image_count, 
-            logger
-        )
+    # Load dataset metadata
+    metadata = load_dataset_metadata(
+        paths,  
+        use_frames_from_video, 
+        original_image_count, 
+        logger
+    )
 
-        # Initialize reconstruction
-        rec, arkit_cam_from_world_transforms = initialize_reconstruction(references, metadata)
+    # Initialize reconstruction
+    rec, arkit_cam_from_world_transforms = initialize_reconstruction(references, metadata)
 
-        # Save initial reconstruction
-        colmap_rec_path = paths.output / 'colmap_rec'
-        colmap_rec_path.mkdir(parents=True, exist_ok=True)
-        rec.write(colmap_rec_path)
-        rec.write(paths.sfm_dir)
+    # Save initial reconstruction
+    colmap_rec_path = paths.output / 'colmap_rec'
+    colmap_rec_path.mkdir(parents=True, exist_ok=True)
+    rec.write(colmap_rec_path)
+    rec.write(paths.sfm_dir)
 
-        # Process features and matching
-        process_features_and_matching(
-            references, 
-            colmap_rec_path, 
+    # Process features and matching
+    process_features_and_matching(
+        references, 
+        colmap_rec_path, 
+        paths,
+        logger
+    )
+    
+    if pool_executor:
+        future = pool_executor.submit(
+            refine_dataset_part_two,
             paths,
-            logger
+            arkit_cam_from_world_transforms,
+            metadata,
+            logger,
+            colmap_rec_path,
+            remove_outputs,
+            start_time
         )
-
-        def on_success(result):
-            logger.info(f"COMPLETED local refinement: {scan_folder_path.name}")
-
-        def on_error(e):
-            logger.error(f"FAILED local refinement: {scan_folder_path.name} - {str(e)}")
-            raise Exception(f"FAILED local refinement: {scan_folder_path.name} - {str(e)}")
-        
-        if worker_pool:
-            worker_pool.apply_async(
-                refine_dataset_part_two,
-                args = (
-                    paths,
-                    arkit_cam_from_world_transforms,
-                    metadata,
-                    logger,
-                    colmap_rec_path,
-                    remove_outputs,
-                    start_time
-                ),
-                callback=on_success,
-                error_callback=on_error
-            )
-        else:
-            refine_dataset_part_two(
-                paths,
-                arkit_cam_from_world_transforms,
-                metadata,
-                logger,
-                colmap_rec_path,
-                remove_outputs,
-                start_time
-            )
-            on_success()
-
-    except Exception as e:
-        logger.error(f"Refinement failed: {str(e)}")
-        raise
-
+        return future
+    else:
+        refine_dataset_part_two(
+            paths,
+            arkit_cam_from_world_transforms,
+            metadata,
+            logger,
+            colmap_rec_path,
+            remove_outputs,
+            start_time
+        )
+        return None
 
 def tri_ba_iteration(
     refined_rec, 
