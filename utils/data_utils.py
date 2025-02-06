@@ -56,10 +56,6 @@ def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
     current_z = rotation_matrix[:, 2]
     downwards = np.array([-1, 0, 0])
 
-    # If clearly not flat don't change
-    if not is_portal_almost_flat(rotation_matrix, angle_threshold):
-        return rotation_matrix
-
     # Compute the rotation axis to align current Z with desired Z
     rotation_axis = np.cross(current_z, downwards)
     rotation_axis_norm = np.linalg.norm(rotation_axis)
