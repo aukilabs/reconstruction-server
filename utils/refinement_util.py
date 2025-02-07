@@ -151,6 +151,8 @@ def prepare_data_for_loop_closure(
     logger.info(f"valid timestamps: {len(valid_timestamps)}")
     logger.info(f"count of qr detections: {len(metadata.qr_detections_per_timestamp)}")
     for timestamp, detection in metadata.qr_detections_per_timestamp.items():
+        if timestamp not in valid_timestamps:
+            continue
         id = detection["short_id"]
 
         if id not in detections_per_qr.keys():
