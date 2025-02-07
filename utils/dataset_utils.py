@@ -315,11 +315,12 @@ def _calculate_mean_qr_poses(
     return {qr_id: mean_pose(poses) 
             for qr_id, poses in detections_per_qr.items()}
 
+
 def _calculate_alignment_transform(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
     logger
-) -> Optional[pycolmap.Rigid3d]:
+) -> pycolmap.Rigid3d:
     """Calculate alignment transform between current and placed portals."""
     target_poses = {
         qr_id: placed_portal[qr_id]
@@ -347,8 +348,7 @@ def _calculate_alignment_transform(
             mean_qr_poses[origin_portal_id].translation
         )
         return clean_origin_portal_pose.inverse()
-    
-    return None
+
 
 def _update_placed_portals(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
@@ -579,6 +579,7 @@ def _get_basic_stitch_results(
         stitch_data.image_ids_per_qr
     )
     
+
     mean_qr_poses = {qr_id: mean_pose(poses) 
                     for qr_id, poses in qr_detections.items()}
 

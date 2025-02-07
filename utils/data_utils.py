@@ -24,60 +24,6 @@ floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068])
 VERSION = "develop"
 
 
-
-def is_floor_portal(translation, quaternion, y_threshold=0.01):
-    """
-    Check if the object is parallel to the floor (XZ plane), facing upward, and near the floor.
-    
-    Args:
-        translation (list or np.ndarray): Translation vector [x, y, z].
-        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
-        y_threshold (float): Threshold to consider the Y position as near zero.
-    
-    Returns:
-        bool: True if the object is parallel to the XZ plane, facing upward, and near the floor, False otherwise.
-    """
-    # Normalize the quaternion
-    r = scipy_Rotation.from_quat(quaternion)
-
-    # Extract the rotation matrix
-    rot_matrix = r.as_matrix()
-
-    # Extract the Y-axis of the rotated object (up direction in local coordinates)
-    up_vector = rot_matrix[:, 1]  # Assuming the object's local up is along its Y-axis
-
-    # Check if the up vector is parallel to the world's Y-axis
-    world_up = np.array([0, 1, 0])
-    parallel = np.allclose(up_vector, world_up, atol=1e-3)
-    # Check if the translation Y value is near zero
-    near_floor = abs(translation[1]) < y_threshold
-
-    return parallel and near_floor
-
-def rectify_floor_portal(translation, quaternion):
-    """
-    Rectify the object's pose to be parallel to the XZ plane and adjust translation Y to zero.
-    
-    Args:
-        translation (list or np.ndarray): Translation vector [x, y, z].
-        quaternion (list or np.ndarray): Quaternion representing orientation [x, y, z, w].
-    
-    Returns:
-        tuple: (rectified_quaternion, rectified_translation)
-    """
-    # Set quaternion to represent no rotation around X or Z axes, only identity or Y-axis rotation
-    r = scipy_Rotation.from_quat(quaternion)
-    euler = r.as_euler('xyz', degrees=False)  # Convert quaternion to Euler angles
-    euler[0] = 0  # Remove rotation around X-axis
-    euler[2] = 0  # Remove rotation around Z-axis
-    rectified_quaternion = scipy_Rotation.from_euler('xyz', euler).as_quat()
-
-    # Set translation Y to zero
-    rectified_translation = list(translation)
-    rectified_translation[1] = 0
-
-    return rectified_translation, rectified_quaternion.tolist()
-
 def convert_pose_opengl_to_colmap(position, quaternion):
     
     position = np.array([
@@ -95,18 +41,62 @@ def convert_pose_opengl_to_colmap(position, quaternion):
     return position, quaternion
 
 
-def rectify_floor_portal(qr_pose):
+def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
+    current_z = rotation_matrix[:, 2]
+    downwards = np.array([-1, 0, 0])
+    angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+    return np.rad2deg(angle) < angle_threshold
+
+
+def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
+    if rotation_matrix.shape != (3, 3):
+        raise ValueError("Input must be a 3x3 matrix")
+
+    # Extract the current Z-axis from the rotation matrix
+    current_z = rotation_matrix[:, 2]
+    downwards = np.array([-1, 0, 0])
+
+    # Compute the rotation axis to align current Z with desired Z
+    rotation_axis = np.cross(current_z, downwards)
+    rotation_axis_norm = np.linalg.norm(rotation_axis)
+
+    if rotation_axis_norm > 1e-6:  # Avoid division by zero
+        rotation_axis /= rotation_axis_norm
+
+        # Compute the angle to rotate current Z to desired Z
+        angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+
+        # Create the rotation matrix to align Z
+        K = np.array([
+            [0, -rotation_axis[2], rotation_axis[1]],
+            [rotation_axis[2], 0, -rotation_axis[0]],
+            [-rotation_axis[1], rotation_axis[0], 0]
+        ])
+        R_align_z = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
+        # Apply the alignment rotation
+        rotation_matrix = np.dot(R_align_z, rotation_matrix)
+
+    # Adjust X and Y to ensure orthonormality
+    x_axis = rotation_matrix[:, 0]
+    y_axis = np.cross(downwards, x_axis)
+    y_axis /= np.linalg.norm(y_axis)
+    x_axis = np.cross(y_axis, downwards)
+    x_axis /= np.linalg.norm(x_axis)
+
+    # Reconstruct the rotation matrix
+    flattened_rotation = np.column_stack((x_axis, y_axis, downwards))
+    return flattened_rotation
+
+
+def rectify_floor_portal(qr_pose, angle_threshold=20, height_threshold=0.5):
     pos = qr_pose.translation
     rot3d = qr_pose.rotation
 
-    world_forward = rot3d.matrix() @ np.array([0.0, 0.0, 1.0])
-    if world_forward[0] < -0.9:
-        rot3d = rot3d * floor_rotation
-        rot3d.quat = flatten_quaternion(rot3d.quat)
-        rot3d = rot3d * floor_rotation_inv
+    if is_portal_almost_flat(rot3d.matrix(), angle_threshold):
+        rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold))
         
         # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
-        if np.abs(pos[0]) < 0.5:
+        if np.abs(pos[0]) < height_threshold:
             pos = pos.copy() # avoid modifying input pose
             pos[0] = 0.0
 
@@ -296,28 +286,10 @@ def snap_to_yz_plane(quaternion):
 
     return snapped_rotation.as_quat()
 
-def floor_detection_and_snapping(detections, height_threshold= 0.2):
+def floor_detection_and_snapping(detections):
     snapped_detections = {}
     for ts, detection in detections.items():
-        snapped_detections[ts] = {}
-        position = detection["pose"].translation
-        quaternion = detection["pose"].rotation.quat
-        # It is in colmap coordinates
-        # Classify as floor portal if within height threshold and parallel to yz plane
-        if abs(position[0]) <=  height_threshold and is_rotation_parallel_to_yz_plane(quaternion, 0.0873):
-            # If 
-            position[0] = 0.0
-            # print(f"{detection['short_id']} before t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
-            detection["pose"] = pycolmap.Rigid3d(
-                pycolmap.Rotation3d(np.array(quaternion)),
-                np.array(position)
-            )
-            # print(f"{detection['short_id']} after t: {detection['pose'].translation}   q: {detection['pose'].rotation.quat}")
-        else:
-            print(f"{detection['short_id']} is not floor portal: t: {position}   q: {detection['pose'].rotation.quat}")
-            print(f"translation check: {abs(position[0]) <=  height_threshold}")
-            print(f"quaternion check: {is_rotation_parallel_to_yz_plane(detection['pose'].rotation.quat)}")
-        
+        detection["pose"] = rectify_floor_portal(detection["pose"]) # Does nothing for non-floor portals
         snapped_detections[ts] = detection
     return snapped_detections
 
@@ -615,11 +587,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     for short_id, poses_for_qr in portal_poses.items():
 
         pose = poses_for_qr[0]
-        pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+        pose = rectify_floor_portal(pose)
 
-        # Rectify Floor Portals
-        if is_floor_portal(pos, quat):
-            pos, quat = rectify_floor_portal(pos, quat)
+        pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
 
         manifest_data["portals"].append({
             "shortId": short_id,
