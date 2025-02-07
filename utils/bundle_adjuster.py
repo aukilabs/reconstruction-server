@@ -514,7 +514,8 @@ class PyBundleAdjuster(object):
             assert len(detections_per_image_id[image_id]) == 1
 
             detection_pose = detections_per_image_id[image_id][0]
-            if not is_floor_portal(detection_pose):
+            detection_pose_world = reconstruction.images[image_id].cam_from_world.inverse() * detection_pose
+            if not is_floor_portal(detection_pose_world):
                 continue
             
             cost = FloorAlignmentCostFunction(
