@@ -760,7 +760,7 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 	return &j, nil
 }
 
-func executeJob(j *job) {
+func executeJob(j *job, numCpuWorkers int) {
 
 	// Write in-progress manifest as soon as job starts.
 	// DMT uses this to show job status to the user.
@@ -796,7 +796,7 @@ func executeJob(j *job) {
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
 		"--job_id", j.Name,
-		"--local_refinement_workers", "8",
+		"--local_refinement_workers", strconv.Itoa(numCpuWorkers),
 		"--scans"}
 
 	datasetsRootPath := path.Join(j.JobPath, "datasets")
