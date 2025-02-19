@@ -1,6 +1,6 @@
 from pathlib import Path
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from local_main import main as local_main
 from global_main import main as global_main
@@ -88,7 +88,7 @@ def local_main_wrapper(args, logger):
             f.result() # waits, and raises any exception from the worker (with full call stack)
 
     if args.local_refinement_workers and args.local_refinement_workers >= 1:
-        with ThreadPoolExecutor(max_workers=args.local_refinement_workers) as pool_executor:
+        with ProcessPoolExecutor(max_workers=args.local_refinement_workers) as pool_executor:
             process_all(pool_executor)
             pool_executor.shutdown(wait=True)
     else:

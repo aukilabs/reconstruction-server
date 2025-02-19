@@ -796,7 +796,7 @@ func executeJob(j *job) {
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
 		"--job_id", j.Name,
-		"--local_refinement_workers", "1",
+		"--local_refinement_workers", "8",
 		"--scans"}
 
 	datasetsRootPath := path.Join(j.JobPath, "datasets")
