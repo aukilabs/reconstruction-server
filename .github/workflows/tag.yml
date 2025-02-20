@@ -34,6 +34,6 @@ jobs:
           docker build \
             -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:latest" \
             -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:${{ github.ref_name }}" \
-            --push "${{ github.ref_name }}" \
+            --push \
             -f docker/Dockerfile \
             .
