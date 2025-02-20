@@ -15,7 +15,7 @@ jobs:
 
       - name: Update version in file
         run: |
-          sed -i 's/VERSION = "develop"/VERSION = \"${{ github.ref_name }}\"/' utils/data_utils.py
+          sed -i 's/VERSION = "develop"/VERSION = "${{ github.ref_name }}"/' utils/data_utils.py
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
