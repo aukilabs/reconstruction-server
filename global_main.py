@@ -37,7 +37,8 @@ def main(args):
         logger.error("Stitching failed")
         return
     
-    filter_ply(args, output_path, logger)
+    ply_path = output_path / "RefinedPointCloud.ply"
+    filter_ply(ply_path, ply_path, logger=logger)
 
     logger.info("Global refinement completed successfully")
     return
