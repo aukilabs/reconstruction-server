@@ -22,6 +22,10 @@ def main(args):
     # Find all stitch paths
     truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, "global_refinement")
 
+    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
+    # Starting with oldest scan keeps the origin portal consistent.
+    dataset_paths.sort()
+    
     # Perform stitching
     result = stitching_helper(
         dataset_paths=dataset_paths,
