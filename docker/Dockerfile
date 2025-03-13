@@ -1,22 +1,43 @@
 ##
-## Go build for server
+## Rust build for server
 ##
-FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
-RUN mkdir -p /app
-WORKDIR /app
-ADD server /app
+FROM --platform=$BUILDPLATFORM rust:1.84-slim-bullseye AS rust-build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
-RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    pkg-config \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
+# Install Python packages
+RUN pip3 install --no-cache-dir numpy scipy matplotlib
+
+WORKDIR /app
+COPY server /app/server
+
+# Build the application
+RUN cd server && cargo build --release --target-dir ../target
+
+##
+## Runtime image
+##
+FROM --platform=$TARGETPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
+
+# Set default environment variables
+ENV PORT=18802
+ENV DOMAIN_MANAGER_ADDR="/ip4/127.0.0.1/udp/18800/quic-v1/p2p/12D3KooWDHaDQeuYeLM8b5zhNjqS7Pkh7KefqzCpDGpdwj5iE8pq"
 
 RUN apt-get update && apt-get install -y \
     wget \
@@ -162,12 +183,13 @@ RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
 
 RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
-
+RUN mkdir -p /app/volume && chown -R reconstruction-server:reconstruction-server /app/volume
 USER $USERNAME
 
-COPY --from=go-build /app/reconstruction ./reconstruction
-ENTRYPOINT ["./reconstruction"]
+# Copy the built binary from rust-build
+COPY --from=rust-build /app/target/release/server /app/server
 
-# Overridable using 'docker run ... image_name -api-key <your-api-key>'
-# TODO: we probably don't need api key, or make it optional. Just check domain token.
-CMD ["-api-key", "kaffekopp123"]
+ENTRYPOINT ["./server"]
+EXPOSE ${PORT}
+
+CMD ["${PORT}", "${DOMAIN_MANAGER_ADDR}"]

@@ -8,5 +8,10 @@ reconstruction
 .venv
 /venv
 /.idea
+<<<<<<< HEAD
 /src/cost_functions.cpython-38-x86_64-linux-gnu.so
 /src/ply_export.cpython-38-x86_64-linux-gnu.so
+=======
+target
+volume
+>>>>>>> 68c9f9b (integrated with new SDK)
