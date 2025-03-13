@@ -1,0 +1,23 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libp2p = { git = "https://github.com/aukilabs/rust-libp2p.git", branch = "fix/gossipsub-wasm" }
+networking = { git = "https://github.com/aukilabs/posemesh.git", branch = "chore/reconstruction-integration" }
+futures = "0.3.30"
+jsonwebtoken = "9.3.0"
+uuid = "1.13.2"
+rand = "0.9.0"
+domain = { git = "https://github.com/aukilabs/posemesh.git", branch = "chore/reconstruction-integration" }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+tokio = "1.44.0"
+quick-protobuf = "0.8.1"
+serde = "1.0.210"
+serde_json = "1.0.128"
+zip = "2.2.3"
+regex = "1.10.3"
+regexp = "0.3.2"
+chrono = "0.4"
