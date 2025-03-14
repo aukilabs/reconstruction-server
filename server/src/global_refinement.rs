@@ -7,7 +7,7 @@ use libp2p::Stream;
 use networking::{client::Client, libp2p::Networking};
 use quick_protobuf::{deserialize_from_slice, serialize_into_vec, BytesReader};
 use regex::Regex;
-use tokio::{self, select, time::{sleep, Duration}};
+use tokio::{self, select, sync::watch, time::{interval, sleep, Duration}};
 use futures::{stream::Zip, AsyncReadExt, StreamExt};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
@@ -61,8 +61,9 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         query.ids.extend(result.result_ids);
     }
     
+    c.publish(job_id.clone(), serialize_into_vec(t).expect("failed to serialize task update")).await.expect("failed to publish task update");
+
     // download the local refinement output
-    let mut downloader = datastore.consume(claim.domain_id.clone(), query, false).await;
     let task_path = Path::new(&base_path).join(job_id.clone());
     let dataset_path = Path::new(&task_path).join("datasets");
     let input_path = Path::new(&task_path).join("refined").join("local");
@@ -70,6 +71,36 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     fs::create_dir_all(input_path.clone()).expect("Failed to create input folder");
     fs::create_dir_all(dataset_path.clone()).expect("Failed to create dataset folder");
     fs::create_dir_all(output_path.clone()).expect("Failed to create output folder");
+
+    let (tx, rx) = watch::channel(false);
+    let mut c_clone = c.clone();
+    let job_id_clone = job_id.clone();
+    let task_clone = t.clone();
+    let heartbeat_handle = tokio::spawn(async move {
+        let mut rx = rx;
+        let mut interval = interval(Duration::from_secs(30)); // Send heartbeat every 30 seconds
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let mut progress_task = task_clone.clone();
+                    progress_task.status = task::Status::PROCESSING;
+                    if let Ok(message) = serialize_into_vec(&progress_task) {
+                        let _ = c_clone.publish(job_id_clone.clone(), message).await;
+                    }
+                }
+                Ok(_) = rx.changed() => {
+                    break;
+                }
+            }
+        }
+    });
+
+    let _cleanup = scopeguard::guard(tx, |tx| {
+        let _ = tx.send(true); // Signal heartbeat task to stop
+    });
+
+    let mut downloader = datastore.consume(claim.domain_id.clone(), query, false).await;
 
     loop {
         match downloader.next().await {
@@ -124,8 +155,6 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--job_id", &claim.job_id,
         "--scans"
     ];
-    c.publish(job_id.clone(), serialize_into_vec(t).expect("failed to serialize task update")).await.expect("failed to publish task update");
-
     let output = Command::new("python3")
         .args(params)
         .output();
@@ -202,4 +231,8 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     let buf = serialize_into_vec(&event).expect("failed to serialize task update");
     c.publish(job_id.clone(), buf).await.expect("failed to publish task update");
     println!("Finished executing {}", claim.task_name);
+
+    let _ = heartbeat_handle.await;
+    println!("Heartbeat task stopped");
+    return;
 }

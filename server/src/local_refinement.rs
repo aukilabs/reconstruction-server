@@ -4,7 +4,7 @@ use libp2p::Stream;
 use networking::client::Client;
 use quick_protobuf::serialize_into_vec;
 use futures::StreamExt;
-use tokio::time::sleep;
+use tokio::{sync::watch, time::{interval, sleep}};
 use uuid::Uuid;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use zip::{write::{FileOptions, SimpleFileOptions}, ZipWriter};
@@ -86,6 +86,37 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     fs::create_dir_all(&output_folder).expect("Failed to create directory");
     fs::create_dir_all(&input_folder).expect("Failed to create directory");
 
+    c.publish(job_id.clone(), serialize_into_vec(t).expect("failed to serialize task update")).await.expect("failed to publish task update");
+
+    let (tx, rx) = watch::channel(false);
+    let mut c_clone = c.clone();
+    let task_clone = t.clone();
+    let job_id_clone = job_id.clone();
+    let heartbeat_handle = tokio::spawn(async move {
+        let mut rx = rx;
+        let mut interval = interval(Duration::from_secs(30)); // Send heartbeat every 30 seconds
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let mut progress_task = task_clone.clone();
+                    progress_task.status = task::Status::PROCESSING;
+                    if let Ok(message) = serialize_into_vec(&progress_task) {
+                        let _ = c_clone.publish(job_id_clone.clone(), message).await;
+                    }
+                }
+                // Check if we should stop
+                Ok(_) = rx.changed() => {
+                    break;
+                }
+            }
+        }
+    });
+
+    let _cleanup = scopeguard::guard(tx, |tx| {
+        let _ = tx.send(true); // Signal heartbeat task to stop
+    });
+
     let mut downloader = datastore.consume("".to_string(), query_clone, false).await;
     let mut i = 0;
     loop {
@@ -136,8 +167,6 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--job_id", &claim.job_id,
         "--scans"
     ];
-    c.publish(job_id.clone(), serialize_into_vec(t).expect("failed to serialize task update")).await.expect("failed to publish task update");
-
     let child = Command::new("python3")
     .args(params)
     .stdout(Stdio::piped())
@@ -284,4 +313,8 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     };
     let buf = serialize_into_vec(&event).expect("failed to serialize task update");
     c.publish(job_id.clone(), buf).await.expect("failed to publish task update");
+
+    let _ = heartbeat_handle.await;
+    println!("Heartbeat task stopped");
+    return;
 }
