@@ -22,14 +22,14 @@ async fn shutdown_signal() {
 }
 /*
     * This is a simple example of a reconstruction node. It will connect to a set of bootstraps and execute reconstruction jobs.
-    * Usage: cargo run <port> <name> <domain_manager> 
+    * Usage: cargo run <port> <name> <domain_manager_addr> 
     * Example: cargo run 18808 reconstruction /ip4/127.0.0.1/udp/18800/quic-v1/p2p/12D3KooWDHaDQeuYeLM8b5zhNjqS7Pkh7KefqzCpDGpdwj5iE8pq
  */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
-        println!("Usage: {} <port> <name> <domain_manager>", args[0]);
+        println!("Usage: {} <port> <name> <domain_manager_addr>", args[0]);
         return Ok(());
     }
     let port = args[1].parse::<u16>().unwrap();
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let private_key_path = format!("{}/pkey", base_path);
 
     let domain_manager_id = domain_manager.split("/").last().unwrap().to_string();
-    let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, None, Some(private_key_path));
+    let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, None, Some(private_key_path));
     let mut n = domain_cluster.peer.clone();
     let mut local_refinement_v1_handler = n.client.set_stream_handler("/local-refinement/v1".to_string()).await.unwrap();
     let mut global_refinement_v1_handler = n.client.set_stream_handler("/global-refinement/v1".to_string()).await.unwrap();
