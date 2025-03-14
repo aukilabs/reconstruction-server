@@ -31,9 +31,20 @@ jobs:
           aws-access-key-id: ${{ secrets.GLOBAL_COMMON_AWS_ACCESS_KEY }}
           aws-secret-access-key: ${{ secrets.GLOBAL_COMMON_AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.GLOBAL_COMMON_AWS_REGION }}
+      
       - name: Log in to AWS ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ steps.ecr-login.outputs.registry }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=long
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,8 +56,7 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.ecr-login.outputs.registry }}/reconstruction-server:new-sdk-integration-${{ github.sha }}
-          no-cache: true
+          tags: ${{ steps.meta.outputs.tags }}
 
       - name: Check Available Space
         run: df -h
