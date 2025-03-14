@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04-8-cores
+    runs-on: ubuntu-22.04-4-cores
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
