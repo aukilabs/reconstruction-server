@@ -188,8 +188,3 @@ USER $USERNAME
 
 # Copy the built binary from rust-build
 COPY --from=rust-build /app/target/release/server /app/server
-
-ENTRYPOINT ["./server"]
-EXPOSE ${PORT}
-
-CMD ["${PORT}", "${DOMAIN_MANAGER_ADDR}"]
