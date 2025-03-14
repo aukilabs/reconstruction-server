@@ -3,7 +3,7 @@ use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
 use libp2p::Stream;
 use networking::{client::Client, libp2p::Networking};
 use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
-use tokio::{self, select, time::{sleep, Duration}};
+use tokio::{self, select, signal::unix::{signal, SignalKind}, time::{sleep, Duration}};
 use futures::{AsyncReadExt, StreamExt};
 use uuid::Uuid;
 use regex::Regex;
@@ -11,15 +11,24 @@ mod local_refinement;
 mod global_refinement;
 mod utils;
 
+async fn shutdown_signal() {
+    let mut term_signal = signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+    let mut int_signal = signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
+
+    tokio::select! {
+        _ = term_signal.recv() => println!("Received SIGTERM, exiting..."),
+        _ = int_signal.recv() => println!("Received SIGINT, exiting..."),
+    }
+}
 /*
     * This is a simple example of a reconstruction node. It will connect to a set of bootstraps and execute reconstruction jobs.
     * Usage: cargo run <port> <name> <domain_manager> 
-    * Example: cargo run 18808 reconstruction 
+    * Example: cargo run 18808 reconstruction /ip4/127.0.0.1/udp/18800/quic-v1/p2p/12D3KooWDHaDQeuYeLM8b5zhNjqS7Pkh7KefqzCpDGpdwj5iE8pq
  */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
+    if args.len() < 4 {
         println!("Usage: {} <port> <name> <domain_manager>", args[0]);
         return Ok(());
     }
@@ -43,6 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
                 let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, Box::new(remote_storage.clone()), n.client.clone()));
+            }
+            _ = shutdown_signal() => {
+                println!("Received termination signal, shutting down...");
+                break;
             }
             else => break
         }
