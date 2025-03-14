@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-8-cores
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,3 +47,6 @@ jobs:
           push: true
           tags: ${{ steps.ecr-login.outputs.registry }}/reconstruction-server:new-sdk-integration-${{ github.sha }}
           no-cache: true
+
+      - name: Check Available Space
+        run: df -h
