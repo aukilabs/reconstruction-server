@@ -41,7 +41,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ steps.ecr-login.outputs.registry }}
+            ${{ steps.ecr-login.outputs.registry }}/reconstruction-server
           tags: |
             type=ref,event=branch
             type=sha,prefix=,format=long
