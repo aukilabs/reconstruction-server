@@ -919,7 +919,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#1a2596262e1b82aeedf6d1a6ebbc895f25d88959"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#6c25ade9ae278090692394008f235f1b80db8ec6"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -1966,6 +1966,7 @@ dependencies = [
  "libp2p-autonat",
  "libp2p-connection-limits",
  "libp2p-core",
+ "libp2p-dcutr",
  "libp2p-dns",
  "libp2p-gossipsub",
  "libp2p-identify",
@@ -2058,6 +2059,28 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "unsigned-varint",
+ "void",
+ "web-time",
+]
+
+[[package]]
+name = "libp2p-dcutr"
+version = "0.12.0"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+dependencies = [
+ "asynchronous-codec",
+ "either",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "lru",
+ "quick-protobuf",
+ "quick-protobuf-codec 0.3.1 (git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm)",
+ "thiserror 1.0.69",
+ "tracing",
  "void",
  "web-time",
 ]
@@ -2206,6 +2229,7 @@ source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub
 dependencies = [
  "futures",
  "libp2p-core",
+ "libp2p-dcutr",
  "libp2p-gossipsub",
  "libp2p-identify",
  "libp2p-identity",
@@ -2753,7 +2777,7 @@ dependencies = [
 [[package]]
 name = "networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#1a2596262e1b82aeedf6d1a6ebbc895f25d88959"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#6c25ade9ae278090692394008f235f1b80db8ec6"
 dependencies = [
  "cbindgen",
  "console_error_panic_hook",
@@ -3503,7 +3527,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#1a2596262e1b82aeedf6d1a6ebbc895f25d88959"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#6c25ade9ae278090692394008f235f1b80db8ec6"
 dependencies = [
  "once_cell",
  "tokio",
