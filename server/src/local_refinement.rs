@@ -165,7 +165,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--output", output_folder.to_str().unwrap(),
         "--domain_id", &claim.domain_id,
         "--job_id", &claim.job_id,
-        "--scans"
+        "--scans", &suffix.clone(),
     ];
     let child = Command::new("python3")
     .args(params)
