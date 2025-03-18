@@ -81,7 +81,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     let task_folder = Path::new(&base_path).join(&claim.job_id);
     let scan_folder = Path::new(&task_folder).join("datasets");
     let input_folder = Path::new(&scan_folder).join(&suffix.clone());
-    let output_folder = Path::new(&task_folder).join("refined").join("local").join(&suffix);
+    let output_folder = Path::new(&task_folder).join("refined").join("local").join(&suffix.clone());
     fs::create_dir_all(&scan_folder).expect("Failed to create directory");
     fs::create_dir_all(&output_folder).expect("Failed to create directory");
     fs::create_dir_all(&input_folder).expect("Failed to create directory");
@@ -165,7 +165,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--output", output_folder.to_str().unwrap(),
         "--domain_id", &claim.domain_id,
         "--job_id", &claim.job_id,
-        "--scans", &suffix.clone(),
+        "--scans", suffix.as_str(),
     ];
     let child = Command::new("python3")
     .args(params)
