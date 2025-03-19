@@ -2,6 +2,7 @@ from pathlib import Path
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 
+import sys
 from local_main import main as local_main
 from global_main import main as global_main
 from occlusion_box import main as occlusion_box_main
@@ -221,7 +222,7 @@ def main(args):
         process_refinement(args, logger)
     except Exception as e:
         handle_refinement_error(e, args, logger)
-        raise e
+        raise sys.exit(1)
 
 
 def parse_args():
