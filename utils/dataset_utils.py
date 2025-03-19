@@ -661,20 +661,15 @@ def _get_refined_results(
         stitch_data.image_ids_per_qr,
         with_scale=False
     )
-
-    # Run bundle adjustment
-    sorted_image_ids = sorted(list(stitch_data.combined_rec.images.keys()))
-    refined_rec, refined_detections = run_stitching(
-        stitch_data.detections_per_qr,
-        stitch_data.image_ids_per_qr,
-        stitch_data.timestamp_per_image,
-        stitch_data.arkit_precomputed,
+    
+    # World space QR detections using globally refined camera poses
+    refined_detections = get_world_space_qr_codes(
         stitch_data.combined_rec,
-        sorted_image_ids,
-        global_ba=True
+        stitch_data.detections_per_qr,
+        stitch_data.image_ids_per_qr
     )
 
-    # Calculate mean poses
+    # Calculate mean pose per QR code
     mean_poses = {qr_id: [mean_pose(poses)] 
                  for qr_id, poses in refined_detections.items()}
 
@@ -691,10 +686,10 @@ def _get_refined_results(
     if with_3dpoints:
         sfm_dir = paths.output_path / "refined_sfm_combined"
         os.makedirs(sfm_dir, exist_ok=True)
-        refined_rec.write(sfm_dir)
+        stitch_data.combined_rec.write(sfm_dir)
         
         ply_path = paths.refined_group_dir / 'global' / "RefinedPointCloud.ply"
-        export_rec_as_ply(refined_rec, ply_path)
+        export_rec_as_ply(stitch_data.combined_rec, ply_path)
 
     if truth_portal_poses:
         compare_portals(
@@ -706,7 +701,7 @@ def _get_refined_results(
             correct_scale=True
         )
 
-    return StitchResults(rec=refined_rec, detections=refined_detections, poses=mean_poses)
+    return StitchResults(rec=stitch_data.combined_rec, detections=refined_detections, poses=mean_poses)
 
 
 def portals_to_evo_path(pose_per_qr, flatten=False):

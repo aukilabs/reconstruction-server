@@ -1,8 +1,10 @@
 from pathlib import Path
 import argparse
 import os
+
 from utils.data_utils import get_data_paths, setup_logger
 from utils.dataset_utils import stitching_helper
+from utils.point_cloud_utils import filter_ply
 
 def main(args):
     # Create and configure logger
@@ -20,6 +22,10 @@ def main(args):
     # Find all stitch paths
     truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, "global_refinement")
 
+    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
+    # Starting with oldest scan keeps the origin portal consistent.
+    dataset_paths.sort()
+    
     # Perform stitching
     result = stitching_helper(
         dataset_paths=dataset_paths,
@@ -34,6 +40,9 @@ def main(args):
     if result is None:
         logger.error("Stitching failed")
         return
+    
+    ply_path = output_path / "RefinedPointCloud.ply"
+    filter_ply(ply_path, ply_path, logger=logger)
 
     logger.info("Global refinement completed successfully")
     return
@@ -46,6 +55,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_refined_outputs", action='store_true', default=False, help="Use refined outputs")
     parser.add_argument("--add_3dpoints", action='store_true', default=False, help="Consider whole 3D points")
     parser.add_argument("--basic_stitch_only", action='store_true', default=False, help="Perform basic stitching only")
+    parser.add_argument("--ply_downsample", type=float, default=None, help="Downsample the point cloud to given voxel size")
+    parser.add_argument("--ply_remove_outliers", action='store_true', default=False, help="Remove outliers from the point cloud")
     parser.add_argument("--domain_id", type=str, default="")
     parser.add_argument("--job_id", type=str, default="")
     parser.add_argument("--log_level", type=str, default="INFO", 
