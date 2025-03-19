@@ -18,6 +18,7 @@ import subprocess
 from dateutil import parser
 from pathlib import Path
 from typing import NamedTuple, Dict
+import sys
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -859,10 +860,13 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     if log_file:
         logger, _ = add_file_handler(logger, log_file)
 
-    console_handler = logging.StreamHandler()
+    print("Setting up JSON formatter")
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
         domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
     logger.addHandler(console_handler)
+    sys.stdout.reconfigure(line_buffering=True) 
+    logger.info("JSON formatter setup complete")
 
     return logger
 

@@ -206,32 +206,36 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         });
     }
 
-    // Wait for the command to complete
-    let status = child.wait();
-
-    match status {
-        Err(e) => {
-            eprintln!("Failed to execute local refinement: {}", e);
-            t.status = task::Status::FAILED;
-            t.output = Some(task::Any {
-                type_url: "Error".to_string(),
-                value: serialize_into_vec(&task::Error {
-                    message: e.to_string(),
-                }).unwrap(),
-            });
-            let message = serialize_into_vec(t).expect("failed to serialize task update");
-            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-            return;
-        }
-        Ok(exit_status) => {
-            if !exit_status.success() {
-                eprintln!("Failed to execute local refinement: {}", exit_status.code().unwrap_or(-1));
+    // Wait for the process to complete
+    match child.wait() {
+        Ok(status) => {
+            if !status.success() {
+                eprintln!("Python process exited with status: {}", status);
                 t.status = task::Status::FAILED;
+                t.output = Some(task::Any {
+                    type_url: "Error".to_string(),
+                    value: serialize_into_vec(&task::Error {
+                        message: format!("Python process exited with status: {}", status),
+                    }).unwrap(),
+                });
                 let message = serialize_into_vec(t).expect("failed to serialize task update");
                 c.publish(job_id.clone(), message).await.expect("failed to publish task update");
                 return;
             }
             println!("Finished executing {}", claim.task_name);
+        }
+        Err(e) => {
+            eprintln!("Failed to wait for Python process: {}", e);
+            t.status = task::Status::FAILED;
+            t.output = Some(task::Any {
+                type_url: "Error".to_string(),
+                value: serialize_into_vec(&task::Error {
+                    message: format!("Failed to wait for Python process: {}", e),
+                }).unwrap(),
+            });
+            let message = serialize_into_vec(t).expect("failed to serialize task update");
+            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+            return;
         }
     }
 
