@@ -3,26 +3,38 @@
 ##
 FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04 AS deps
 
-RUN apt-get update && apt-get install -y \
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Basic build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
-    vim \
     git \
-    nano \
-    jq \
-    less \
     cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     libtool \
     libffi-dev \
     ninja-build \
-    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Boost and Eigen dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-program-options-dev \
     libboost-filesystem-dev \
     libboost-graph-dev \
     libboost-system-dev \
     libeigen3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# COLMAP dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libflann-dev \
     libfreeimage-dev \
     libmetis-dev \
@@ -33,16 +45,19 @@ RUN apt-get update && apt-get install -y \
     libqt5opengl5-dev \
     libcgal-dev \
     libsuitesparse-dev \
-    python3-pip \
-    python3-tk
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get install -y --no-install-recommends \
+# Python and networking tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    python3-tk \
     ssh \
     netcat-openbsd \
     ca-certificates \
     iproute2 \
     iputils-ping \
-    bind9-dnsutils
+    bind9-dnsutils \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --upgrade pip setuptools wheel
 
