@@ -1,43 +1,7 @@
 ##
-## Rust build for server
-##
-FROM --platform=$BUILDPLATFORM rust:1.84-slim-bullseye AS rust-build
-ARG TARGETOS
-ARG TARGETARCH
-ARG VERSION
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dev \
-    build-essential \
-    pkg-config \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python packages
-RUN pip3 install --no-cache-dir numpy scipy matplotlib
-
-WORKDIR /app
-COPY server /app/server
-
-# Build the application
-RUN cd server && cargo build --release --target-dir ../target
-
-##
 ## Runtime image
 ##
-FROM --platform=$TARGETPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
-
-ARG USERNAME=reconstruction-server
-ARG USER_UID=1000
-ARG USER_GID=$USER_UID
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Set default environment variables
-ENV PORT=18802
-ENV DOMAIN_MANAGER_ADDR="/ip4/127.0.0.1/udp/18800/quic-v1/p2p/12D3KooWDHaDQeuYeLM8b5zhNjqS7Pkh7KefqzCpDGpdwj5iE8pq"
+FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04 AS deps
 
 RUN apt-get update && apt-get install -y \
     wget \
@@ -161,6 +125,26 @@ RUN git clone https://github.com/google/draco.git && \
     cd build && \
     cmake .. && \
     make
+##
+## Rust build for server
+##
+FROM --platform=$BUILDPLATFORM rust:1.84-slim-bullseye AS rust-build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+
+WORKDIR /app
+COPY server /app/server
+
+# Build the application
+RUN cd server && cargo build --release --target-dir ../target
+
+FROM deps AS server-build
+
+ARG USERNAME=reconstruction-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
