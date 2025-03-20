@@ -143,7 +143,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
                     .content)
                     .expect("Failed to write data to file");
                 i+=1;
-                println!("downloaded {}", filename);
+                println!("downloaded {} into {}", filename, path.to_str().unwrap());
             }
             Some(Err(_)) => {
                 t.status = task::Status::RETRY;
