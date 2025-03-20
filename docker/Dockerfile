@@ -133,11 +133,15 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
 
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY server /app/server
 
 # Build the application
-RUN cd server && cargo build --release --target-dir ../target
+RUN cd server && cargo build --release
 
 FROM deps AS server-build
 
@@ -171,4 +175,4 @@ RUN mkdir -p /app/volume && chown -R reconstruction-server:reconstruction-server
 USER $USERNAME
 
 # Copy the built binary from rust-build
-COPY --from=rust-build /app/target/release/server /app/server
+COPY --from=rust-build /app/server/target/release/server /app/server
