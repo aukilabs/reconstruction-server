@@ -102,8 +102,8 @@ def run_triangulation(
             'use_arkit_relposes': False,
             'use_arkit_centerdist': True,
             'centerdist_weight': 1e2,
-            'floor_height_weight': 1e5,
-            'floor_direction_weight': 1e4
+            'floor_height_weight': 1e3,
+            'floor_direction_weight': 1e1
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
