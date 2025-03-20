@@ -81,7 +81,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     let task_folder = Path::new(&base_path).join(&claim.job_id);
     let scan_folder = Path::new(&task_folder).join("datasets");
     let input_folder = Path::new(&scan_folder).join(&suffix.clone());
-    let output_folder = Path::new(&task_folder).join("refined").join("local").join(&suffix.clone());
+    let output_folder = Path::new(&task_folder).join("refined").join("local");
     fs::create_dir_all(&scan_folder).expect("Failed to create directory");
     fs::create_dir_all(&output_folder).expect("Failed to create directory");
     fs::create_dir_all(&input_folder).expect("Failed to create directory");
@@ -122,20 +122,34 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     loop {
         match downloader.next().await {
             Some(Ok(data)) => {
-                let filename = match data.metadata.data_type.as_str() {
-                    "dmt_manifest_json" => "Manifest.json".to_string(),
-                    "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
-                    "dmt_arposes_csv" => "ARposes.csv".to_string(),
-                    "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
-                    "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
-                    "dmt_frames_csv" => "Frames.csv".to_string(),
-                    "dmt_gyro_csv" => "Gyro.csv".to_string(),
-                    "dmt_accel_csv" => "Accel.csv".to_string(),
-                    "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
-                    "dmt_recording_mp4" => "Frames.mp4".to_string(),
+                let filename = match data.metadata.name.as_str() {
+                    "Manifest.json" => "Manifest.json".to_string(),
+                    "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
+                    "ARposes.csv" => "ARposes.csv".to_string(),
+                    "PortalDetections.csv" => "PortalDetections.csv".to_string(),
+                    "CameraIntrinsics.csv" => "CameraIntrinsics.csv".to_string(),
+                    "Frames.csv" => "Frames.csv".to_string(),
+                    "Gyro.csv" => "Gyro.csv".to_string(),
+                    "Accel.csv" => "Accel.csv".to_string(),
+                    "gyro_accel.csv" => "gyro_accel.csv".to_string(),
+                    "Frames.mp4" => "Frames.mp4".to_string(),
                     _ => {
-                        println!("unknown domain data type: {}", data.metadata.data_type);
-                        format!("{}.{}", data.metadata.name, data.metadata.data_type)
+                        match data.metadata.data_type.as_str() {
+                            "dmt_manifest_json" => "Manifest.json".to_string(),
+                            "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
+                            "dmt_arposes_csv" => "ARposes.csv".to_string(),
+                            "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
+                            "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
+                            "dmt_frames_csv" => "Frames.csv".to_string(),
+                            "dmt_gyro_csv" => "Gyro.csv".to_string(),
+                            "dmt_accel_csv" => "Accel.csv".to_string(),
+                            "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
+                            "dmt_recording_mp4" => "Frames.mp4".to_string(),
+                            _ => {
+                                println!("unknown domain data type: {}", data.metadata.data_type);
+                                format!("{}.{}", data.metadata.name, data.metadata.data_type)
+                            }
+                        }
                     }
                 };
                 let path = input_folder.join(&filename);
@@ -143,7 +157,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
                     .content)
                     .expect("Failed to write data to file");
                 i+=1;
-                println!("downloaded {} into {}", filename, path.to_str().unwrap());
+                println!("downloaded {}", filename);
             }
             Some(Err(_)) => {
                 t.status = task::Status::RETRY;
