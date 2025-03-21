@@ -425,6 +425,7 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
                 csv_writer.writerow(row)
 
 def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corners_per_qr):
+    print(f"Saving portal CSV to {csv_path}")
     with open(csv_path, mode='w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile)
 
@@ -450,6 +451,7 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
                 row.extend(corner_array)
                 # Write the row to the CSV file
                 csv_writer.writerow(row)
+    print(f"Saved portal CSV to {csv_path}")
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
