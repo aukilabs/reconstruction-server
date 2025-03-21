@@ -426,8 +426,9 @@ def save_qr_poses_csv(poses_per_qr, csv_path):
 
 def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corners_per_qr):
     print(f"Saving portal CSV to {csv_path}")
-    with open(csv_path, mode='w', newline='') as csvfile:
-        csv_writer = csv.writer(csvfile)
+    try:
+        with open(csv_path, mode='w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
 
         for short_id, qr_poses in poses_per_qr.items():
 
@@ -446,12 +447,14 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
                     portal_sizes[short_id],
                     pos[0], pos[1], pos[2],
                     quat[0], quat[1], quat[2], quat[3]
-                ]
+                    ]
 
-                row.extend(corner_array)
-                # Write the row to the CSV file
-                csv_writer.writerow(row)
-    print(f"Saved portal CSV to {csv_path}")
+                    row.extend(corner_array)
+                    # Write the row to the CSV file
+                    csv_writer.writerow(row)
+    except Exception as e:
+        print(f"Error saving portal CSV to {csv_path}")
+        print(e)
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
