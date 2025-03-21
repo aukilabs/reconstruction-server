@@ -430,14 +430,17 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
         with open(csv_path, mode='w', newline='') as csvfile:
             csv_writer = csv.writer(csvfile)
 
+        print(f"Opening portal CSV file {csv_path}")
         for short_id, qr_poses in poses_per_qr.items():
 
             corresponding_image_ids = image_ids_per_qr[short_id]
             corresponding_corners = corners_per_qr[short_id]
 
+            print(f"Zipping portal {short_id} with images {corresponding_image_ids}")
             for image_id, qr_pose, qr_corners in zip(corresponding_image_ids, qr_poses, corresponding_corners):
                 pos, quat = qr_pose.translation, qr_pose.rotation.quat
                 corner_array = [coord for coords in qr_corners for coord in coords]
+                print(f"Corner array: {corner_array}")
                 # Create a row for the CSV
                 # Format 
                 # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
@@ -451,7 +454,10 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
 
                     row.extend(corner_array)
                     # Write the row to the CSV file
+                    print(f"Writing row to CSV: {row}")
                     csv_writer.writerow(row)
+                    print(f"Wrote row to CSV: {row}")
+        print(f"Saved portal CSV to {csv_path}")
     except Exception as e:
         print(f"Error saving portal CSV to {csv_path}")
         print(e)
