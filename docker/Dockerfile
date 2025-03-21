@@ -1,8 +1,10 @@
 ##
 ## Runtime image
 ##
-FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04 AS deps
+FROM nvidia/cuda:11.0.3-base-ubuntu20.04 AS deps
+
 ARG DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -34,8 +36,7 @@ RUN apt-get update && apt-get install -y \
     libcgal-dev \
     libsuitesparse-dev \
     python3-pip \
-    python3-tk \
-    && rm -rf /var/lib/apt/lists/*
+    python3-tk
 
 RUN apt-get install -y --no-install-recommends \
     ssh \
@@ -43,8 +44,7 @@ RUN apt-get install -y --no-install-recommends \
     ca-certificates \
     iproute2 \
     iputils-ping \
-    bind9-dnsutils \
-    && rm -rf /var/lib/apt/lists/*
+    bind9-dnsutils
 
 RUN pip install --upgrade pip setuptools wheel
 
