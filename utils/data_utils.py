@@ -438,6 +438,7 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
     except Exception as e:
         print(f"Error saving portal CSV to {csv_path}")
         print(e)
+        raise e
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
