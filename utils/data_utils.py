@@ -435,11 +435,11 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
                         quat[0], quat[1], quat[2], quat[3]
                         ]
 
-                        row.extend(corner_array)
-                        # Write the row to the CSV file
-                        print(f"Writing row to CSV: {row}")
-                        csv_writer.writerow(row)
-                        print(f"Wrote row to CSV: {row}")
+                    row.extend(corner_array)
+                    # Write the row to the CSV file
+                    print(f"Writing row to CSV: {row}")
+                    csv_writer.writerow(row)
+                    print(f"Wrote row to CSV: {row}")
         print(f"Saved portal CSV to {csv_path}")
     except Exception as e:
         print(f"Error saving portal CSV to {csv_path}")
