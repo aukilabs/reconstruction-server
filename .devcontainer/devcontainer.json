@@ -32,5 +32,15 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
+    "postCreateCommand": [
+        "cp /app/src/hloc_extras/lightglue.py /src/Hierarchical-Localization/hloc/matchers/",
+        "cp /app/src/hloc_extras/superpoint.py /src/Hierarchical-Localization/hloc/extractors/",
+        "cd /app",
+        "pwd",
+        "ls -la",
+        ".devcontainer/build_golang_server.sh",
+        "mkdir -p build",
+        "(cd build && pwd && ls -la && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all)",
+        "echo 'Done!'"
+    ]
 }
