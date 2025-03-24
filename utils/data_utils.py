@@ -434,7 +434,7 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
                         pos[0], pos[1], pos[2],
                         quat[0], quat[1], quat[2], quat[3]
                         ]
-
+                    print(f"Extend row: {row}")
                     row.extend(corner_array)
                     # Write the row to the CSV file
                     print(f"Writing row to CSV: {row}")
