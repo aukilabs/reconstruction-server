@@ -440,7 +440,7 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
                 for image_id, qr_pose, qr_corners in zip(corresponding_image_ids, qr_poses, corresponding_corners):
                     pos, quat = qr_pose.translation, qr_pose.rotation.quat
                     corner_array = [coord for coords in qr_corners for coord in coords]
-                    print(f"Corner array: {corner_array}")
+                    print(f"Corner array: {corner_array}, {portal_sizes}")
                     # Create a row for the CSV
                     # Format 
                     # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
