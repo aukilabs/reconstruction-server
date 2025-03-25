@@ -172,7 +172,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     }
     println!("Finished downloading {} data for {}", i, claim.task_name);
 
-    if let Err(e) = write_scan_data_summary(scan_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
+    if let Err(e) = write_scan_data_summary(input_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
         eprintln!("Failed to write scan data summary: {}", e);
         t.status = task::Status::FAILED;
         t.output = Some(task::Any {
