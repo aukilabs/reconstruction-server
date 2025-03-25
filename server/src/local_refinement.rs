@@ -10,7 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use zip::{write::{FileOptions, SimpleFileOptions}, ZipWriter};
 use std::io::BufRead;
 
-use crate::utils::handshake;
+use crate::utils::{handshake, write_scan_data_summary};
 
 pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box<dyn Datastore>, mut c: Client) {
     let claim = handshake(&mut stream).await.expect("Failed to handshake");
@@ -171,6 +171,20 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     }
     println!("Finished downloading {} data for {}", i, claim.task_name);
+
+    if let Err(e) = write_scan_data_summary(scan_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
+        eprintln!("Failed to write scan data summary: {}", e);
+        t.status = task::Status::FAILED;
+        t.output = Some(task::Any {
+            type_url: "Error".to_string(),
+            value: serialize_into_vec(&task::Error {
+                message: format!("Failed to write scan data summary: {}", e),
+            }).unwrap(),
+        });
+        let message = serialize_into_vec(t).expect("failed to serialize task update");
+        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+        return;
+    }
 
     let params = vec![
         "main.py",
