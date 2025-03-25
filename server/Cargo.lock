@@ -919,6 +919,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#8b5978edab2714f601161f39404d8147872a20e3"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -2814,6 +2815,7 @@ dependencies = [
 [[package]]
 name = "networking"
 version = "0.1.0"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#8b5978edab2714f601161f39404d8147872a20e3"
 dependencies = [
  "cbindgen",
  "console_error_panic_hook",
@@ -3565,6 +3567,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#8b5978edab2714f601161f39404d8147872a20e3"
 dependencies = [
  "once_cell",
  "tokio",
