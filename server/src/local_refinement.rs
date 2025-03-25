@@ -18,11 +18,11 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {
         name: claim.task_name.clone(),
-        receiver: claim.receiver.clone(),
+        receiver: Some(claim.receiver.clone()),
         sender: claim.sender.clone(),
         endpoint: "/local-refinement/v1".to_string(),
         status: task::Status::STARTED,
-        access_token: "".to_string(),
+        access_token: None,
         job_id: job_id.clone(),
         output: None,
     };
@@ -41,17 +41,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
 
     // input.name_regexp looks .*_date
     // get date from regexp
-    if input.query.is_none() {
-        t.status = task::Status::FAILED;
-        t.output = Some(task::Any {
-            type_url: "Error".to_string(),
-            value: "Query is empty".as_bytes().to_vec(),
-        });
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
-    let query = input.query.clone().unwrap();
+    let query = input.query.clone();
     let query_clone = query.clone();
     let name_regexp = query.name_regexp;
     if name_regexp.is_none() {
@@ -113,170 +103,174 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     });
 
-    let _cleanup = scopeguard::guard(tx, |tx| {
+    let _cleanup = scopeguard::guard(tx.clone(), |tx| {
         let _ = tx.send(true); // Signal heartbeat task to stop
     });
 
-    let mut downloader = datastore.consume("".to_string(), query_clone, false).await;
-    let mut i = 0;
-    loop {
-        match downloader.next().await {
-            Some(Ok(data)) => {
-                let filename = match data.metadata.name.as_str() {
-                    "Manifest.json" => "Manifest.json".to_string(),
-                    "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
-                    "ARposes.csv" => "ARposes.csv".to_string(),
-                    "PortalDetections.csv" => "PortalDetections.csv".to_string(),
-                    "CameraIntrinsics.csv" => "CameraIntrinsics.csv".to_string(),
-                    "Frames.csv" => "Frames.csv".to_string(),
-                    "Gyro.csv" => "Gyro.csv".to_string(),
-                    "Accel.csv" => "Accel.csv".to_string(),
-                    "gyro_accel.csv" => "gyro_accel.csv".to_string(),
-                    "Frames.mp4" => "Frames.mp4".to_string(),
-                    _ => {
-                        match data.metadata.data_type.as_str() {
-                            "dmt_manifest_json" => "Manifest.json".to_string(),
-                            "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
-                            "dmt_arposes_csv" => "ARposes.csv".to_string(),
-                            "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
-                            "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
-                            "dmt_frames_csv" => "Frames.csv".to_string(),
-                            "dmt_gyro_csv" => "Gyro.csv".to_string(),
-                            "dmt_accel_csv" => "Accel.csv".to_string(),
-                            "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
-                            "dmt_recording_mp4" => "Frames.mp4".to_string(),
-                            _ => {
-                                println!("unknown domain data type: {}", data.metadata.data_type);
-                                format!("{}.{}", data.metadata.name, data.metadata.data_type)
-                            }
-                        }
-                    }
-                };
-                let path = input_folder.join(&filename);
-                fs::write(path, &data
-                    .content)
-                    .expect("Failed to write data to file");
-                i+=1;
-                println!("downloaded {}", filename);
-            }
-            Some(Err(_)) => {
-                t.status = task::Status::RETRY;
-                let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
-            }
-            None => {
-                break;
-            }
-        }
-    }
-    println!("Finished downloading {} data for {}", i, claim.task_name);
+    // let mut downloader = datastore.consume("".to_string(), query_clone, false).await;
+    // let mut i = 0;
+    // loop {
+    //     match downloader.next().await {
+    //         Some(Ok(data)) => {
+    //             let filename = match data.metadata.name.as_str() {
+    //                 "Manifest.json" => "Manifest.json".to_string(),
+    //                 "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
+    //                 "ARposes.csv" => "ARposes.csv".to_string(),
+    //                 "PortalDetections.csv" => "PortalDetections.csv".to_string(),
+    //                 "CameraIntrinsics.csv" => "CameraIntrinsics.csv".to_string(),
+    //                 "Frames.csv" => "Frames.csv".to_string(),
+    //                 "Gyro.csv" => "Gyro.csv".to_string(),
+    //                 "Accel.csv" => "Accel.csv".to_string(),
+    //                 "gyro_accel.csv" => "gyro_accel.csv".to_string(),
+    //                 "Frames.mp4" => "Frames.mp4".to_string(),
+    //                 _ => {
+    //                     match data.metadata.data_type.as_str() {
+    //                         "dmt_manifest_json" => "Manifest.json".to_string(),
+    //                         "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
+    //                         "dmt_arposes_csv" => "ARposes.csv".to_string(),
+    //                         "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
+    //                         "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
+    //                         "dmt_frames_csv" => "Frames.csv".to_string(),
+    //                         "dmt_gyro_csv" => "Gyro.csv".to_string(),
+    //                         "dmt_accel_csv" => "Accel.csv".to_string(),
+    //                         "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
+    //                         "dmt_recording_mp4" => "Frames.mp4".to_string(),
+    //                         _ => {
+    //                             println!("unknown domain data type: {}", data.metadata.data_type);
+    //                             format!("{}.{}", data.metadata.name, data.metadata.data_type)
+    //                         }
+    //                     }
+    //                 }
+    //             };
+    //             let path = input_folder.join(&filename);
+    //             fs::write(path, &data
+    //                 .content)
+    //                 .expect("Failed to write data to file");
+    //             i+=1;
+    //             println!("downloaded {}", filename);
+    //         }
+    //         Some(Err(_)) => {
+    //             t.status = task::Status::RETRY;
+    //             let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //             c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //             return;
+    //         }
+    //         None => {
+    //             break;
+    //         }
+    //     }
+    // }
+    // println!("Finished downloading {} data for {}", i, claim.task_name);
 
-    if let Err(e) = write_scan_data_summary(input_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
-        eprintln!("Failed to write scan data summary: {}", e);
-        t.status = task::Status::FAILED;
-        t.output = Some(task::Any {
-            type_url: "Error".to_string(),
-            value: serialize_into_vec(&task::Error {
-                message: format!("Failed to write scan data summary: {}", e),
-            }).unwrap(),
-        });
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
+    // if let Err(e) = write_scan_data_summary(input_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
+    //     eprintln!("Failed to write scan data summary: {}", e);
+    //     t.status = task::Status::FAILED;
+    //     t.output = Some(task::Any {
+    //         type_url: "Error".to_string(),
+    //         value: serialize_into_vec(&task::Error {
+    //             message: format!("Failed to write scan data summary: {}", e),
+    //         }).unwrap(),
+    //     });
+    //     let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //     c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //     return;
+    // }
 
-    let params = vec![
-        "main.py",
-        "--mode", "local_refinement",
-        "--job_root_path", task_folder.to_str().unwrap(),
-        "--output", output_folder.to_str().unwrap(),
-        "--domain_id", &claim.domain_id,
-        "--job_id", &claim.job_id,
-        "--scans", suffix.as_str(),
-    ];
-    let child = Command::new("python3")
-    .args(params)
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn();
+    // let params = vec![
+    //     "main.py",
+    //     "--mode", "local_refinement",
+    //     "--job_root_path", task_folder.to_str().unwrap(),
+    //     "--output", output_folder.to_str().unwrap(),
+    //     "--domain_id", &claim.domain_id,
+    //     "--job_id", &claim.job_id,
+    //     "--scans", suffix.as_str(),
+    // ];
+    // let child = Command::new("python3")
+    // .args(params)
+    // .stdout(Stdio::piped())
+    // .stderr(Stdio::piped())
+    // .spawn();
 
-    if let Err(e) = child {
-        eprintln!("Failed to execute local refinement: {}", e);
-        t.status = task::Status::FAILED;
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
-    let mut child = child.unwrap();
+    // if let Err(e) = child {
+    //     eprintln!("Failed to execute local refinement: {}", e);
+    //     t.status = task::Status::FAILED;
+    //     let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //     c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //     return;
+    // }
+    // let mut child = child.unwrap();
 
-    // Read stdout in real-time
-    if let Some(stdout) = child.stdout.take() {
-        let stdout_reader = BufReader::new(stdout);
-        tokio::spawn(async move {
-            for line in stdout_reader.lines() {
-                if let Ok(line) = line {
-                    println!("stdout: {}", line);
-                }
-            }
-        });
-    }
+    // // Read stdout in real-time
+    // if let Some(stdout) = child.stdout.take() {
+    //     let stdout_reader = BufReader::new(stdout);
+    //     tokio::spawn(async move {
+    //         for line in stdout_reader.lines() {
+    //             if let Ok(line) = line {
+    //                 println!("stdout: {}", line);
+    //             }
+    //         }
+    //     });
+    // }
 
-    // Read stderr in real-time
-    if let Some(stderr) = child.stderr.take() {
-        let stderr_reader = BufReader::new(stderr);
-        tokio::spawn(async move {
-            for line in stderr_reader.lines() {
-                if let Ok(line) = line {
-                    eprintln!("stderr: {}", line);
-                }
-            }
-        });
-    }
+    // // Read stderr in real-time
+    // if let Some(stderr) = child.stderr.take() {
+    //     let stderr_reader = BufReader::new(stderr);
+    //     tokio::spawn(async move {
+    //         for line in stderr_reader.lines() {
+    //             if let Ok(line) = line {
+    //                 eprintln!("stderr: {}", line);
+    //             }
+    //         }
+    //     });
+    // }
 
-    // Wait for the process to complete
-    match child.wait() {
-        Ok(status) => {
-            if !status.success() {
-                eprintln!("Python process exited with status: {}", status);
-                t.status = task::Status::FAILED;
-                t.output = Some(task::Any {
-                    type_url: "Error".to_string(),
-                    value: serialize_into_vec(&task::Error {
-                        message: format!("Python process exited with status: {}", status),
-                    }).unwrap(),
-                });
-                let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
-            }
-            println!("Finished executing {}", claim.task_name);
-        }
-        Err(e) => {
-            eprintln!("Failed to wait for Python process: {}", e);
-            t.status = task::Status::FAILED;
-            t.output = Some(task::Any {
-                type_url: "Error".to_string(),
-                value: serialize_into_vec(&task::Error {
-                    message: format!("Failed to wait for Python process: {}", e),
-                }).unwrap(),
-            });
-            let message = serialize_into_vec(t).expect("failed to serialize task update");
-            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-            return;
-        }
-    }
+    // // Wait for the process to complete
+    // match child.wait() {
+    //     Ok(status) => {
+    //         if !status.success() {
+    //             eprintln!("Python process exited with status: {}", status);
+    //             t.status = task::Status::FAILED;
+    //             t.output = Some(task::Any {
+    //                 type_url: "Error".to_string(),
+    //                 value: serialize_into_vec(&task::Error {
+    //                     message: format!("Python process exited with status: {}", status),
+    //                 }).unwrap(),
+    //             });
+    //             let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //             c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //             return;
+    //         }
+    //         println!("Finished executing {}", claim.task_name);
+    //     }
+    //     Err(e) => {
+    //         eprintln!("Failed to wait for Python process: {}", e);
+    //         t.status = task::Status::FAILED;
+    //         t.output = Some(task::Any {
+    //             type_url: "Error".to_string(),
+    //             value: serialize_into_vec(&task::Error {
+    //                 message: format!("Failed to wait for Python process: {}", e),
+    //             }).unwrap(),
+    //         });
+    //         let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //         c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //         return;
+    //     }
+    // }
 
     let mut producer = datastore.produce(claim.domain_id.clone()).await;
 
-    let zip_path = output_folder.join("sfm").join(suffix.clone() + ".zip");
+    let sfm = output_folder.join(suffix.clone()).join("sfm");
+    let zip_path = sfm.join(suffix.clone() + ".zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).expect("Failed to create zip file"));
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored); // No compression
     
     // open output folder/sfm, zip all txt, bin, csv files and upload
-    for entry in fs::read_dir(output_folder.join("sfm")).expect("Failed to read directory") {
+    for entry in fs::read_dir(sfm).expect("Failed to read directory") {
         let entry = entry.expect("Failed to read entry");
         let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
         let ext = path.extension().expect("Failed to get extension").to_str().expect("Failed to convert extension to string");
         if ext == "txt" || ext == "bin" || ext == "csv" {
             let str_path = path.to_str().expect("Failed to convert path to string");
@@ -332,11 +326,11 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     };
     let event = task::Task {
         name: claim.task_name.clone(),
-        receiver: claim.receiver.clone(),
+        receiver: Some(claim.receiver.clone()),
         sender: claim.sender.clone(),
         endpoint: "/local-refinement/v1".to_string(),
         status: task::Status::DONE,
-        access_token: "".to_string(),
+        access_token: None,
         job_id: job_id.clone(),
         output: Some(task::Any {
             type_url: "LocalRefinementOutputV1".to_string(),
@@ -346,6 +340,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     let buf = serialize_into_vec(&event).expect("failed to serialize task update");
     c.publish(job_id.clone(), buf).await.expect("failed to publish task update");
 
+    tx.send(true).unwrap();
     let _ = heartbeat_handle.await;
     println!("Heartbeat task stopped");
     return;
