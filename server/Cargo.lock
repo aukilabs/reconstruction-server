@@ -919,7 +919,6 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#2514e20eb33634337e51fb37b0bc79df8957a8a7"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -1955,7 +1954,7 @@ checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 [[package]]
 name = "libp2p"
 version = "0.54.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "bytes",
  "either",
@@ -1991,7 +1990,7 @@ dependencies = [
 [[package]]
 name = "libp2p-allow-block-list"
 version = "0.4.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "libp2p-core",
  "libp2p-identity",
@@ -2002,7 +2001,7 @@ dependencies = [
 [[package]]
 name = "libp2p-autonat"
 version = "0.13.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "async-trait",
  "asynchronous-codec",
@@ -2028,7 +2027,7 @@ dependencies = [
 [[package]]
 name = "libp2p-connection-limits"
 version = "0.4.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "libp2p-core",
  "libp2p-identity",
@@ -2039,7 +2038,7 @@ dependencies = [
 [[package]]
 name = "libp2p-core"
 version = "0.42.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "either",
  "fnv",
@@ -2067,7 +2066,7 @@ dependencies = [
 [[package]]
 name = "libp2p-dcutr"
 version = "0.12.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "either",
@@ -2089,7 +2088,7 @@ dependencies = [
 [[package]]
 name = "libp2p-dns"
 version = "0.42.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "async-trait",
  "futures",
@@ -2104,7 +2103,7 @@ dependencies = [
 [[package]]
 name = "libp2p-gossipsub"
 version = "0.47.2"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "base64 0.22.1",
@@ -2136,7 +2135,7 @@ dependencies = [
 [[package]]
 name = "libp2p-identify"
 version = "0.45.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "either",
@@ -2177,7 +2176,7 @@ dependencies = [
 [[package]]
 name = "libp2p-kad"
 version = "0.47.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "arrayvec",
  "asynchronous-codec",
@@ -2206,7 +2205,7 @@ dependencies = [
 [[package]]
 name = "libp2p-mdns"
 version = "0.46.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "data-encoding",
  "futures",
@@ -2226,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "libp2p-metrics"
 version = "0.15.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "libp2p-core",
@@ -2245,7 +2244,7 @@ dependencies = [
 [[package]]
 name = "libp2p-noise"
 version = "0.45.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -2270,7 +2269,7 @@ dependencies = [
 [[package]]
 name = "libp2p-quic"
 version = "0.11.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "bytes",
  "futures",
@@ -2293,7 +2292,7 @@ dependencies = [
 [[package]]
 name = "libp2p-relay"
 version = "0.18.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -2317,7 +2316,7 @@ dependencies = [
 [[package]]
 name = "libp2p-request-response"
 version = "0.27.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "async-trait",
  "futures",
@@ -2336,7 +2335,7 @@ dependencies = [
 [[package]]
 name = "libp2p-stream"
 version = "0.2.0-alpha"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "libp2p-core",
@@ -2350,7 +2349,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm"
 version = "0.45.2"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "either",
  "fnv",
@@ -2375,7 +2374,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm-derive"
 version = "0.35.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2386,7 +2385,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tcp"
 version = "0.42.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "futures-timer",
@@ -2402,7 +2401,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tls"
 version = "0.5.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "futures-rustls",
@@ -2420,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "libp2p-upnp"
 version = "0.3.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "futures-timer",
@@ -2435,7 +2434,7 @@ dependencies = [
 [[package]]
 name = "libp2p-webrtc"
 version = "0.8.0-alpha"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2463,7 +2462,7 @@ dependencies = [
 [[package]]
 name = "libp2p-webrtc-utils"
 version = "0.3.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -2485,7 +2484,7 @@ dependencies = [
 [[package]]
 name = "libp2p-webrtc-websys"
 version = "0.4.0-alpha.2"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "bytes",
  "futures",
@@ -2506,7 +2505,7 @@ dependencies = [
 [[package]]
 name = "libp2p-websocket"
 version = "0.44.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "either",
  "futures",
@@ -2526,7 +2525,7 @@ dependencies = [
 [[package]]
 name = "libp2p-websocket-websys"
 version = "0.4.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "bytes",
  "futures",
@@ -2543,7 +2542,7 @@ dependencies = [
 [[package]]
 name = "libp2p-yamux"
 version = "0.46.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "either",
  "futures",
@@ -2738,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "multistream-select"
 version = "0.13.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "bytes",
  "futures",
@@ -2815,7 +2814,6 @@ dependencies = [
 [[package]]
 name = "networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#2514e20eb33634337e51fb37b0bc79df8957a8a7"
 dependencies = [
  "cbindgen",
  "console_error_panic_hook",
@@ -3253,7 +3251,7 @@ dependencies = [
 [[package]]
 name = "quick-protobuf-codec"
 version = "0.3.1"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -3567,7 +3565,6 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=chore%2Freconstruction-integration#2514e20eb33634337e51fb37b0bc79df8957a8a7"
 dependencies = [
  "once_cell",
  "tokio",
@@ -3694,7 +3691,7 @@ checksum = "eded382c5f5f786b989652c49544c4877d9f015cc22e145a5ea8ea66c2921cd2"
 [[package]]
 name = "rw-stream-sink"
 version = "0.4.0"
-source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#b6bd176a869cb1b760a5cac68bc67bd0ba571536"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
 dependencies = [
  "futures",
  "pin-project",

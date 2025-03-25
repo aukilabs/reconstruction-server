@@ -1,5 +1,4 @@
-use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}, process::Command, time::SystemTime};
-
+use std::{collections::HashMap, fs::{self, File}, io::{self, BufReader, BufWriter, Read, Write, BufRead, Cursor}, path::{Path, PathBuf}, process::{Command, Stdio}, time::SystemTime};
 use chrono::Utc;
 use domain::{cluster::DomainCluster, datastore::{self, common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
@@ -16,17 +15,29 @@ use zip::ZipArchive;
 use crate::utils::handshake;
 
 fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("Starting to unzip bytes to path: {:?}", path);
     let cursor = Cursor::new(zip_bytes);
     let mut archive = ZipArchive::new(cursor)?;
+    println!("Zip archive opened, contains {} files", archive.len());
     
     for i in 0..archive.len() {
+        println!("Processing file {}/{}", i + 1, archive.len());
         let mut input_file = archive.by_index(i)?;
         let file_name = input_file.name().to_string();
-        let path = path.join(file_name);
-        let mut output_file: File = File::create(path)?;
-        std::io::copy(&mut input_file, &mut output_file)?;
-
+        println!("Extracting file: {}", file_name);
+        
+        let file_path = path.join(&file_name);
+        
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        let mut output_file: File = File::create(&file_path)?;
+        let bytes_copied = std::io::copy(&mut input_file, &mut output_file)?;
+        println!("Extracted {} bytes to {:?}", bytes_copied, file_path);
     }
+    println!("Finished unzipping all files");
     Ok(())
 }
 
@@ -36,11 +47,11 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {
         name: claim.task_name.clone(),
-        receiver: claim.receiver.clone(),
+        receiver: Some(claim.receiver.clone()),
         sender: claim.sender.clone(),
         endpoint: "/global-refinement/v1".to_string(),
         status: task::Status::STARTED,
-        access_token: "".to_string(),
+        access_token: None,
         job_id: job_id.clone(),
         output: None,
     };
@@ -155,24 +166,76 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--job_id", &claim.job_id,
         "--scans"
     ];
-    let output = Command::new("python3")
-        .args(params)
-        .output();
-    match output {
+    let child = Command::new("python3")
+    .args(params)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn();
+
+    if let Err(e) = child {
+        eprintln!("Failed to execute global refinement: {}", e);
+        t.status = task::Status::FAILED;
+        let message = serialize_into_vec(t).expect("failed to serialize task update");
+        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+        return;
+    }
+    let mut child = child.unwrap();
+
+    // Read stdout in real-time
+    if let Some(stdout) = child.stdout.take() {
+        let stdout_reader = BufReader::new(stdout);
+        tokio::spawn(async move {
+            for line in stdout_reader.lines() {
+                if let Ok(line) = line {
+                    println!("stdout: {}", line);
+                }
+            }
+        });
+    }
+
+    // Read stderr in real-time
+    if let Some(stderr) = child.stderr.take() {
+        let stderr_reader = BufReader::new(stderr);
+        tokio::spawn(async move {
+            for line in stderr_reader.lines() {
+                if let Ok(line) = line {
+                    eprintln!("stderr: {}", line);
+                }
+            }
+        });
+    }
+
+    // Wait for the process to complete
+    match child.wait() {
+        Ok(status) => {
+            if !status.success() {
+                eprintln!("Python process exited with status: {}", status);
+                t.status = task::Status::FAILED;
+                t.output = Some(task::Any {
+                    type_url: "Error".to_string(),
+                    value: serialize_into_vec(&task::Error {
+                        message: format!("Python process exited with status: {}", status),
+                    }).unwrap(),
+                });
+                let message = serialize_into_vec(t).expect("failed to serialize task update");
+                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+                return;
+            }
+            println!("Finished executing {}", claim.task_name);
+        }
         Err(e) => {
-            eprintln!("Failed to execute global refinement: {}", e);
+            eprintln!("Failed to wait for Python process: {}", e);
             t.status = task::Status::FAILED;
             t.output = Some(task::Any {
                 type_url: "Error".to_string(),
                 value: serialize_into_vec(&task::Error {
-                    message: e.to_string(),
+                    message: format!("Failed to wait for Python process: {}", e),
                 }).unwrap(),
             });
             let message = serialize_into_vec(t).expect("failed to serialize task update");
             c.publish(job_id.clone(), message).await.expect("failed to publish task update");
             return;
         }
-        Ok(_) => println!("Finished executing {}", claim.task_name)
     }
 
     let mut uploader = datastore.produce(claim.domain_id.clone()).await;
@@ -220,11 +283,11 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
 
     let event = task::Task {
         name: claim.task_name.clone(),
-        receiver: claim.receiver.clone(),
+        receiver: Some(claim.receiver.clone()),
         sender: claim.sender.clone(),
         endpoint: "/global-refinement/v1".to_string(),
         status: task::Status::DONE,
-        access_token: "".to_string(),
+        access_token: None,
         job_id: job_id.clone(),
         output: None,
     };
