@@ -158,6 +158,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     }
     let params = vec![
+        "-u",
         "main.py",
         "--mode", "global_refinement",
         "--job_root_path", task_path.to_str().unwrap(),
