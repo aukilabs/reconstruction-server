@@ -134,6 +134,13 @@ RUN python3 -m pip install enlighten evo
 
 RUN python3 -m pip install open3d trimesh alphashape
 
+RUN git clone https://github.com/google/draco.git && \
+    cd draco && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make
+
 WORKDIR /app
 
 COPY scripts /app/scripts

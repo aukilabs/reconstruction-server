@@ -1,10 +1,35 @@
 from pathlib import Path
 import argparse
 import os
-
 from utils.data_utils import get_data_paths, setup_logger
 from utils.dataset_utils import stitching_helper
-from utils.point_cloud_utils import filter_ply
+from utils.point_cloud_utils import filter_ply, downsample_ply_to_max_size, reduce_decimals_ply, draco_compress_ply
+
+def post_process_ply(output_path, logger):
+    ply_path = output_path / "RefinedPointCloud.ply"
+    filter_ply(ply_path, ply_path, logger=logger)
+
+    # Ensure ply fits in domain data
+    logger.info("Downsampling ply if needed to be under 20 MB file size...")
+    ply_path_reduced = output_path / "RefinedPointCloudReduced.ply"
+    try:
+        downsample_ply_to_max_size(ply_path, ply_path_reduced, 20000000, logger=logger)
+    except Exception as e:
+        logger.error(f"Failed to downsample PLY file: {str(e)}")
+
+    logger.info("Draco compressing the PLY file...")
+    try:
+        # Must be float to do draco compression, but open3d outputs double precision.
+        ply_path_float = output_path / "RefinedPointCloudFloat.ply"
+        try:
+            reduce_decimals_ply(ply_path, ply_path_float, 3, logger=logger)
+        except Exception as e:
+            logger.error(f"Failed to reduce decimals in PLY file: {str(e)}")
+
+        draco_compress_ply(ply_path_float, output_path / "RefinedPointCloud.ply.drc", logger=logger)
+    except Exception as e:
+        logger.error(f"Failed to draco compress the PLY file: {str(e)}")
+
 
 def main(args):
     # Create and configure logger
@@ -41,8 +66,7 @@ def main(args):
         logger.error("Stitching failed")
         return
     
-    ply_path = output_path / "RefinedPointCloud.ply"
-    filter_ply(ply_path, ply_path, logger=logger)
+    post_process_ply(output_path, logger=logger)
 
     logger.info("Global refinement completed successfully")
     return

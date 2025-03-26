@@ -121,6 +121,13 @@ RUN python3 -m pip install enlighten evo
 
 RUN python3 -m pip install open3d trimesh alphashape
 
+RUN git clone https://github.com/google/draco.git && \
+    cd draco && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make
+
 # Server Stuff
 COPY --from=golang:1.21 /usr/local/go/ /usr/local/go/
 ENV PATH="$PATH:/usr/local/go/bin"
