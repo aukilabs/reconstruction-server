@@ -375,13 +375,6 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 			Name:     "refined_pointcloud",
 			DataType: "refined_pointcloud_ply",
 		},
-		{
-			// The unrefined point cloud after just basic stitch from overlap QR codes
-			// Not really useful to apps, but for debugging the refinement
-			FilePath: path.Join(refinedOutput, "BasicStitchPointCloud.ply"),
-			Name:     "unrefined_pointcloud",
-			DataType: "unrefined_pointcloud_ply",
-		},
 		/*{
 			FilePath: path.Join(refinedOutput, "occlusion", "meshes.obj"),
 			Name:     "occlusionmesh_v1",
