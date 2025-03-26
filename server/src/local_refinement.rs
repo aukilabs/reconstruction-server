@@ -257,8 +257,6 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     }
 
-    let mut producer = datastore.produce(claim.domain_id.clone()).await;
-
     let sfm = output_folder.join(suffix.clone()).join("sfm");
     let zip_path = sfm.join(suffix.clone() + ".zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).expect("Failed to create zip file"));
@@ -291,6 +289,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     zip.finish().expect("Failed to finish zip");
     let zip_file_metadata = fs::metadata(&zip_path).expect("Failed to get metadata");
 
+    let mut producer = datastore.produce(claim.domain_id.clone()).await;
     let res = producer.push(&Data {
         domain_id: claim.domain_id.clone(),
         metadata: Metadata {
