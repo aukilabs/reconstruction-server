@@ -112,6 +112,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     });
 
     let mut downloader = datastore.consume(claim.domain_id.clone(), query, false).await;
+    let mut scan_ids = Vec::new();
 
     loop {
         match downloader.next().await {
@@ -131,6 +132,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
                     return;
                 }
                 let suffix = res.unwrap();
+                scan_ids.push(suffix.clone());
                 
                 fs::create_dir_all(Path::new(&dataset_path).join(&suffix)).expect("Failed to create dataset folder");
                 let path = Path::new(&input_path).join(&suffix).join("sfm");
@@ -157,7 +159,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
             }
         }
     }
-    let params = vec![
+    let mut params = vec![
         "-u",
         "main.py",
         "--mode", "global_refinement",
@@ -167,6 +169,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--job_id", &claim.job_id,
         "--scans"
     ];
+    params.extend(scan_ids.iter().map(|s| s.as_str()));
     let child = Command::new("python3")
     .args(params)
     .stdout(Stdio::piped())
