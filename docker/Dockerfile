@@ -1,9 +1,7 @@
 ##
 ## Rust build for server
 ##
-FROM --platform=$BUILDPLATFORM rust:1.84-slim-bullseye AS rust-build
-ARG TARGETOS
-ARG TARGETARCH
+FROM rust:1.84-slim-bullseye AS rust-build
 ARG VERSION
 
 RUN apt-get update && apt-get install -y \
