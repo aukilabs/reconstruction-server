@@ -48,6 +48,15 @@ def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
     return np.rad2deg(angle) < angle_threshold
 
 
+def is_portal_near_floor_height(position, height_threshold=0.5):
+    return np.abs(position[0]) < height_threshold
+
+
+def is_floor_portal(pose, height_threshold=0.5, angle_threshold=20):
+    return is_portal_near_floor_height(pose.translation, height_threshold) and \
+           is_portal_almost_flat(pose.rotation.matrix(), angle_threshold)
+
+
 def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
     if rotation_matrix.shape != (3, 3):
         raise ValueError("Input must be a 3x3 matrix")
@@ -55,6 +64,10 @@ def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
     # Extract the current Z-axis from the rotation matrix
     current_z = rotation_matrix[:, 2]
     downwards = np.array([-1, 0, 0])
+
+    # If clearly not flat don't change
+    if not is_portal_almost_flat(rotation_matrix, angle_threshold):
+        return rotation_matrix
 
     # Compute the rotation axis to align current Z with desired Z
     rotation_axis = np.cross(current_z, downwards)
@@ -88,7 +101,7 @@ def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
     return flattened_rotation
 
 
-def rectify_floor_portal(qr_pose, angle_threshold=20, height_threshold=0.5):
+def rectify_portal_pose(qr_pose, angle_threshold=20, height_threshold=0.5):
     pos = qr_pose.translation
     rot3d = qr_pose.rotation
 
@@ -96,7 +109,7 @@ def rectify_floor_portal(qr_pose, angle_threshold=20, height_threshold=0.5):
         rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold))
         
         # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
-        if np.abs(pos[0]) < height_threshold:
+        if is_portal_near_floor_height(pos, height_threshold):
             pos = pos.copy() # avoid modifying input pose
             pos[0] = 0.0
 
@@ -587,7 +600,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     for short_id, poses_for_qr in portal_poses.items():
 
         pose = poses_for_qr[0]
-        pose = rectify_floor_portal(pose)
+        pose = rectify_portal_pose(pose)
 
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
 
@@ -979,10 +992,8 @@ def load_dataset_metadata(
                          else paths.scan_folder / "Observations.csv")
     logger.info(f'Loading QR detections from {qr_detections_path}')
     
-    qr_detections = load_qr_detections_csv(str(qr_detections_path))
-    qr_detections_per_timestamp = floor_detection_and_snapping(qr_detections)
+    qr_detections_per_timestamp = load_qr_detections_csv(str(qr_detections_path))
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
-
 
     # Validate data
     for data_dict, name in [

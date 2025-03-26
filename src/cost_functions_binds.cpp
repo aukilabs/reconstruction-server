@@ -48,4 +48,11 @@ PYBIND11_MODULE(cost_functions, m) {
         &PoseCenterConstraintCostFunction::Create,
         "center"_a,
         "weight"_a);
+
+  m.def("FloorAlignmentCostFunction",
+        &FloorAlignmentCostFunction::Create,
+        "detection_rotation"_a,
+        "detection_translation"_a,
+        "height_weight"_a = 1.0,
+        "direction_weight"_a = 1.0);
 }
