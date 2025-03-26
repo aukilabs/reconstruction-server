@@ -16,15 +16,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Free up space
-        run: |
-          sudo rm -rf /usr/share/dotnet  # ~20GB
-          sudo rm -rf /opt/ghc           # ~4GB
-          sudo rm -rf /usr/local/lib/android  # ~10GB
-
-      - name: Check Available Space
-        run: df -h
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -57,6 +48,3 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-
-      - name: Check Available Space
-        run: df -h
