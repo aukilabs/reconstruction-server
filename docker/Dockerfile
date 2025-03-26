@@ -1,8 +1,29 @@
 ##
+## Rust build for server
+##
+FROM --platform=$BUILDPLATFORM rust:1.84-slim-bullseye AS rust-build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY server /app/server
+
+# Build the application
+RUN cd server && cargo build --release
+
+##
 ## Runtime image
 ##
-FROM nvidia/cuda:11.0.3-base-ubuntu20.04 AS deps
+FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 
+ARG USERNAME=reconstruction-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
@@ -175,6 +196,5 @@ RUN groupadd --gid $USER_GID $USERNAME \
 RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
 RUN mkdir -p /app/volume && chown -R reconstruction-server:reconstruction-server /app/volume
 USER $USERNAME
-
 # Copy the built binary from rust-build
 COPY --from=rust-build /app/server/target/release/server /app/server
