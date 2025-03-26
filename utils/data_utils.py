@@ -899,8 +899,6 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
         domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
     logger.addHandler(console_handler)
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
     logger.info("JSON formatter setup complete")
 
     return logger
