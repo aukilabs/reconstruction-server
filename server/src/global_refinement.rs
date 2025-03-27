@@ -248,7 +248,6 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     for file in files {
         let file = file.unwrap();
         let path = file.path();
-        let content = fs::read(path).expect("Failed to read file");
         let metadata: Metadata = match file.file_name().to_str().unwrap() {
             "refined_manifest.json" => Metadata {
                 name: "refined_manifest".to_string(),
@@ -273,6 +272,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
             },
             _ => continue
         };
+        let content = fs::read(path).expect("Failed to read file");
         uploader.push(&Data {
             domain_id: claim.domain_id.clone(),
             metadata,
