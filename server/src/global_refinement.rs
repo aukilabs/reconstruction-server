@@ -14,6 +14,52 @@ use zip::ZipArchive;
 
 use crate::utils::handshake;
 
+async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: Box<dyn Datastore>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut uploader = datastore.produce(domain_id.to_string()).await;
+    // open output_path and upload to datastore
+    let files = fs::read_dir(output_path)?;
+    for file in files {
+        let file = file?;
+        let path = file.path();
+        let metadata: Metadata = match file.file_name().to_str().unwrap() {
+            "refined_manifest.json" => Metadata {
+                name: "refined_manifest".to_string(),
+                data_type: "refined_manifest_json".to_string(),
+                size: file.metadata()?.len() as u32,
+                id: None,
+                properties: HashMap::new(),
+            },
+            "RefinedPointCloud.ply" => Metadata {
+                name: "refined_pointcloud".to_string(),
+                data_type: "refined_pointcloud_ply".to_string(),
+                size: file.metadata()?.len() as u32,
+                id: None,
+                properties: HashMap::new(),
+            },
+            "BasicStitchPointCloud.ply" => Metadata {
+                name: "unrefined_pointcloud".to_string(),
+                data_type: "unrefined_pointcloud_ply".to_string(),
+                size: file.metadata()?.len() as u32,
+                id: None,
+                properties: HashMap::new(),
+            },
+            _ => continue
+        };
+        let content = fs::read(path)?;
+        uploader.push(&Data {
+            domain_id: domain_id.to_string(),
+            metadata,
+            content,
+        }).await?;
+    }
+
+    while !uploader.is_completed().await {
+        sleep(Duration::from_secs(3)).await;
+    }
+    uploader.close().await;
+    Ok(())
+}
+
 fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting to unzip bytes to path: {:?}", path);
     let cursor = Cursor::new(zip_bytes);
@@ -242,48 +288,19 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     }
 
-    let mut uploader = datastore.produce(claim.domain_id.clone()).await;
-    // open output_path and upload to datastore
-    let files = fs::read_dir(output_path).expect("Failed to read output folder");
-    for file in files {
-        let file = file.unwrap();
-        let path = file.path();
-        let metadata: Metadata = match file.file_name().to_str().unwrap() {
-            "refined_manifest.json" => Metadata {
-                name: "refined_manifest".to_string(),
-                data_type: "refined_manifest_json".to_string(),
-                size: content.len() as u32,
-                id: None,
-                properties: HashMap::new(),
-            },
-            "RefinedPointCloud.ply" => Metadata {
-                name: "refined_pointcloud".to_string(),
-                data_type: "refined_pointcloud_ply".to_string(),
-                size: content.len() as u32,
-                id: None,
-                properties: HashMap::new(),
-            },
-            "BasicStitchPointCloud.ply" => Metadata {
-                name: "unrefined_pointcloud".to_string(),
-                data_type: "unrefined_pointcloud_ply".to_string(),
-                size: content.len() as u32,
-                id: None,
-                properties: HashMap::new(),
-            },
-            _ => continue
-        };
-        let content = fs::read(path).expect("Failed to read file");
-        uploader.push(&Data {
-            domain_id: claim.domain_id.clone(),
-            metadata,
-            content,
-        }).await.expect("failed to publish file");
+    if let Err(e) = upload_results(&claim.domain_id, output_path, datastore).await {
+        eprintln!("Failed to upload results: {}", e);
+        t.status = task::Status::FAILED;
+        t.output = Some(task::Any {
+            type_url: "Error".to_string(),
+            value: serialize_into_vec(&task::Error {
+                message: format!("Failed to upload results: {}", e),
+            }).unwrap(),
+        });
+        let message = serialize_into_vec(t).expect("failed to serialize task update");
+        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+        return;
     }
-
-    while !uploader.is_completed().await {
-        sleep(Duration::from_secs(3)).await;
-    }
-    uploader.close().await;
 
     let event = task::Task {
         name: claim.task_name.clone(),
