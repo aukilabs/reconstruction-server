@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 
 from local_main import main as local_main
 from global_main import main as global_main
@@ -34,7 +35,7 @@ def occlusion_box_wrapper(path, output_dir, logger):
     logger.info("Done with occlusion box extraction!")
 
 
-def process_local_refinement(args, scan):
+def process_local_refinement(args, scan, worker_pool=None):
     """Process local refinement for a single scan.
     
     Args:
@@ -50,7 +51,7 @@ def process_local_refinement(args, scan):
         job_id=args.job_id,
         log_level=args.log_level
     )
-    local_main(local_args)
+    return local_main(local_args, worker_pool)
 
 
 def local_main_wrapper(args, logger):
@@ -67,10 +68,31 @@ def local_main_wrapper(args, logger):
     logger.info(f"Scans: {args.scans}")
     logger.info("--------------------------------")
 
-    for scan in args.scans:
-        logger.info(f"Refining scan {scan}...")
-        process_local_refinement(args, scan)
-        logger.info(f"Done refining scan {scan}")
+    def process_all(pool_executor=None):
+        futures = []
+        for scan in args.scans:
+            logger.info(f"Refining scan {scan}...")
+            future = process_local_refinement(args, scan, pool_executor)
+            if future:
+                logger.info(f"Finished part 1 of local refinement for scan {scan}. Part 2 queued to worker pool.")
+                futures.append(future)
+                future.add_done_callback(lambda f: logger.info(
+                    f"Finished refining scan {scan}" if not f.exception()
+                    else f"Failed to refine scan {scan}: {f.exception()}"
+                ))
+            else:
+                logger.info(f"Done refining scan {scan}")
+
+        # Wait for all threads. Does nothing if running without pool.
+        for f in futures:
+            f.result() # waits, and raises any exception from the worker (with full call stack)
+
+    if args.local_refinement_workers and args.local_refinement_workers >= 1:
+        with ProcessPoolExecutor(max_workers=args.local_refinement_workers) as pool_executor:
+            process_all(pool_executor)
+            pool_executor.shutdown(wait=True)
+    else:
+        process_all()
 
 
 def global_main_wrapper(args, logger):
@@ -163,9 +185,9 @@ def handle_refinement_error(error, args, logger):
         logger: Logger instance
     """
     logger.error(f"Refinement failed with exception: {error}")
-    manifest_out_path = args.output_path / "refined_manifest.json"
+    manifest_out_path = args.job_root_path / "job_manifest.json"
     logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
-    save_failed_manifest_json(manifest_out_path, args.output_path, str(error))
+    save_failed_manifest_json(manifest_out_path, args.job_root_path, str(error))
 
 
 def main(args):
@@ -200,6 +222,9 @@ def parse_args():
     parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
+    parser.add_argument("--local_refinement_workers", type=int, default=0,
+        help="Number of workers for parallel processing of scans. 0 to run only on main thread."
+    )
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )

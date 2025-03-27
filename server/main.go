@@ -26,6 +26,7 @@ func main() {
 	apiKey := flag.String("api-key", "", "API key for the server")
 	port := flag.String("port", ":8080", "Port to run the server on")
 	loglevel := flag.String("log-level", "info", "Log Level")
+	numCpuWorkers := flag.Int("cpu-workers", 2, "Number of CPU workers for local refinement")
 	flag.Parse()
 
 	// Configure logging to include file name, line number, and timestamp
@@ -97,7 +98,7 @@ func main() {
 				jobInProgress = false
 				jobMutex.Unlock()
 			}()
-			executeJob(&j)
+			executeJob(&j, *numCpuWorkers)
 		}(*j)
 
 		w.WriteHeader(http.StatusOK)
