@@ -11,7 +11,7 @@ ARG VERSION
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 
-FROM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -154,6 +154,8 @@ COPY utils /app/utils
 RUN chmod 755 /app/utils
 COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
+COPY src/hloc_extras/lightglue.py /src/Hierarchical-Localization/hloc/matchers/
+COPY src/hloc_extras/superpoint.py /src/Hierarchical-Localization/hloc/extractors/
 
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
 
