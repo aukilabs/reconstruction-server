@@ -155,7 +155,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         }
     });
 
-    let _cleanup = scopeguard::guard(tx, |tx| {
+    let _cleanup = scopeguard::guard(tx.clone(), |tx| {
         let _ = tx.send(true); // Signal heartbeat task to stop
     });
 
