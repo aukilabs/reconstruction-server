@@ -872,12 +872,10 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     if log_file:
         logger, _ = add_file_handler(logger, log_file)
 
-    print("Setting up JSON formatter")
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler()
     console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
         domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
     logger.addHandler(console_handler)
-    logger.info("JSON formatter setup complete")
 
     return logger
 

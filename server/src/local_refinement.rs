@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path, process::{Command, ExitCode, ExitStatus, Stdio}, time::Duration};
+use std::{collections::HashMap, fs, path::Path, process::{ExitCode, ExitStatus, Stdio}, time::Duration};
 use domain::{datastore::common::Datastore, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use libp2p::Stream;
 use networking::client::Client;
@@ -9,6 +9,8 @@ use uuid::Uuid;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use zip::{write::{FileOptions, SimpleFileOptions}, ZipWriter};
 use std::io::BufRead;
+use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+use tokio::process::Command;
 
 use crate::utils::{handshake, write_scan_data_summary};
 
@@ -186,11 +188,12 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         "--job_id", &claim.job_id,
         "--scans", suffix.as_str(),
     ];
+    
     let child = Command::new("python3")
-    .args(params)
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn();
+        .args(params)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
 
     if let Err(e) = child {
         eprintln!("Failed to execute local refinement: {}", e);
@@ -199,34 +202,33 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         c.publish(job_id.clone(), message).await.expect("failed to publish task update");
         return;
     }
+
     let mut child = child.unwrap();
 
     // Read stdout in real-time
     if let Some(stdout) = child.stdout.take() {
-        let stdout_reader = BufReader::new(stdout);
+        let stdout_reader = TokioBufReader::new(stdout);
         tokio::spawn(async move {
-            for line in stdout_reader.lines() {
-                if let Ok(line) = line {
-                    println!("stdout: {}", line);
-                }
+            let mut lines = stdout_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                println!("stdout: {}", line);
             }
         });
     }
 
     // Read stderr in real-time
     if let Some(stderr) = child.stderr.take() {
-        let stderr_reader = BufReader::new(stderr);
+        let stderr_reader = TokioBufReader::new(stderr);
         tokio::spawn(async move {
-            for line in stderr_reader.lines() {
-                if let Ok(line) = line {
-                    eprintln!("stderr: {}", line);
-                }
+            let mut lines = stderr_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("stderr: {}", line);
             }
         });
     }
 
     // Wait for the process to complete
-    match child.wait() {
+    match child.wait().await {
         Ok(status) => {
             if !status.success() {
                 eprintln!("Python process exited with status: {}", status);

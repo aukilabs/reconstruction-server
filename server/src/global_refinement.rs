@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::{self, File}, io::{self, BufReader, BufWriter, Read, Write, BufRead, Cursor}, path::{Path, PathBuf}, process::{Command, Stdio}, time::SystemTime};
+use std::{collections::HashMap, fs::{self, File}, io::{self, BufReader, BufWriter, Read, Write, BufRead, Cursor}, path::{Path, PathBuf}, process::Stdio, time::SystemTime};
 use chrono::Utc;
 use domain::{cluster::DomainCluster, datastore::{self, common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
@@ -11,6 +11,8 @@ use futures::{stream::Zip, AsyncReadExt, StreamExt};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use zip::ZipArchive;
+use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+use tokio::process::Command;
 
 use crate::utils::handshake;
 
@@ -233,30 +235,28 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
 
     // Read stdout in real-time
     if let Some(stdout) = child.stdout.take() {
-        let stdout_reader = BufReader::new(stdout);
+        let stdout_reader = TokioBufReader::new(stdout);
         tokio::spawn(async move {
-            for line in stdout_reader.lines() {
-                if let Ok(line) = line {
-                    println!("stdout: {}", line);
-                }
+            let mut lines = stdout_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                println!("stdout: {}", line);
             }
         });
     }
 
     // Read stderr in real-time
     if let Some(stderr) = child.stderr.take() {
-        let stderr_reader = BufReader::new(stderr);
+        let stderr_reader = TokioBufReader::new(stderr);
         tokio::spawn(async move {
-            for line in stderr_reader.lines() {
-                if let Ok(line) = line {
-                    eprintln!("stderr: {}", line);
-                }
+            let mut lines = stderr_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("stderr: {}", line);
             }
         });
     }
 
-    // Wait for the process to complete
-    match child.wait() {
+    // Wait for the process to complete (non-blocking)
+    match child.wait().await {
         Ok(status) => {
             if !status.success() {
                 eprintln!("Python process exited with status: {}", status);
