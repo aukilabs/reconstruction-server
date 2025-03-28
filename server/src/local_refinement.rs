@@ -322,6 +322,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     }
     producer.close().await;
     println!("Finished uploading refined scan for {}", suffix.clone());
+    remove_dir_all(&task_folder).expect("Failed to remove task folder");
 
     let output = LocalRefinementOutputV1 {
         result_ids: vec![res.unwrap()],
