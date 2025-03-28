@@ -302,7 +302,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         return;
     }
 
-    remove_dir_all(&task_path).expect("Failed to remove task folder");
+    std::fs::remove_dir_all(&task_path).expect("Failed to remove task folder");
 
     let event = task::Task {
         name: claim.task_name.clone(),
