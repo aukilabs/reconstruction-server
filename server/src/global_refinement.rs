@@ -316,6 +316,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
     c.publish(job_id.clone(), buf).await.expect("failed to publish task update");
     println!("Finished executing {}", claim.task_name);
 
+    tx.send(true).unwrap();
     let _ = heartbeat_handle.await;
     println!("Heartbeat task stopped");
     return;
