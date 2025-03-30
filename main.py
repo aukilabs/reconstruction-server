@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import torch
 
 from local_main import main as local_main
 from global_main import main as global_main
@@ -182,6 +183,25 @@ def main(args):
         level=args.log_level
     )
 
+    # Set GPU memory limit if specified
+    if args.gpu_memory > 0:
+        logger.info(f"Setting max limit on GPU memory to {args.gpu_memory} MB...")
+        total_memory = torch.cuda.get_device_properties(0).total_memory # bytes
+        limit_bytes = args.gpu_memory * 1024 * 1024
+        if limit_bytes > total_memory:
+            logger.warning(
+                f"Requested memory limit {args.gpu_memory} MB ({limit_bytes} bytes) is "
+                f"greater than total GPU memory {total_memory} bytes. Skipping memory limit."
+            )
+        else:
+            try:
+                ratio = limit_bytes / total_memory
+                logger.info(f"GPU memory limit ratio: {ratio}. ({limit_bytes} bytes of total {total_memory} bytes)")
+                torch.cuda.set_per_process_memory_fraction(ratio)
+                logger.info(f"Memory limit set successfully.")
+            except Exception as e:
+                logger.warning(f"Failed to set GPU memory limit: {e}. Continuing without memory limit.")
+
     # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
     # Get available scans from datasets directory
     args.scans = get_available_scans(args.job_root_path / "datasets")
@@ -200,6 +220,7 @@ def parse_args():
     parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
+    parser.add_argument("--gpu-memory", type=int, default=0, help="Limit GPU memory usage to the given amount in MB.")
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )

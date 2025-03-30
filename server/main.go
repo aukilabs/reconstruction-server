@@ -26,6 +26,7 @@ func main() {
 	apiKey := flag.String("api-key", "", "API key for the server")
 	port := flag.String("port", ":8080", "Port to run the server on")
 	loglevel := flag.String("log-level", "info", "Log Level")
+	gpuMemory := flag.Int("gpu-memory", 0, "Limit GPU memory usage to the given amount in MB")
 	flag.Parse()
 
 	// Configure logging to include file name, line number, and timestamp
@@ -97,7 +98,7 @@ func main() {
 				jobInProgress = false
 				jobMutex.Unlock()
 			}()
-			executeJob(&j)
+			executeJob(&j, *gpuMemory)
 		}(*j)
 
 		w.WriteHeader(http.StatusOK)

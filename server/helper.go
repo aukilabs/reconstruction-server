@@ -368,7 +368,7 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 	refinedOutput := path.Join("refined", "global")
 	expectedOutputs := []ExpectedOutput{
 		{
-			FilePath: path.Join(refinedOutput, "refined_manifest.json"), 
+			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
 			Name:     "refined_manifest",
 			DataType: "refined_manifest_json",
 			Optional: false,
@@ -776,7 +776,7 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 	return &j, nil
 }
 
-func executeJob(j *job) {
+func executeJob(j *job, gpuMemory int) {
 
 	// Write in-progress manifest as soon as job starts.
 	// DMT uses this to show job status to the user.
@@ -812,6 +812,7 @@ func executeJob(j *job) {
 		"--output", outputPath,
 		"--domain_id", j.DomainID,
 		"--job_id", j.Name,
+		"--gpu-memory", strconv.Itoa(gpuMemory),
 		"--scans"}
 
 	datasetsRootPath := path.Join(j.JobPath, "datasets")
