@@ -71,12 +71,8 @@ fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::err
     for i in 0..archive.len() {
         println!("Processing file {}/{}", i + 1, archive.len());
         let mut input_file = archive.by_index(i)?;
-        let file_name = input_file.enclosed_name()
-            .ok_or("Invalid file name in zip")?
-            .file_name()
-            .ok_or("Invalid file name")?
-            .to_str()
-            .ok_or("Invalid UTF-8 in file name")?;
+        let file_name = input_file.enclosed_name().unwrap();
+        let file_name = file_name.file_name().unwrap().to_str().unwrap();
         println!("Extracting file: {}", file_name);
         
         let file_path = path.join(file_name);
