@@ -2,7 +2,11 @@
     "name": "Reconstruction Server Devcontainer",
     "remoteUser": "reconstruction-server",
     "build": {
-        "dockerfile": "../docker/Dockerfile.dev"
+        "dockerfile": "../docker/Dockerfile",
+        "context": "../",
+        "args": {
+            "IS_DEVELOPMENT": "true"
+        }
     },
     "workspaceFolder": "/app",
     "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind",
@@ -32,5 +36,5 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
+    "postCreateCommand": "sudo chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_server.sh"
 }
