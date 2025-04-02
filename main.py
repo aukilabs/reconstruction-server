@@ -148,21 +148,6 @@ def local_and_global_main_wrapper(args, logger):
     #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
 
 
-def get_available_scans(datasets_path):
-    """Get list of available scans in the datasets directory.
-    
-    Args:
-        datasets_path: Path to datasets directory
-        
-    Returns:
-        List of scan names
-    """
-    return [
-        scan.name for scan in datasets_path.iterdir()
-        if scan.is_dir() or scan.suffix == ".zip"
-    ]
-
-
 def process_refinement(args, logger):
     """Process refinement based on specified mode.
     
@@ -214,10 +199,6 @@ def main(args):
         level=args.log_level
     )
 
-    # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
-    # Get available scans from datasets directory
-    args.scans = get_available_scans(args.job_root_path / "datasets")
-
     try:
         process_refinement(args, logger)
     except Exception as e:
@@ -239,7 +220,7 @@ def parse_args():
         help="Set the logging level (default: INFO)"
     )
 
-    parser.add_argument("--scans", nargs="+", default=[], help="List of scans to process")
+    parser.add_argument("--scans", nargs="+", help="List of scans to process")
     return parser.parse_args()
 
 
