@@ -46,7 +46,6 @@ floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 class StitchingData:
     detections_per_qr: Dict[str, List[pycolmap.Rigid3d]] = None
     image_ids_per_qr: Dict[str, List[int]] = None
-    timestamp_per_image: Dict[str, int] = None
     arkit_precomputed: Dict = None
     placed_portal: Dict[str, pycolmap.Rigid3d] = None
     chunks_image_ids: List[List[int]] = None
@@ -56,7 +55,6 @@ class StitchingData:
     def __post_init__(self):
         self.detections_per_qr = self.detections_per_qr or {}
         self.image_ids_per_qr = self.image_ids_per_qr or {}
-        self.timestamp_per_image = self.timestamp_per_image or {}
         self.arkit_precomputed = self.arkit_precomputed or {}
         self.placed_portal = self.placed_portal or {}
         self.chunks_image_ids = self.chunks_image_ids or []
@@ -213,11 +211,6 @@ def load_partial(
     if loaded_rec is None:
         return stitch_data
     
-    # Load frame timestamps
-    timestamp_chunk = _load_frame_timestamps(unzip_folder, logger)
-    if not timestamp_chunk:
-        return stitch_data
-    
     # Extract and process QR code detections
     qr_detections = _process_qr_detections(loaded_rec)
 
@@ -255,7 +248,6 @@ def load_partial(
         loaded_rec,
         alignment_transform,
         qr_detections,
-        timestamp_chunk,
         stitch_data,
         with_3dpoints,
         logger
@@ -472,7 +464,6 @@ def _process_reconstruction(
     loaded_rec: Model,
     alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
-    timestamp_chunk: Dict[str, int],
     stitch_data: StitchingData,
     with_3dpoints: bool,
     logger
@@ -541,11 +532,6 @@ def _process_reconstruction(
             for element in point3D_track.elements:
                 element.image_id = image_id_old_to_new[element.image_id]
                 stitch_data.combined_rec.add_observation(point3D_id_new, element)
-
-    # Update timestamps
-    for filename, timestamp in timestamp_chunk.items():
-        assert filename not in stitch_data.timestamp_per_image
-        stitch_data.timestamp_per_image[filename] = timestamp
 
     # Process sorted image IDs
     sorted_image_ids = sorted(list(rec2.images.keys()))
