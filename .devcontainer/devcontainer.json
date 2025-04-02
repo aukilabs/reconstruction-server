@@ -2,7 +2,11 @@
     "name": "Reconstruction Server Devcontainer",
     "remoteUser": "reconstruction-server",
     "build": {
-        "dockerfile": "../docker/Dockerfile.dev"
+        "dockerfile": "../docker/Dockerfile",
+        "context": "../",
+        "args": {
+            "IS_DEVELOPMENT": "true"
+        }
     },
     "workspaceFolder": "/app",
     "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind",
@@ -32,12 +36,5 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": [
-        "pwd",
-        "ls -la",
-        "sudo .devcontainer/build_golang_server.sh",
-        "mkdir -p build",
-        "sudo (cd build && pwd && ls -la && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all)",
-        "echo 'Done!'"
-    ]
+    "postCreateCommand": "sudo chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_server.sh"
 }

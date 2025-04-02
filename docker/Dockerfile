@@ -1,23 +1,23 @@
+ARG IS_DEVELOPMENT="false"
+
 ##
 ## Rust build for server
 ##
 FROM rust:1.84-slim-bullseye AS rust-build
-ARG VERSION
 
 RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+RUN mkdir -p /app/server
 COPY server /app/server
-
-# Build the application
 RUN cd server && cargo build --release
 
 ##
 ## Runtime image
 ##
-FROM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM nvidia/cuda:11.0.3-base-ubuntu20.04 AS runtime
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -189,10 +189,33 @@ RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
 
 # Run reconstruction server as separate user, not root
 RUN groupadd --gid $USER_GID $USERNAME \
-    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && chown -R $USERNAME:$USERNAME /app
 
 RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
 RUN mkdir -p /app/volume && chown -R reconstruction-server:reconstruction-server /app/volume
-USER $USERNAME
-# Copy the built binary from rust-build
+# Dev container: Copy rust tools so we can compile inside the dev container
+FROM runtime AS reconstruction_dev
+
+# Sudo enabled in dev container only
+RUN apt-get install -y sudo \
+    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+COPY --from=rust-build /usr/local/rustup /usr/local/rustup
+COPY --from=rust-build /usr/local/cargo /usr/local/cargo
+ENV PATH="/usr/local/cargo/bin:$PATH"
+ENV RUSTUP_HOME="/usr/local/rustup"
+ENV CARGO_HOME="/usr/local/cargo"
+
+# Standalone image: Use the compiled server binary
+FROM runtime AS reconstruction
 COPY --from=rust-build /app/server/target/release/server /app/server
+RUN chmod +x /app/server
+
+# Final stage: Select between dev and prod
+FROM reconstruction${IS_DEVELOPMENT:+_dev} AS final
+
+WORKDIR /app
+USER $USERNAME
+
