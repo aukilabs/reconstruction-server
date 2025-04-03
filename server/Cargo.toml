@@ -5,12 +5,12 @@ edition = "2021"
 
 [dependencies]
 libp2p = { git = "https://github.com/aukilabs/rust-libp2p.git", branch = "fix/gossipsub-wasm" }
-networking = { git = "https://github.com/aukilabs/posemesh.git", branch = "chore/reconstruction-integration" }
+posemesh-networking = { git = "https://github.com/aukilabs/posemesh.git", rev = "a6acafc44ede38afe07c4887b139186358f6d02c" }
 futures = "0.3.30"
 jsonwebtoken = "9.3.0"
 uuid = "1.13.2"
 rand = "0.9.0"
-domain = { git = "https://github.com/aukilabs/posemesh.git", branch = "chore/reconstruction-integration" }
+posemesh-domain = { git = "https://github.com/aukilabs/posemesh.git", rev = "a6acafc44ede38afe07c4887b139186358f6d02c" }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 tokio = "1.44.0"
