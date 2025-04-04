@@ -323,6 +323,7 @@ def _calculate_alignment_transform(
     has_overlap = len(target_poses) > 0
     is_first_chunk = len(placed_portal) == 0
 
+
     if not has_overlap and not is_first_chunk:
         raise NoOverlapException()
 
