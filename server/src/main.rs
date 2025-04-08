@@ -1,12 +1,6 @@
-use domain::{cluster::DomainCluster, datastore::{common::Datastore, remote::{self, RemoteDatastore}}, message::read_prefix_size_message, protobuf::{domain_data::Query,task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
-use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
-use libp2p::Stream;
-use networking::{client::Client, libp2p::Networking};
-use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
-use tokio::{self, select, signal::unix::{signal, SignalKind}, time::{sleep, Duration}};
-use futures::{AsyncReadExt, StreamExt};
-use uuid::Uuid;
-use regex::Regex;
+use domain::{cluster::DomainCluster, datastore::remote::RemoteDatastore};
+use tokio::{self, select, signal::unix::{signal, SignalKind}};
+use futures::StreamExt;
 mod local_refinement;
 mod global_refinement;
 mod utils;
@@ -38,7 +32,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let domain_manager = args[3].clone();
     let private_key_path = format!("{}/pkey", base_path);
 
-    let domain_manager_id = domain_manager.split("/").last().unwrap().to_string();
     let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path));
     let mut n = domain_cluster.peer.clone();
     let mut local_refinement_v1_handler = n.client.set_stream_handler("/local-refinement/v1".to_string()).await.unwrap();
@@ -48,10 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         select! {
             Some((_, stream)) = local_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, Box::new(remote_storage.clone()), n.client.clone()));
+                let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, Box::new(remote_storage.clone()), n.client.clone()));
+                let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
             }
             _ = shutdown_signal() => {
                 println!("Received termination signal, shutting down...");

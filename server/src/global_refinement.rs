@@ -1,23 +1,18 @@
-use std::{collections::HashMap, fs::{self, File}, io::{self, BufReader, BufWriter, Read, Write, BufRead, Cursor}, path::{Path, PathBuf}, process::Stdio, time::SystemTime};
-use chrono::Utc;
-use domain::{cluster::DomainCluster, datastore::{self, common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
-use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
-use libp2p::Stream;
-use networking::{client::Client, libp2p::Networking};
-use quick_protobuf::{deserialize_from_slice, serialize_into_vec, BytesReader};
+use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}, process::Stdio};
+use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query}, task}};
+use networking::{client::Client, AsyncStream};
+use quick_protobuf::serialize_into_vec;
 use regex::Regex;
-use tokio::{self, select, sync::watch, time::{interval, sleep, Duration}};
-use futures::{stream::Zip, AsyncReadExt, StreamExt};
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use tokio::{self, sync::watch, time::{interval, sleep, Duration}};
+use futures::StreamExt;
 use zip::ZipArchive;
 use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::process::Command;
 
 use crate::utils::handshake;
 
-async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: Box<dyn Datastore>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut uploader = datastore.produce(domain_id.to_string()).await;
+async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: RemoteDatastore) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut uploader = datastore.upsert(domain_id.to_string()).await;
     // open output_path and upload to datastore
     let files = fs::read_dir(output_path)?;
     for file in files {
@@ -30,6 +25,8 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: Bo
                 size: file.metadata()?.len() as u32,
                 id: None,
                 properties: HashMap::new(),
+                link: None,
+                hash: None,
             },
             "RefinedPointCloud.ply" => Metadata {
                 name: "refined_pointcloud".to_string(),
@@ -37,6 +34,8 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: Bo
                 size: file.metadata()?.len() as u32,
                 id: None,
                 properties: HashMap::new(),
+                link: None,
+                hash: None,
             },
             "BasicStitchPointCloud.ply" => Metadata {
                 name: "unrefined_pointcloud".to_string(),
@@ -44,15 +43,14 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: Bo
                 size: file.metadata()?.len() as u32,
                 id: None,
                 properties: HashMap::new(),
+                link: None,
+                hash: None,
             },
             _ => continue
         };
         let content = fs::read(path)?;
-        uploader.push(&Data {
-            domain_id: domain_id.to_string(),
-            metadata,
-            content,
-        }).await?;
+        let mut producer = uploader.push(&metadata).await?;
+        producer.push_chunk(&content, false).await?;
     }
 
     while !uploader.is_completed().await {
@@ -90,7 +88,7 @@ fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box<dyn Datastore>, mut c: Client) {
+pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut datastore: RemoteDatastore, mut c: Client) {
     let claim = handshake(&mut stream).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
@@ -160,7 +158,7 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         let _ = tx.send(true); // Signal heartbeat task to stop
     });
 
-    let mut downloader = datastore.consume(claim.domain_id.clone(), query, false).await;
+    let mut downloader = datastore.load(claim.domain_id.clone(), query, false).await;
     let mut scan_ids = Vec::new();
 
     loop {

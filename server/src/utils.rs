@@ -1,17 +1,13 @@
-use domain::{cluster::DomainCluster, datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::Query,task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
+use domain::protobuf::task::{DomainClusterHandshake, Status, Task};
 use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
-use libp2p::Stream;
-use networking::{client::Client, libp2p::Networking};
+use networking::{client::Client, AsyncStream};
 use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
-use tokio::{self, select, time::{sleep, Duration}};
-use futures::{AsyncReadExt, StreamExt};
-use uuid::Uuid;
+use futures::AsyncReadExt;
 use serde::{Serialize, Deserialize};
-use std::fs::{self, DirEntry};
-use std::path::Path;
+use tokio::{sync::watch, task::JoinHandle, time::interval};
+use std::{collections::HashSet, error::Error, fs, path::Path, process::Stdio, time::Duration};
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::error::Error;
+use tokio::{io::{AsyncBufReadExt, BufReader as TokioBufReader}, process::Command};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskTokenClaim {
@@ -30,7 +26,7 @@ pub fn decode_jwt(token: &str) -> Result<TaskTokenClaim, Box<dyn std::error::Err
     Ok(token_data.claims)
 }
 
-pub async fn handshake(stream: &mut Stream) -> Result<TaskTokenClaim, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn handshake<S: AsyncStream>(stream: &mut S) -> Result<TaskTokenClaim, Box<dyn std::error::Error + Send + Sync>> {
     let mut length_buf = [0u8; 4];
     stream.read_exact(&mut length_buf).await?;
 
@@ -38,7 +34,7 @@ pub async fn handshake(stream: &mut Stream) -> Result<TaskTokenClaim, Box<dyn st
     let mut buffer = vec![0u8; length];
     stream.read_exact(&mut buffer).await?;
         
-    let header = deserialize_from_slice::<task::DomainClusterHandshake>(&buffer)?;
+    let header = deserialize_from_slice::<DomainClusterHandshake>(&buffer)?;
 
     decode_jwt(header.access_token.as_str())
 }
@@ -142,3 +138,64 @@ pub fn write_scan_data_summary(
 
     Ok(())
 } 
+
+pub async fn health(task: Task, mut c: Client, job_id: &str, rx: watch::Receiver<bool>) -> JoinHandle<()> {
+    let job_id_clone = job_id.to_string();
+    tokio::spawn(async move {
+        let mut rx = rx;
+        let mut interval = interval(Duration::from_secs(30)); // Send heartbeat every 30 seconds
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let mut progress_task = task.clone();
+                    progress_task.status = Status::PROCESSING;
+                    if let Ok(message) = serialize_into_vec(&progress_task) {
+                        let _ = c.publish(job_id_clone.clone(), message).await;
+                    }
+                }
+                // Check if we should stop
+                Ok(_) = rx.changed() => {
+                    break;
+                }
+            }
+        }
+    })
+}
+
+pub async fn execute_python(params: Vec<&str>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut child = Command::new("python3")
+        .args(params)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Read stdout in real-time
+    if let Some(stdout) = child.stdout.take() {
+        let stdout_reader = TokioBufReader::new(stdout);
+        tokio::spawn(async move {
+            let mut lines = stdout_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                println!("stdout: {}", line);
+            }
+        });
+    }
+
+    // Read stderr in real-time
+    if let Some(stderr) = child.stderr.take() {
+        let stderr_reader = TokioBufReader::new(stderr);
+        tokio::spawn(async move {
+            let mut lines = stderr_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("stderr: {}", line);
+            }
+        });
+    }
+
+    // Wait for the process to complete
+    let status = child.wait().await?;
+    if !status.success() {
+        return Err("Python process failed".into());
+    }
+    Ok(())
+}
