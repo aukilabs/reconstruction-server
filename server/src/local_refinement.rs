@@ -1,20 +1,15 @@
-use std::{collections::HashMap, fs, path::Path, process::{ExitCode, ExitStatus, Stdio}, time::Duration};
-use domain::{datastore::common::Datastore, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
-use libp2p::Stream;
-use networking::client::Client;
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::Duration};
+use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
+use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
-use futures::StreamExt;
+use futures::{StreamExt, AsyncRead};
 use tokio::{sync::watch, time::{interval, sleep}};
-use uuid::Uuid;
-use std::io::{self, BufReader, BufWriter, Read, Write};
-use zip::{write::{FileOptions, SimpleFileOptions}, ZipWriter};
-use std::io::BufRead;
-use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
-use tokio::process::Command;
+use std::io::{BufReader, Read, Write};
+use zip::write::SimpleFileOptions;
 
-use crate::utils::{handshake, write_scan_data_summary};
+use crate::utils::{handshake, health, write_scan_data_summary};
 
-pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box<dyn Datastore>, mut c: Client) {
+pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client) {
     let claim = handshake(&mut stream).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
@@ -29,32 +24,88 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         output: None,
     };
 
-    let res = read_prefix_size_message::<LocalRefinementInputV1>(stream).await;
-    if let Err(e) = res {
-        eprintln!("Failed to load local refinement input {}", e);
-        t.status = task::Status::FAILED;
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
-    let input = res.unwrap();
+    let res = start(base_path, &job_id, &claim.task_name, &mut stream).await;
+    match res {
+        Ok(context) => {
+            t.status = task::Status::STARTED;
+            let message = serialize_into_vec(t).expect("failed to serialize task update");
+            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+            let (tx, rx) = watch::channel(false);
 
-    println!("Start executing {}, {:?}", claim.task_name, input);
+            let heartbeat_handle = health(t.clone(), c.clone(), &job_id, rx);
+
+            let _cleanup = scopeguard::guard(tx.clone(), |tx| {
+                let _ = tx.send(true); // Signal heartbeat task to stop
+            });
+
+            let output = run(&claim.domain_id, &job_id, &claim.task_name, context, datastore).await;
+            match output {
+                Ok(output) => {
+                    t.output = Some(task::Any {
+                        type_url: "LocalRefinementOutputV1".to_string(),
+                        value: serialize_into_vec(&output).expect("failed to serialize local refinement output"),
+                    });
+                    t.status = task::Status::DONE;
+                }
+                Err(e) => {
+                    eprintln!("Failed to run local refinement: {}", e);
+                    t.status = task::Status::FAILED;
+                    t.output = Some(task::Any {
+                        type_url: "Error".to_string(),
+                        value: serialize_into_vec(&task::Error {
+                            message: e.to_string(),
+                        }).expect("failed to serialize local refinement output"),
+                    });
+                }
+            }
+
+            tx.send(true).unwrap();
+            let _ = heartbeat_handle.await;
+        }
+        Err(e) => {
+            eprintln!("Failed to start local refinement: {}", e);
+            t.status = task::Status::FAILED;
+            t.output = Some(task::Any {
+                type_url: "Error".to_string(),
+                value: serialize_into_vec(&task::Error {
+                    message: e.to_string(),
+                }).expect("failed to serialize local refinement output"),
+            });
+        }
+    }
+    let message = serialize_into_vec(t).expect("failed to serialize task update");
+    c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+}
+
+struct LocalRefinementContext {
+    query: Query,
+    task_folder: PathBuf,
+    scan_folder: PathBuf,
+    input_folder: PathBuf,
+    output_folder: PathBuf,
+    suffix: String,
+}
+
+async fn start<S: AsyncStream>(base_path: String, job_id: &str, task_name: &str, stream: S) -> Result<LocalRefinementContext, Box<dyn std::error::Error + Send + Sync>> {
+    let input = read_prefix_size_message::<LocalRefinementInputV1>(stream).await?;
+    // if let Err(e) = res {
+    //     eprintln!("Failed to load local refinement input {}", e);
+    //     t.status = task::Status::FAILED;
+    //     let message = serialize_into_vec(t).expect("failed to serialize task update");
+    //     c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    //     return;
+    // }
+    // let input = res.unwrap();
+
+    println!("Start executing {}, {:?}", task_name, input);
 
     // input.name_regexp looks .*_date
     // get date from regexp
-    let query = input.query.clone();
+    let query = input.query;
     let query_clone = query.clone();
     let name_regexp = query.name_regexp;
     if name_regexp.is_none() {
-        t.status = task::Status::FAILED;
-        t.output = Some(task::Any {
-            type_url: "Error".to_string(),
-            value: "Name regexp is empty".as_bytes().to_vec(),
-        });
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
+        return Err("Name regexp is empty".into());
     }
 
     /*
@@ -70,46 +121,29 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
      */
     let suffix = name_regexp.unwrap().replace(".*_", "");
 
-    let task_folder = Path::new(&base_path).join(&claim.job_id);
+    let task_folder = Path::new(&base_path).join(job_id);
+
     let scan_folder = Path::new(&task_folder).join("datasets");
     let input_folder = Path::new(&scan_folder).join(&suffix.clone());
     let output_folder = Path::new(&task_folder).join("refined").join("local");
-    fs::create_dir_all(&scan_folder).expect("Failed to create directory");
-    fs::create_dir_all(&output_folder).expect("Failed to create directory");
-    fs::create_dir_all(&input_folder).expect("Failed to create directory");
+    fs::create_dir_all(&scan_folder)?;
+    fs::create_dir_all(&output_folder)?;
+    fs::create_dir_all(&input_folder)?;
 
-    c.publish(job_id.clone(), serialize_into_vec(t).expect("failed to serialize task update")).await.expect("failed to publish task update");
+    Ok(LocalRefinementContext {
+        query: query_clone,
+        task_folder,
+        scan_folder,
+        input_folder,
+        output_folder,
+        suffix,
+    })
+}
 
-    let (tx, rx) = watch::channel(false);
-    let mut c_clone = c.clone();
-    let task_clone = t.clone();
-    let job_id_clone = job_id.clone();
-    let heartbeat_handle = tokio::spawn(async move {
-        let mut rx = rx;
-        let mut interval = interval(Duration::from_secs(30)); // Send heartbeat every 30 seconds
-        
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    let mut progress_task = task_clone.clone();
-                    progress_task.status = task::Status::PROCESSING;
-                    if let Ok(message) = serialize_into_vec(&progress_task) {
-                        let _ = c_clone.publish(job_id_clone.clone(), message).await;
-                    }
-                }
-                // Check if we should stop
-                Ok(_) = rx.changed() => {
-                    break;
-                }
-            }
-        }
-    });
+async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefinementContext, mut datastore: RemoteDatastore) -> Result<LocalRefinementOutputV1, Box<dyn std::error::Error + Send + Sync>> { 
+    let query = context.query;
 
-    let _cleanup = scopeguard::guard(tx.clone(), |tx| {
-        let _ = tx.send(true); // Signal heartbeat task to stop
-    });
-
-    let mut downloader = datastore.consume("".to_string(), query_clone, false).await;
+    let mut downloader = datastore.load(domain_id.to_string(), query.clone(), false).await;
     let mut i = 0;
     loop {
         match downloader.next().await {
@@ -144,130 +178,42 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
                         }
                     }
                 };
-                let path = input_folder.join(&filename);
-                fs::write(path, &data
-                    .content)
-                    .expect("Failed to write data to file");
+                let path = context.input_folder.join(&filename);
+                fs::write(path, &data.content)?;
                 i+=1;
                 println!("downloaded {}", filename);
             }
-            Some(Err(_)) => {
-                t.status = task::Status::RETRY;
-                let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
+            Some(Err(e)) => {
+                return Err(e.into());
             }
             None => {
                 break;
             }
         }
     }
-    println!("Finished downloading {} data for {}", i, claim.task_name);
+    println!("Finished downloading {} data for {}", i, task_name);
 
-    if let Err(e) = write_scan_data_summary(input_folder.as_path(), task_folder.as_path().join("scan_data_summary.json").as_path()) {
-        eprintln!("Failed to write scan data summary: {}", e);
-        t.status = task::Status::FAILED;
-        t.output = Some(task::Any {
-            type_url: "Error".to_string(),
-            value: serialize_into_vec(&task::Error {
-                message: format!("Failed to write scan data summary: {}", e),
-            }).unwrap(),
-        });
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
+    write_scan_data_summary(context.input_folder.as_path(), context.task_folder.as_path().join("scan_data_summary.json").as_path())?;
 
     let params = vec![
         "-u",
         "main.py",
         "--mode", "local_refinement",
-        "--job_root_path", task_folder.to_str().unwrap(),
-        "--output", output_folder.to_str().unwrap(),
-        "--domain_id", &claim.domain_id,
-        "--job_id", &claim.job_id,
-        "--scans", suffix.as_str(),
+        "--job_root_path", context.task_folder.to_str().unwrap(),
+        "--output", context.output_folder.to_str().unwrap(),
+        "--domain_id", domain_id,
+        "--job_id", job_id,
+        "--scans", context.suffix.as_str(),
     ];
-    
-    let child = Command::new("python3")
-        .args(params)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
 
-    if let Err(e) = child {
-        eprintln!("Failed to execute local refinement: {}", e);
-        t.status = task::Status::FAILED;
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
-
-    let mut child = child.unwrap();
-
-    // Read stdout in real-time
-    if let Some(stdout) = child.stdout.take() {
-        let stdout_reader = TokioBufReader::new(stdout);
-        tokio::spawn(async move {
-            let mut lines = stdout_reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                println!("stdout: {}", line);
-            }
-        });
-    }
-
-    // Read stderr in real-time
-    if let Some(stderr) = child.stderr.take() {
-        let stderr_reader = TokioBufReader::new(stderr);
-        tokio::spawn(async move {
-            let mut lines = stderr_reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("stderr: {}", line);
-            }
-        });
-    }
-
-    // Wait for the process to complete
-    match child.wait().await {
-        Ok(status) => {
-            if !status.success() {
-                eprintln!("Python process exited with status: {}", status);
-                t.status = task::Status::FAILED;
-                t.output = Some(task::Any {
-                    type_url: "Error".to_string(),
-                    value: serialize_into_vec(&task::Error {
-                        message: format!("Python process exited with status: {}", status),
-                    }).unwrap(),
-                });
-                let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
-            }
-            println!("Finished executing {}", claim.task_name);
-        }
-        Err(e) => {
-            eprintln!("Failed to wait for Python process: {}", e);
-            t.status = task::Status::FAILED;
-            t.output = Some(task::Any {
-                type_url: "Error".to_string(),
-                value: serialize_into_vec(&task::Error {
-                    message: format!("Failed to wait for Python process: {}", e),
-                }).unwrap(),
-            });
-            let message = serialize_into_vec(t).expect("failed to serialize task update");
-            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-            return;
-        }
-    }
-
-    let sfm = output_folder.join(suffix.clone()).join("sfm");
-    let zip_path = sfm.join(suffix.clone() + ".zip");
-    let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).expect("Failed to create zip file"));
+    let sfm = context.output_folder.join(context.suffix.clone()).join("sfm");
+    let zip_path = sfm.join(context.suffix.clone() + ".zip");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path)?);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored); // No compression
     
     // open output folder/sfm, zip all txt, bin, csv files and upload
-    for entry in fs::read_dir(sfm).expect("Failed to read directory") {
-        let entry = entry.expect("Failed to read entry");
+    for entry in fs::read_dir(sfm)? {
+        let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
             continue;
@@ -275,78 +221,47 @@ pub(crate) async fn v1(base_path: String, mut stream: Stream, mut datastore: Box
         let ext = path.extension().expect("Failed to get extension").to_str().expect("Failed to convert extension to string");
         if ext == "txt" || ext == "bin" || ext == "csv" {
             let str_path = path.to_str().expect("Failed to convert path to string");
-            let file = fs::File::open(str_path).expect("Failed to open file");
+            let file = fs::File::open(str_path)?;
             let mut reader = BufReader::new(file);
-            zip.start_file(str_path, options).expect("Failed to start zip file");
+            zip.start_file(str_path, options)?;
 
             let mut buffer = [0u8; 8192]; // Use a buffer to stream in chunks
             loop {
-                let bytes_read = reader.read(&mut buffer).expect("Failed to read file");
+                let bytes_read = reader.read(&mut buffer)?;
                 if bytes_read == 0 {
                     break;
                 }
-                zip.write_all(&buffer[..bytes_read]).expect("Failed to write to zip");
+                zip.write_all(&buffer[..bytes_read])?;
             }
         }
     }
-    zip.finish().expect("Failed to finish zip");
-    let zip_file_metadata = fs::metadata(&zip_path).expect("Failed to get metadata");
+    zip.finish()?;
+    let zip_file_metadata = fs::metadata(&zip_path)?;
 
-    let mut producer = datastore.produce(claim.domain_id.clone()).await;
-    let res = producer.push(&Data {
-        domain_id: claim.domain_id.clone(),
-        metadata: Metadata {
+    let mut producer = datastore.upsert(domain_id.to_string()).await;
+    let mut chunks = producer.push(
+        &Metadata {
             size: zip_file_metadata.len() as u32,
-            name: format!("refined_scan_{}", suffix.clone()),
+            name: format!("refined_scan_{}", context.suffix.clone()),
             data_type: "refined_scan_zip_v1".to_string(),
             id: None,
             properties: HashMap::new(),
+            link: None,
+            hash: None,
         },
-        content: fs::read(&zip_path).expect("Failed to read zip file"),
-    }).await;
-    if let Err(e) = res {
-        eprintln!("Failed to upload refined scan: {}", e);
-        t.status = task::Status::FAILED;
-        t.output = Some(task::Any {
-            type_url: "Error".to_string(),
-            value: serialize_into_vec(&task::Error {
-                message: e.to_string(),
-            }).unwrap(),
-        });
-        let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
-    }
+    ).await?;
+    
+    let hash = chunks.push_chunk(&fs::read(&zip_path)?, false).await?;
     while !producer.is_completed().await {
         sleep(Duration::from_secs(3)).await;
     }
     producer.close().await;
-    println!("Finished uploading refined scan for {}", suffix.clone());
-    if let Err(e) = std::fs::remove_dir_all(&task_folder) {
-        eprintln!("Failed to remove task folder: {:?}: {}", task_folder, e);
-    }
+    println!("Finished uploading refined scan for {}", context.suffix.clone());
+    std::fs::remove_dir_all(&context.task_folder)?;
 
     let output = LocalRefinementOutputV1 {
-        result_ids: vec![res.unwrap()],
+        result_ids: vec![hash],
     };
-    let event = task::Task {
-        name: claim.task_name.clone(),
-        receiver: Some(claim.receiver.clone()),
-        sender: claim.sender.clone(),
-        endpoint: "/local-refinement/v1".to_string(),
-        status: task::Status::DONE,
-        access_token: None,
-        job_id: job_id.clone(),
-        output: Some(task::Any {
-            type_url: "LocalRefinementOutputV1".to_string(),
-            value: serialize_into_vec(&output).expect("Failed to serialize local refinement output"),
-        }),
-    };
-    let buf = serialize_into_vec(&event).expect("failed to serialize task update");
-    c.publish(job_id.clone(), buf).await.expect("failed to publish task update");
-
-    tx.send(true).unwrap();
-    let _ = heartbeat_handle.await;
-    println!("Heartbeat task stopped");
-    return;
+    
+    return Ok(output);
 }
