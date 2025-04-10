@@ -1,5 +1,5 @@
 use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}, process::Stdio};
-use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Data, Metadata, Query}, task}};
+use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query}, task}};
 use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
 use regex::Regex;
