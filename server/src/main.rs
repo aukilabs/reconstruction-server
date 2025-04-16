@@ -39,6 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let remote_storage = RemoteDatastore::new(domain_cluster);
 
     loop {
+        let mut c = n.client.clone();
         select! {
             Some((_, stream)) = local_refinement_v1_handler.next() => {
                 let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
@@ -47,6 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
             }
             _ = shutdown_signal() => {
+                c.cancel().await.unwrap_or_else(|e| {
+                    eprintln!("Failed to cancel client: {}", e);
+                });
                 println!("Received termination signal, shutting down...");
                 break;
             }
