@@ -2853,6 +2853,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3655,7 +3656,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fdata-node#15d38d39f62acabfda4d590462d3556ff0b543d0"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fnamespace#4c491cf17e9b8f2a55b8b894c7671204b4c39aab"
 dependencies = [
  "once_cell",
  "tokio",
