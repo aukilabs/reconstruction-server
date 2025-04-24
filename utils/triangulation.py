@@ -35,13 +35,26 @@ def run_triangulation(
     image_names = set()
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
 
-    reconstruction = deepcopy(reference_model)
-
-    clear_points = True
-    if clear_points:
-        for point3D_id in reconstruction.point3D_ids():
-            reconstruction.delete_point3D(point3D_id)
+    #clear_points = True
+    #if clear_points:
+    #    for point3D_id in reconstruction.point3D_ids():
+    #        reconstruction.delete_point3D(point3D_id)
     
+    reconstruction = pycolmap.Reconstruction()
+    img_ids = []
+    for img_id in sorted(reference_model.images.keys()):
+        img = reference_model.images[img_id]
+        if database_cache.exists_image(img_id):
+            if len(img_ids) < 2:
+                print("Registering initial image(s) with original ARKit pose (", img_id, ")")
+            else:
+                img.registered = False # Ignore ARKit pose in favor of "register_next_image" incremental mapping
+            reconstruction.add_image(img)
+            img_ids.append(img_id)
+    for cam in reference_model.cameras.values():
+        if database_cache.exists_camera(cam.camera_id):
+            reconstruction.add_camera(cam)
+
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
 
@@ -49,8 +62,19 @@ def run_triangulation(
     tri_options.re_min_ratio = 0.8
     tri_options.re_max_angle_error = 8.0
     tri_options.re_max_trials = 3
+    
+    # Register first two images
+    for image_id in img_ids[2:]:
+        success = mapper.register_next_image(mapper_options, image_id)
+        if not success:
+            logger.info(f'Failed to register image {image_id}. Fall back to original ARKit pose.')
+            reconstruction.register_image(image_id)
+            continue
+        mapper.triangulate_image(tri_options, image_id)
+        logger.info(f'Triangulated image {image_id}, got {reconstruction.images[image_id].num_points3D} 3D points.')
 
-    for image_id in reconstruction.reg_image_ids():
+    #for image_id in reconstruction.reg_image_ids():
+    for image_id in img_ids:
         image = reconstruction.images[image_id]
         num_existing_points = image.num_points3D
         mapper.triangulate_image(tri_options, image_id)
