@@ -919,7 +919,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fnamespace#4c491cf17e9b8f2a55b8b894c7671204b4c39aab"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=main#f617f1bd2f72bac6a1d3d31447bcc19dafb7bef8"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -2836,7 +2836,7 @@ dependencies = [
 [[package]]
 name = "networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fnamespace#4c491cf17e9b8f2a55b8b894c7671204b4c39aab"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=main#f617f1bd2f72bac6a1d3d31447bcc19dafb7bef8"
 dependencies = [
  "cbindgen",
  "console_error_panic_hook",
@@ -3656,7 +3656,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fnamespace#4c491cf17e9b8f2a55b8b894c7671204b4c39aab"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=main#f617f1bd2f72bac6a1d3d31447bcc19dafb7bef8"
 dependencies = [
  "once_cell",
  "tokio",
@@ -4721,7 +4721,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "utils"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Fnamespace#4c491cf17e9b8f2a55b8b894c7671204b4c39aab"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=main#f617f1bd2f72bac6a1d3d31447bcc19dafb7bef8"
 dependencies = [
  "futures",
  "gloo-timers 0.3.0",
