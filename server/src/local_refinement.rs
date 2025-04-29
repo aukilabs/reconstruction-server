@@ -6,8 +6,7 @@ use futures::StreamExt;
 use tokio::{sync::watch, time::sleep};
 use std::io::{BufReader, Read, Write};
 use zip::write::SimpleFileOptions;
-
-use crate::utils::{handshake, health, write_scan_data_summary};
+use crate::utils::{handshake, health, write_scan_data_summary, execute_python};
 
 pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client) {
     let claim = handshake(&mut stream).await.expect("Failed to handshake");
@@ -205,6 +204,8 @@ async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefin
         "--job_id", job_id,
         "--scans", context.suffix.as_str(),
     ];
+
+    execute_python(params).await?;
 
     let sfm = context.output_folder.join(context.suffix.clone()).join("sfm");
     let zip_path = sfm.join(context.suffix.clone() + ".zip");
