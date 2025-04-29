@@ -22,7 +22,7 @@ pub struct TaskTokenClaim {
 }
 
 pub fn decode_jwt(token: &str) -> Result<TaskTokenClaim, Box<dyn std::error::Error + Send + Sync>> {
-    let token_data = decode::<TaskTokenClaim>(token, &DecodingKey::from_secret("secret".as_ref()), &Validation::new(Algorithm::HS256))?;
+    let token_data = decode::<TaskTokenClaim>(token, &DecodingKey::from_secret("d5b0966e-8876-4b7c-b6e3-863a0c72c7fd".as_ref()), &Validation::new(Algorithm::HS256))?;
     Ok(token_data.claims)
 }
 
