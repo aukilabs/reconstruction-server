@@ -36,9 +36,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let private_key_path = format!("{}/pkey", base_path);
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
 
-    let domain_cluster = DomainCluster::new(domain_id.clone(), domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
+    let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
     let mut n = domain_cluster.peer.clone();
-    let auth_client = AuthClient::initialize(n.client.clone(), &domain_cluster.manager_id.clone(), Duration::from_secs(60), Some(&format!("/{}/public-key", domain_id.clone()))).await?;
+    let auth_client = AuthClient::initialize(n.client.clone(), &domain_cluster.manager_id.clone(), Duration::from_secs(60), &domain_id).await?;
     let mut local_refinement_v1_handler = n.client.set_stream_handler("/local-refinement/v1".to_string()).await.unwrap();
     let mut global_refinement_v1_handler = n.client.set_stream_handler("/global-refinement/v1".to_string()).await.unwrap();
     let remote_storage = RemoteDatastore::new(domain_cluster);
