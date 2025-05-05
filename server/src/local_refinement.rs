@@ -1,15 +1,15 @@
 use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::Duration};
-use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
+use domain::{auth::{handshake, AuthClient}, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
 use futures::StreamExt;
 use tokio::{sync::watch, time::sleep};
 use std::io::{BufReader, Read, Write};
 use zip::write::SimpleFileOptions;
-use crate::utils::{handshake, health, write_scan_data_summary, execute_python};
+use crate::utils::{execute_python, health, write_scan_data_summary};
 
-pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client) {
-    let claim = handshake(&mut stream).await.expect("Failed to handshake");
+pub(crate) async fn v1<S: AsyncStream>(public_key: Vec<u8>, base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client) {
+    let claim = handshake(&public_key,  &mut stream).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {
@@ -142,7 +142,7 @@ async fn start<S: AsyncStream>(base_path: String, job_id: &str, task_name: &str,
 async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefinementContext, mut datastore: RemoteDatastore) -> Result<LocalRefinementOutputV1, Box<dyn std::error::Error + Send + Sync>> { 
     let query = context.query;
 
-    let mut downloader = datastore.load(domain_id.to_string(), query.clone(), false).await;
+    let mut downloader = datastore.load(domain_id.to_string(), query.clone(), false).await?;
     let mut i = 0;
     loop {
         match downloader.next().await {
@@ -239,20 +239,20 @@ async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefin
     zip.finish()?;
     let zip_file_metadata = fs::metadata(&zip_path)?;
 
-    let mut producer = datastore.upsert(domain_id.to_string()).await;
+    let mut producer = datastore.upsert(domain_id.to_string()).await?;
+    let id = data_id_generator();
     let mut chunks = producer.push(
-        &Metadata {
+        &UpsertMetadata {
             size: zip_file_metadata.len() as u32,
             name: format!("refined_scan_{}", context.suffix.clone()),
             data_type: "refined_scan_zip_v1".to_string(),
-            id: None,
+            id: id.clone(),
+            is_new: true,
             properties: HashMap::new(),
-            link: None,
-            hash: None,
         },
     ).await?;
     
-    let hash = chunks.push_chunk(&fs::read(&zip_path)?, false).await?;
+    let _ = chunks.next_chunk(&fs::read(&zip_path)?, false).await?;
     while !producer.is_completed().await {
         sleep(Duration::from_secs(3)).await;
     }
@@ -261,7 +261,7 @@ async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefin
     std::fs::remove_dir_all(&context.task_folder)?;
 
     let output = LocalRefinementOutputV1 {
-        result_ids: vec![hash],
+        result_ids: vec![id],
     };
     
     return Ok(output);

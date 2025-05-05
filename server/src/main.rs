@@ -1,4 +1,6 @@
-use domain::{cluster::DomainCluster, datastore::remote::RemoteDatastore};
+use std::time::Duration;
+
+use domain::{auth::AuthClient, cluster::DomainCluster, datastore::remote::RemoteDatastore};
 use tokio::{self, select, signal::unix::{signal, SignalKind}};
 use futures::StreamExt;
 mod local_refinement;
@@ -22,19 +24,21 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 4 {
-        println!("Usage: {} <port> <name> <domain_manager_addr>", args[0]);
+    if args.len() < 5 {
+        println!("Usage: {} <port> <name> <domain_manager_addr> <domain_id>", args[0]);
         return Ok(());
     }
     let port = args[1].parse::<u16>().unwrap();
     let name = args[2].clone();
     let base_path = format!("./volume/{}", name);
     let domain_manager = args[3].clone();
+    let domain_id = args[4].clone();
     let private_key_path = format!("{}/pkey", base_path);
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
 
-    let domain_cluster = DomainCluster::new("".to_string(), domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
+    let domain_cluster = DomainCluster::new(domain_id.clone(), domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
     let mut n = domain_cluster.peer.clone();
+    let auth_client = AuthClient::initialize(n.client.clone(), &domain_cluster.manager_id.clone(), Duration::from_secs(60), Some(&format!("/{}/public-key", domain_id.clone()))).await?;
     let mut local_refinement_v1_handler = n.client.set_stream_handler("/local-refinement/v1".to_string()).await.unwrap();
     let mut global_refinement_v1_handler = n.client.set_stream_handler("/global-refinement/v1".to_string()).await.unwrap();
     let remote_storage = RemoteDatastore::new(domain_cluster);
@@ -43,10 +47,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut c = n.client.clone();
         select! {
             Some((_, stream)) = local_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
+                let public_key = auth_client.public_key().await;
+                let _ = tokio::spawn(local_refinement::v1(public_key, base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
+                let public_key = auth_client.public_key().await;
+                let _ = tokio::spawn(global_refinement::v1(public_key, base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
             }
             _ = shutdown_signal() => {
                 c.cancel().await.unwrap_or_else(|e| {
