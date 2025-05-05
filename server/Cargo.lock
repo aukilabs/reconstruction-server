@@ -901,7 +901,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#192cf534f0eb26f08b592f52dc3fee3f72a59efe"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#960cbcb6259b53469d17091bbcb87f2796cf8f79"
 dependencies = [
  "async-timer",
  "async-trait",
@@ -2774,7 +2774,7 @@ dependencies = [
 [[package]]
 name = "networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#192cf534f0eb26f08b592f52dc3fee3f72a59efe"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#960cbcb6259b53469d17091bbcb87f2796cf8f79"
 dependencies = [
  "cbindgen",
  "console_error_panic_hook",
@@ -3530,7 +3530,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#192cf534f0eb26f08b592f52dc3fee3f72a59efe"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#960cbcb6259b53469d17091bbcb87f2796cf8f79"
 dependencies = [
  "once_cell",
  "tokio",
@@ -4533,7 +4533,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "utils"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#192cf534f0eb26f08b592f52dc3fee3f72a59efe"
+source = "git+https://github.com/aukilabs/posemesh.git?branch=feature%2Ffix-auth#960cbcb6259b53469d17091bbcb87f2796cf8f79"
 dependencies = [
  "futures",
  "gloo-timers 0.3.0",
