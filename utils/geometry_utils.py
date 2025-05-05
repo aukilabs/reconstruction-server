@@ -155,6 +155,15 @@ def align_reconstruction_chunks(
     image_id_to_chunk_id = {image_id : chunk_id for chunk_id, image_ids in enumerate(chunks_image_ids) for image_id in image_ids}
     problem = pyceres.Problem()
 
+    # TODO: Care less about qr rotation "loop closure", more about position.
+    # TODO: Add gravity prior
+    # TODO: Use reprojection error of QR code corners in cameras which observed it
+    # TODO: Robust loss (cauchy / huber) to care less about occasional bad QR detections.
+    # TODO: Human constraints optional support
+
+    #loss = pyceres.HuberLoss(1.0)
+    loss = None
+    
     qr_ids_per_chunk = [set() for _ in range(len(chunks_image_ids))]
     connected_chunks = [set() for _ in range(len(chunks_image_ids))]
     for qr_id, cam_space_detections in detections_per_qr.items():
@@ -172,10 +181,13 @@ def align_reconstruction_chunks(
             t_refworld_qr = reconstruction.image(image_id_ref).cam_from_world.inverse() * t_refcam_qr
             t_tgtworld_qr = reconstruction.image(image_id_tgt).cam_from_world.inverse() * t_tgtcam_qr
 
+            cov = np.eye(6)
+            #cov[0:3, 0:3] *= 0.01 # trust the translation more
+            #cov[3:, 3:] *= 0.001  # trust the rotation less
             cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,
-                                                          t_tgtworld_qr.translation, np.eye(6))
+                                                          t_tgtworld_qr.translation, cov)
 
             params = [
                 t_local_chunk_quat[chunk_id_tgt],
@@ -184,7 +196,7 @@ def align_reconstruction_chunks(
                 t_local_chunk_translation[chunk_id_ref]
             ]
 
-            problem.add_residual_block(cost, None, params)
+            problem.add_residual_block(cost, loss, params)
             qr_ids_per_chunk[chunk_id_ref].add(qr_id)
             qr_ids_per_chunk[chunk_id_tgt].add(qr_id)
             connected_chunks[chunk_id_ref].add(chunk_id_tgt)
@@ -209,7 +221,8 @@ def align_reconstruction_chunks(
     solver_options.minimizer_progress_to_stdout = True
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
-    solver_options.max_num_iterations = 100
+    solver_options.parameter_tolerance = 0.0
+    solver_options.max_num_iterations = 50
     solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
 
     summary = pyceres.SolverSummary()

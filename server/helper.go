@@ -368,7 +368,7 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 	refinedOutput := path.Join("refined", "global")
 	expectedOutputs := []ExpectedOutput{
 		{
-			FilePath: path.Join(refinedOutput, "refined_manifest.json"), 
+			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
 			Name:     "refined_manifest",
 			DataType: "refined_manifest_json",
 			Optional: false,
@@ -675,7 +675,7 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 	return &jobRequest, nil
 }
 
-func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerURL string) (*job, error) {
+func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerURL string, retriggerJobID string) (*job, error) {
 
 	logs.Info("Will mkdir path ", dirPath)
 	if err := os.MkdirAll(dirPath, 0750); err != nil {
@@ -713,7 +713,15 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 
 	startTime := time.Now()
 	jobID := uuid.NewString()
+	if retriggerJobID != "" {
+		jobID = retriggerJobID
+	}
 	jobName := "job_" + jobID
+
+	dataIDs := jobRequest.DataIDs
+	if retriggerJobID != "" {
+		dataIDs = []string{retriggerJobID} // Don't download again
+	}
 
 	j := job{
 		JobMetadata: JobMetadata{
@@ -721,7 +729,7 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 			ID:                      jobID,
 			Name:                    jobName,
 			DomainID:                jobRequest.DomainID,
-			DataIDs:                 jobRequest.DataIDs,
+			DataIDs:                 dataIDs,
 			ProcessingType:          jobRequest.ProcessingType,
 			DomainServerURL:         domainServerURL,
 			ReconstructionServerURL: reconstructionServerURL,
@@ -732,41 +740,43 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 		JobPath:         path.Join(dirPath, jobRequest.DomainID, jobName),
 	}
 
-	if err := os.MkdirAll(j.JobPath, 0755); err != nil {
-		return nil, errors.New("failed to create job directory").Wrap(err).
-			WithTag("job_id", j.ID).
-			WithTag("domain_id", j.DomainID)
-	}
+	if retriggerJobID == "" {
+		if err := os.MkdirAll(j.JobPath, 0755); err != nil {
+			return nil, errors.New("failed to create job directory").Wrap(err).
+				WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID)
+		}
 
-	// write the requestJson to file, for debugging purposes
-	requestFile := path.Join(j.JobPath, "job_request.json")
-	if err := os.WriteFile(requestFile, []byte(requestJson), 0644); err != nil {
-		return nil, errors.New("failed to write jobrequest json file to disk").Wrap(err).
-			WithTag("job_id", j.ID).
-			WithTag("domain_id", j.DomainID)
-	}
+		// write the requestJson to file, for debugging purposes
+		requestFile := path.Join(j.JobPath, "job_request.json")
+		if err := os.WriteFile(requestFile, []byte(requestJson), 0644); err != nil {
+			return nil, errors.New("failed to write jobrequest json file to disk").Wrap(err).
+				WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID)
+		}
 
-	// write job metadata to file, gets added into refined manifest file
-	metadataFile := path.Join(j.JobPath, "job_metadata.json")
-	jobMetadataJson, err := json.Marshal(j.JobMetadata)
-	if err != nil {
-		return nil, errors.New("failed to marshal job metadata to json").Wrap(err).
-			WithTag("job_id", j.ID).
-			WithTag("domain_id", j.DomainID)
-	}
-	if err := os.WriteFile(metadataFile, jobMetadataJson, 0644); err != nil {
-		return nil, errors.New("failed to write job metadata json file to disk").Wrap(err).
-			WithTag("job_id", j.ID).
-			WithTag("domain_id", j.DomainID)
-	}
+		// write job metadata to file, gets added into refined manifest file
+		metadataFile := path.Join(j.JobPath, "job_metadata.json")
+		jobMetadataJson, err := json.Marshal(j.JobMetadata)
+		if err != nil {
+			return nil, errors.New("failed to marshal job metadata to json").Wrap(err).
+				WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID)
+		}
+		if err := os.WriteFile(metadataFile, jobMetadataJson, 0644); err != nil {
+			return nil, errors.New("failed to write job metadata json file to disk").Wrap(err).
+				WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID)
+		}
 
-	logs.WithTag("job_id", j.ID).
-		WithTag("domain_id", j.DomainID).
-		Infof("Job Request File: %s", requestFile)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Job Request File: %s", requestFile)
 
-	logs.WithTag("job_id", j.ID).
-		WithTag("domain_id", j.DomainID).
-		Infof("Job Metadata File: %s", metadataFile)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Job Metadata File: %s", metadataFile)
+	}
 
 	jobs.AddJob(&j)
 	logs.WithTag("job_id", j.ID).

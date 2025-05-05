@@ -5,7 +5,7 @@ from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle, is_floor_portal
 from utils.cost_utils import DistanceMovedCostFunction, CustomLoopClosureCostFunction
-from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction
+from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction, GravityDirectionPriorCostFunction
 
 
 class PyBundleAdjuster(object):
@@ -39,10 +39,15 @@ class PyBundleAdjuster(object):
 
         # Store residual blocks separately so we can evaluate at the end and see how much each type of loss contributes.
         self.residuals_per_category = {}
+        
+        use_robust_point_loss = self.refinement_config.get('use_robust_point_loss', False)
+        point_reproj_loss = None
+        if use_robust_point_loss:
+            point_reproj_loss = pyceres.CauchyLoss(5.0)
 
         self.problem = pyceres.Problem()
         for image_id in self.config.image_ids:
-            self.add_image_to_problem_upd(image_id, reconstruction, loss, timestamp_per_image, arkit_precomputed)
+            self.add_image_to_problem_upd(image_id, reconstruction, point_reproj_loss, timestamp_per_image, arkit_precomputed)
 
         # Add loop closure to ensure multiple detections of same QR code are at the same position
         # TODO rotations should also be same
@@ -145,9 +150,9 @@ class PyBundleAdjuster(object):
                 )
 
         for point3D_id in self.config.variable_point3D_ids:
-            self.add_point_to_problem(point3D_id, reconstruction, loss)
+            self.add_point_to_problem(point3D_id, reconstruction, point_reproj_loss)
         for point3D_id in self.config.constant_point3D_ids:
-            self.add_point_to_problem(point3D_id, reconstruction, loss)
+            self.add_point_to_problem(point3D_id, reconstruction, point_reproj_loss)
         self.parameterize_cameras(reconstruction)
         self.parameterize_points(reconstruction)
         return self.problem
@@ -317,7 +322,7 @@ class PyBundleAdjuster(object):
         self,
         image_id: int,
         reconstruction: pycolmap.Reconstruction,
-        loss: pyceres.LossFunction,
+        point_reproj_loss: pyceres.LossFunction,
         timestamp_per_image,
         arkit_precomputed=None,
     ):
@@ -341,12 +346,12 @@ class PyBundleAdjuster(object):
                 cost = pycolmap.cost_functions.ReprojErrorCost(
                     camera.model, pose, point2D.xy
                 )
-                self.add_residual_block("3DPointReproj", cost, loss, [point3D.xyz, camera.params], image_id)
+                self.add_residual_block("3DPointReproj", cost, point_reproj_loss, [point3D.xyz, camera.params], image_id)
             else:
                 cost = pycolmap.cost_functions.ReprojErrorCost(
                     camera.model, point2D.xy
                 )
-                self.add_residual_block("3DPointReproj", cost, loss, [
+                self.add_residual_block("3DPointReproj", cost, point_reproj_loss, [
                         pose.rotation.quat,
                         pose.translation,
                         point3D.xyz,
@@ -369,6 +374,16 @@ class PyBundleAdjuster(object):
         else:
             self.featureless_camera_ids.add(image.camera_id)
 
+        use_arkit_gravityprior = self.refinement_config.get('use_arkit_gravityprior', False)
+        if use_arkit_gravityprior:
+            arkit_gravity_direction = arkit_precomputed[image_id]["gravity_direction"]
+            gravity_weight = self.refinement_config.get("gravityprior_weight", 1.0)
+            cost = GravityDirectionPriorCostFunction(arkit_gravity_direction, gravity_weight)
+            params = [
+                pose.rotation.quat
+            ]
+            self.add_residual_block("GravityDirectionPrior", cost, None, params, image_id)
+        
         use_arkit_centerdist = self.refinement_config.get('use_arkit_centerdist', False)
         if not constant_cam_pose and use_arkit_centerdist:
             arkit_cam_from_world = arkit_precomputed[image_id]['cam_from_world']
@@ -393,33 +408,23 @@ class PyBundleAdjuster(object):
             prev_pose = prev_image.cam_from_world
 
             use_precomputed_relposes = self.refinement_config.get('use_arkit_relposes', False)
-
             if use_precomputed_relposes:
-                if image_id not in arkit_precomputed:
-                    return
-                
-                arkit_offset_moved = arkit_precomputed[image_id]["offset_moved"]
-                arkit_offset_rotated = arkit_precomputed[image_id]["offset_rotated"]
-
-                relpose = pycolmap.Rigid3d(arkit_offset_rotated, arkit_offset_moved)
+                if image_id in arkit_precomputed:
+                    arkit_offset_moved = arkit_precomputed[image_id]["offset_moved"]
+                    arkit_offset_rotated = arkit_precomputed[image_id]["offset_rotated"]
+                    relpose = pycolmap.Rigid3d(arkit_offset_rotated, arkit_offset_moved)
+                else:
+                    relpose = prev_pose.inverse() * pose
             else:
-                relpose = pose * prev_pose.inverse()
+                relpose = prev_pose.inverse() * pose
 
-            if relpose is None:
-                return
-
-            delta_time = (timestamp_per_image[image.name] - timestamp_per_image[prev_image.name]) / 1.0e9
-            speed = norm(relpose.translation) / delta_time
-
-            max_speed = self.refinement_config.get('arkit_max_speed', 100.0)
-
-            if abs(delta_time) > 1.0:
-                return
-            if speed > max_speed:
-                return
-    
             cov_scale = self.refinement_config.get('rel_se3_pose_cov_scale', 1.0)
-            cost = RelativeTransformationSE3CostFunction(relpose.rotation.quat, relpose.translation, np.eye(6) / cov_scale)
+                        # optional, to trust rotation more (or less) than translation
+            cov_scale_rot = self.refinement_config.get('rel_se3_pose_cov_scale_rot', cov_scale)
+            cov = np.eye(6)
+            cov[:3,:3] /= cov_scale_rot
+            cov[3:,3:] /= cov_scale
+            cost = RelativeTransformationSE3CostFunction(relpose.rotation.quat, relpose.translation, cov)
             params = [
                 pose.rotation.quat,
                 pose.translation,

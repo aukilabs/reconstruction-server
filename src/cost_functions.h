@@ -157,9 +157,9 @@ class RelativeTransformationSE3CostFunction {
 
   template <typename T>
   bool operator()(const T* const t_target_local_quat,
-                  const T* const t_target_local_translation,
+                  const T* const t_target_local_translation, // pose
                   const T* const t_reference_local_quat,
-                  const T* const t_reference_local_translation,
+                  const T* const t_reference_local_translation, // prev_pose
                   T* residuals) const {
     const Sophus::SE3<T> t_target_local =
         Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_quat),
@@ -169,9 +169,10 @@ class RelativeTransformationSE3CostFunction {
                        Eigen::Matrix<T, 3, 1>(t_reference_local_translation));
 
     Eigen::Matrix<T, residuals_num, 1> parameters =
-        (t_target_reference_.cast<T>() * t_reference_local *
-         t_target_local.inverse())
-            .log();
+        (
+            t_target_reference_.cast<T>() * // Expected relative transform (from constructor)
+            (t_target_local.inverse() * t_reference_local) // Actual relative transform (from current parameters)
+        ).log();
 
     return normal_prior_(parameters.data(), residuals);
   }
@@ -344,6 +345,38 @@ class RelativeTransformationSim3CostFunction {
   const Sophus::Sim3d t_target_observation_;
   const ceres::CostFunctionToFunctor<residuals_num, residuals_num>
       normal_prior_;
+};
+
+class GravityDirectionPriorCostFunction {
+ public:
+  GravityDirectionPriorCostFunction(const Eigen::Vector3d& local_gravity_direction, const double weight)
+      : local_gravity_direction_(local_gravity_direction.normalized()), 
+        weight_(weight),
+        world_gravity_direction_(Eigen::Vector3d(-1.0, 0.0, 0.0)) {}
+
+  static ceres::CostFunction* Create(const Eigen::Vector3d& local_gravity_direction, const double weight) {
+    return new ceres::AutoDiffCostFunction<GravityDirectionPriorCostFunction, 3, 4>(
+        new GravityDirectionPriorCostFunction(local_gravity_direction, weight));
+  }
+
+  template <typename T>
+  bool operator()(const T* const local_from_world_rotation, T* residuals) const {
+
+    const Eigen::Matrix<T, 3, 1> current_local_gravity_direction =
+        EigenQuaternionMap<T>(local_from_world_rotation) *
+        world_gravity_direction_.cast<T>();
+    
+    // Vector difference as residual (x,y,z components)
+    Eigen::Map<Eigen::Matrix<T, 3, 1>> residuals_eigen(residuals);
+    residuals_eigen = T(weight_) * (current_local_gravity_direction - local_gravity_direction_.cast<T>());
+
+    return true;
+  }
+
+ private:
+  Eigen::Vector3d local_gravity_direction_;  // Normalized in constructor
+  Eigen::Vector3d world_gravity_direction_;  // Defined as (-1,0,0) for COLMAP coordinate system
+  double weight_;
 };
 
 class PoseCenterConstraintCostFunction {

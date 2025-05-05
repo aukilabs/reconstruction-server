@@ -5,6 +5,8 @@ import (
 	"flag"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"net/http"
 	"net/http/httputil"
@@ -28,6 +30,7 @@ func main() {
 	loglevel := flag.String("log-level", "info", "Log Level")
 	numCpuWorkers := flag.Int("cpu-workers", 2, "Number of CPU workers for local refinement")
 	jobRequestPath := flag.String("job-request", "", "Path to job request JSON file to process a single job")
+	jobRequestRetrigger := flag.Bool("retrigger", false, "Path to job request JSON file to process a single job, rerunning within the same local job folder")
 	flag.Parse()
 
 	// Configure logging to include file name, line number, and timestamp
@@ -44,8 +47,13 @@ func main() {
 			logs.Fatal(errors.Newf("Failed to read job request file: %v", err))
 		}
 
+		retriggerJobID := ""
+		if *jobRequestRetrigger {
+			retriggerJobID = strings.TrimPrefix(filepath.Base(filepath.Dir(*jobRequestPath)), "job_")
+		}
+
 		// Create job metadata
-		j, err := CreateJobMetadata("jobs", string(reqBytes), "localhost") // Using localhost since we're running locally
+		j, err := CreateJobMetadata("jobs", string(reqBytes), "localhost", retriggerJobID) // Using localhost since we're running locally
 		if err != nil {
 			logs.Fatal(errors.Newf("Job creation failed: %v", err))
 		}
@@ -104,7 +112,7 @@ func main() {
 		reconstructionServerURL := r.Host
 
 		// Create job metadata
-		j, err := CreateJobMetadata("jobs", reqBodyString, reconstructionServerURL)
+		j, err := CreateJobMetadata("jobs", reqBodyString, reconstructionServerURL, "")
 		if err != nil {
 			logs.Error(errors.New("Job creation failed with error: " + err.Error()))
 			http.Error(w, err.Error(), http.StatusInternalServerError)

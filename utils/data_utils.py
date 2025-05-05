@@ -2,6 +2,7 @@ import pycolmap
 import json
 import numpy as np
 import csv
+import os
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
@@ -370,7 +371,7 @@ def precompute_arkit_offsets(image_ids, arkit_cam_from_world_transforms, arkit_p
             prev_image_id = image_id
 
         prev_arkit_cam_from_world = arkit_cam_from_world_transforms[prev_image_id]
-        arkit_offset = arkit_cam_from_world * prev_arkit_cam_from_world.inverse()
+        arkit_offset = prev_arkit_cam_from_world.inverse() * arkit_cam_from_world
 
         arkit_gravity_direction = np.matmul(arkit_cam_from_world.matrix(), np.array([-1.0, 0.0, 0.0, 0.0]).transpose())[:3]
 
@@ -672,7 +673,9 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
         ret, frame = capture.read()
         if not ret:
             break
-        cv2.imwrite(f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg", frame)
+        img_path = f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg"
+        if not os.path.exists(img_path):
+            cv2.imwrite(img_path, frame)
         frame_count += 1
     print(f"Unpacked {frame_count} frames from mp4")
     capture.release()
