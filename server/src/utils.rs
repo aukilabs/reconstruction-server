@@ -1,43 +1,10 @@
-use domain::protobuf::task::{DomainClusterHandshake, Status, Task};
-use jsonwebtoken::{decode, DecodingKey,Validation, Algorithm};
-use networking::{client::Client, AsyncStream};
-use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
-use futures::AsyncReadExt;
-use serde::{Serialize, Deserialize};
+use domain::protobuf::task::{Status, Task};
+use networking::client::Client;
+use quick_protobuf::serialize_into_vec;
 use tokio::{sync::watch, task::JoinHandle, time::interval};
 use std::{collections::HashSet, error::Error, fs, path::Path, process::Stdio, time::Duration};
 use serde_json::{json, Value};
 use tokio::{io::{AsyncBufReadExt, BufReader as TokioBufReader}, process::Command};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TaskTokenClaim {
-    pub domain_id: String,
-    pub task_name: String,
-    pub job_id: String,
-    pub sender: String,
-    pub receiver: String,
-    pub exp: usize,
-    pub iat: usize,
-    pub sub: String,
-}
-
-pub fn decode_jwt(token: &str) -> Result<TaskTokenClaim, Box<dyn std::error::Error + Send + Sync>> {
-    let token_data = decode::<TaskTokenClaim>(token, &DecodingKey::from_secret("d5b0966e-8876-4b7c-b6e3-863a0c72c7fd".as_ref()), &Validation::new(Algorithm::HS256))?;
-    Ok(token_data.claims)
-}
-
-pub async fn handshake<S: AsyncStream>(stream: &mut S) -> Result<TaskTokenClaim, Box<dyn std::error::Error + Send + Sync>> {
-    let mut length_buf = [0u8; 4];
-    stream.read_exact(&mut length_buf).await?;
-
-    let length = u32::from_be_bytes(length_buf) as usize;
-    let mut buffer = vec![0u8; length];
-    stream.read_exact(&mut buffer).await?;
-        
-    let header = deserialize_from_slice::<DomainClusterHandshake>(&buffer)?;
-
-    decode_jwt(header.access_token.as_str())
-}
 
 pub fn write_scan_data_summary(
     scan_folder:&Path,

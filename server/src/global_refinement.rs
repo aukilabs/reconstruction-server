@@ -1,5 +1,5 @@
 use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}, process::Stdio};
-use domain::{datastore::{common::Datastore, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query}, task}};
+use domain::{auth::{handshake, AuthClient}, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata}, task}};
 use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
 use regex::Regex;
@@ -9,48 +9,43 @@ use zip::ZipArchive;
 use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::process::Command;
 
-use crate::utils::handshake;
-
 async fn upload_results(domain_id: &str, output_path: PathBuf, mut datastore: RemoteDatastore) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut uploader = datastore.upsert(domain_id.to_string()).await;
+    let mut uploader = datastore.upsert(domain_id.to_string()).await?;
     // open output_path and upload to datastore
     let files = fs::read_dir(output_path)?;
     for file in files {
         let file = file?;
         let path = file.path();
-        let metadata: Metadata = match file.file_name().to_str().unwrap() {
-            "refined_manifest.json" => Metadata {
+        let metadata: UpsertMetadata = match file.file_name().to_str().unwrap() {
+            "refined_manifest.json" => UpsertMetadata {
                 name: "refined_manifest".to_string(),
                 data_type: "refined_manifest_json".to_string(),
                 size: file.metadata()?.len() as u32,
-                id: None,
+                id: data_id_generator(),
                 properties: HashMap::new(),
-                link: None,
-                hash: None,
+                is_new: true,
             },
-            "RefinedPointCloud.ply" => Metadata {
+            "RefinedPointCloud.ply" => UpsertMetadata {
                 name: "refined_pointcloud".to_string(),
                 data_type: "refined_pointcloud_ply".to_string(),
                 size: file.metadata()?.len() as u32,
-                id: None,
+                id: data_id_generator(),
                 properties: HashMap::new(),
-                link: None,
-                hash: None,
+                is_new: true
             },
-            "BasicStitchPointCloud.ply" => Metadata {
+            "BasicStitchPointCloud.ply" => UpsertMetadata {
                 name: "unrefined_pointcloud".to_string(),
                 data_type: "unrefined_pointcloud_ply".to_string(),
                 size: file.metadata()?.len() as u32,
-                id: None,
+                id: data_id_generator(),
                 properties: HashMap::new(),
-                link: None,
-                hash: None,
+                is_new: true
             },
             _ => continue
         };
         let content = fs::read(path)?;
         let mut producer = uploader.push(&metadata).await?;
-        producer.push_chunk(&content, false).await?;
+        producer.next_chunk(&content, false).await?;
     }
 
     while !uploader.is_completed().await {
@@ -88,8 +83,8 @@ fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut datastore: RemoteDatastore, mut c: Client) {
-    let claim = handshake(&mut stream).await.expect("Failed to handshake");
+pub(crate) async fn v1<S: AsyncStream>(public_key: Vec<u8>, base_path: String, mut stream: S, mut datastore: RemoteDatastore, mut c: Client) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let claim = handshake(&public_key, &mut stream).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {
@@ -158,7 +153,7 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
         let _ = tx.send(true); // Signal heartbeat task to stop
     });
 
-    let mut downloader = datastore.load(claim.domain_id.clone(), query, false).await;
+    let mut downloader = datastore.load(claim.domain_id.clone(), query, false).await?;
     let mut scan_ids = Vec::new();
 
     loop {
@@ -175,8 +170,8 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
                         value: "Failed to parse suffix from data.metadata.name".to_string().into_bytes(),
                     });
                     let message = serialize_into_vec(t).expect("failed to serialize task update");
-                    c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                    return;
+                    c.publish(job_id.clone(), message).await?;
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to parse suffix from data.metadata.name")));
                 }
                 let suffix = res.unwrap();
                 scan_ids.push(suffix.clone());
@@ -190,16 +185,16 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
                         value: e.to_string().into_bytes(),
                     });
                     let message = serialize_into_vec(t).expect("failed to serialize task update");
-                    c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                    return;
+                    c.publish(job_id.clone(), message).await?;
+                    return Err(e);
                 }
                 println!("downloaded {}", data.metadata.name);
             }
-            Some(Err(_)) => {
+            Some(Err(e)) => {
                 t.status = task::Status::RETRY;
                 let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
+                c.publish(job_id.clone(), message).await?;
+                return Err(Box::new(e));
             }
             None => {
                 break;
@@ -227,8 +222,8 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
         eprintln!("Failed to execute global refinement: {}", e);
         t.status = task::Status::FAILED;
         let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
+        c.publish(job_id.clone(), message).await?;
+        return Err(Box::new(e));
     }
     let mut child = child.unwrap();
 
@@ -260,15 +255,16 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
             if !status.success() {
                 eprintln!("Python process exited with status: {}", status);
                 t.status = task::Status::FAILED;
+                let msg = format!("Python process exited with status: {}", status);
                 t.output = Some(task::Any {
                     type_url: "Error".to_string(),
                     value: serialize_into_vec(&task::Error {
-                        message: format!("Python process exited with status: {}", status),
+                        message: msg.clone(),
                     }).unwrap(),
                 });
                 let message = serialize_into_vec(t).expect("failed to serialize task update");
-                c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-                return;
+                c.publish(job_id.clone(), message).await?;
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg.clone())));
             }
             println!("Finished executing {}", claim.task_name);
         }
@@ -282,8 +278,8 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
                 }).unwrap(),
             });
             let message = serialize_into_vec(t).expect("failed to serialize task update");
-            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-            return;
+            c.publish(job_id.clone(), message).await?;
+            return Err(Box::new(e));
         }
     }
 
@@ -297,8 +293,8 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
             }).unwrap(),
         });
         let message = serialize_into_vec(t).expect("failed to serialize task update");
-        c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-        return;
+        c.publish(job_id.clone(), message).await?;
+        return Err(e);
     }
 
     std::fs::remove_dir_all(&task_path).expect("Failed to remove task folder");
@@ -320,5 +316,5 @@ pub(crate) async fn v1<S: AsyncStream>(base_path: String, mut stream: S, mut dat
     tx.send(true).unwrap();
     let _ = heartbeat_handle.await;
     println!("Heartbeat task stopped");
-    return;
+    Ok(())
 }
