@@ -64,6 +64,7 @@ def run_triangulation(
             diff_pose = prev_pose.inverse() * pose
             if norm(diff_pose.translation - prev_diff_pose.translation) > 0.3: # Probable ARKit spike (loop closure)
                 logger.info(f"SPIKE> Spike detected at {image_id}. Diff translation: {diff_pose.translation}")
+                diff_pose.rotation = pycolmap.Rotation3d()
                 diff_pose.translation = np.array(prev_diff_pose.translation)
                 if norm(diff_pose.translation) > 0.05:
                     diff_pose.translation *= 0.05 / norm(diff_pose.translation)
@@ -75,10 +76,13 @@ def run_triangulation(
             prev_pose = pose
             prev_diff_pose = diff_pose
             new_cam_from_world_per_image_id[image_id] = pose_new.inverse()
-        
+
         for image_id, image in reconstruction.images.items():
             if image_id in new_cam_from_world_per_image_id:
                 image.cam_from_world = new_cam_from_world_per_image_id[image_id]
+
+                if arkit_precomputed and image_id in arkit_precomputed:
+                    arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
 
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
@@ -98,16 +102,16 @@ def run_triangulation(
 
     ba_options = pycolmap.BundleAdjustmentOptions()
 
-    ba_options.refine_focal_length = False
+    ba_options.refine_focal_length = True
     ba_options.refine_principal_point = False
-    ba_options.refine_extra_params = False
+    ba_options.refine_extra_params = True
     ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 100
+    ba_options.solver_options.max_num_iterations = 70
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 5
+    num_ba_iterations_total = 3 #5
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -149,13 +153,13 @@ def run_triangulation(
         """
         refinement_config = {
             'add_rel_constraints': True,
-            'use_arkit_relposes': False, #True
-            'rel_se3_pose_cov_scale': 1e4, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e6, # Higher to trust ARKit relative rotations more
+            'use_arkit_relposes': True,
+            'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
+            'rel_se3_pose_cov_scale_rot': 1e4, # Higher to trust ARKit relative rotations more
             'use_arkit_centerdist': False, #True,
-            'centerdist_weight': 1e2,
+            #'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
-            #'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
+            'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e3,
             'floor_direction_weight': 1e1,
             'use_arkit_gravityprior': True,
@@ -208,6 +212,7 @@ def run_triangulation(
         ba_iterations_remaining -= 1
 
         # Retriangulate underreconstructed image pairs after first BA success
+        """
         if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
             logger.info('Retriangulating...')
             num_retriangulated = mapper.retriangulate(tri_options)
@@ -220,9 +225,10 @@ def run_triangulation(
             num_ba_iterations_total += additional_iterations
             ba_iterations_remaining += additional_iterations
             
-            #ba_options.solver_options.max_num_iterations = 60
-            #ba_options.refine_focal_length = True
-            #ba_options.refine_extra_params = True
+            ba_options.solver_options.max_num_iterations = 80
+            ba_options.refine_focal_length = True
+            ba_options.refine_extra_params = True
+        """
 
 
     logger.info('Extracting colors...')

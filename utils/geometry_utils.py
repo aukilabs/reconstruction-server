@@ -182,8 +182,8 @@ def align_reconstruction_chunks(
             t_tgtworld_qr = reconstruction.image(image_id_tgt).cam_from_world.inverse() * t_tgtcam_qr
 
             cov = np.eye(6)
-            #cov[0:3, 0:3] *= 0.01 # trust the translation more
-            #cov[3:, 3:] *= 0.001  # trust the rotation less
+            #cov[0:3, 0:3] *= 0.01
+            cov[3:, 3:] *= 0.001 # Care more about rotation
             cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,

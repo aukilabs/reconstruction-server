@@ -10,3 +10,7 @@ reconstruction
 /.idea
 /src/cost_functions.cpython-38-x86_64-linux-gnu.so
 /src/ply_export.cpython-38-x86_64-linux-gnu.so
+
+/challenge_scans
+/server/target/
+/volume/
