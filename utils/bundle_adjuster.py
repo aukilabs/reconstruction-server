@@ -630,28 +630,7 @@ class PyBundleAdjuster(object):
                     self.problem.set_parameter_block_constant(camera.params)
 
                 continue
-            
-            # Camera intrinsics are already good from ARKit but not perfect.
-            # Never let them deviate far from initial values as that may introduce wrong poses
-            # especially in featureless regions.
-            # Current values picked empirically from trials with an iPhone 13 pro.
-            if self.options.refine_focal_length:
-                for idx in camera.focal_length_idxs():
-                    initial = camera.params[idx]
-                    self.problem.set_parameter_lower_bound(camera.params, idx, initial * 0.97)
-                    self.problem.set_parameter_upper_bound(camera.params, idx, initial * 1.03)
-                    
-            if self.options.refine_principal_point:
-                for idx in camera.principal_point_idxs():
-                    initial = camera.params[idx]
-                    self.problem.set_parameter_lower_bound(camera.params, idx, initial * 0.97)
-                    self.problem.set_parameter_upper_bound(camera.params, idx, initial * 1.03)
-                
-            if self.options.refine_extra_params:
-                for idx in camera.extra_params_idxs():
-                    self.problem.set_parameter_lower_bound(camera.params, idx, -0.02)
-                    self.problem.set_parameter_upper_bound(camera.params, idx, 0.02)
-            
+
             const_camera_params = []
             if not self.options.refine_focal_length:
                 const_camera_params.extend(camera.focal_length_idxs())
