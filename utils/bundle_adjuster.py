@@ -403,7 +403,8 @@ class PyBundleAdjuster(object):
 
         # CUSTOM!
         use_relposes = self.refinement_config.get('add_rel_constraints', False)
-        if use_relposes and image_id > 1 and not constant_cam_pose:
+        has_spike = image_id in arkit_precomputed and arkit_precomputed[image_id]["arkit_spike"]
+        if use_relposes and image_id > 1 and not constant_cam_pose and not has_spike:
             prev_image = reconstruction.images[image_id - 1]
             prev_pose = prev_image.cam_from_world
 
@@ -422,7 +423,7 @@ class PyBundleAdjuster(object):
                 relpose = prev_pose.inverse() * pose
 
             cov_scale = self.refinement_config.get('rel_se3_pose_cov_scale', 1.0)
-                        # optional, to trust rotation more (or less) than translation
+            # optional, to trust rotation more (or less) than translation
             cov_scale_rot = self.refinement_config.get('rel_se3_pose_cov_scale_rot', cov_scale)
             cov = np.eye(6)
             cov[:3,:3] /= cov_scale_rot
@@ -436,8 +437,8 @@ class PyBundleAdjuster(object):
             ]
 
             rel_transform_loss = None
-            #rel_transform_loss = pyceres.CauchyLoss(1.0 * np.sqrt(cov_scale_rot))
-            
+            #rel_transform_loss = pyceres.HuberLoss(1.0 * np.sqrt(cov_scale_rot))
+
             self.add_residual_block("OffsetFromUnrefined", cost, rel_transform_loss, params, image_id)
 
             if self.is_constant_cam_pose(image.image_id - 1):

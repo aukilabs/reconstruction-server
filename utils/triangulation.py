@@ -53,6 +53,7 @@ def run_triangulation(
         for image_id in sorted(reconstruction.images.keys()):
             image = reconstruction.images[image_id]
             pose = image.cam_from_world.inverse()
+            arkit_precomputed[image_id]["arkit_spike"] = False
 
             if prev_pose is None:
                 prev_pose = pose
@@ -70,6 +71,7 @@ def run_triangulation(
                     diff_pose.translation *= 0.05 / norm(diff_pose.translation)
 
                 logger.info(f"SPIKE> Spike detected at {image_id}. New diff_translation: {diff_pose.translation}")
+                arkit_precomputed[image_id]["arkit_spike"] = True
                 
             pose_new = prev_pose_new * diff_pose
             prev_pose_new = pose_new
@@ -106,12 +108,12 @@ def run_triangulation(
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 70
+    ba_options.solver_options.max_num_iterations = 100
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 3 #5
+    num_ba_iterations_total = 1 #3 #5
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -155,11 +157,11 @@ def run_triangulation(
             'add_rel_constraints': True,
             'use_arkit_relposes': True,
             'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e4, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': False, #True,
-            #'centerdist_weight': 1e0,
+            'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': False,
+            'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
-            #'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
+            'rel_qr_pose_cov_scale': 1e2, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e3,
             'floor_direction_weight': 1e1,
             'use_arkit_gravityprior': True,
@@ -244,19 +246,20 @@ def run_triangulation(
             or ba_iterations_remaining == 0
         ):
             logger.info('Retriangulating...')
+            mapper_options.filter_max_reproj_error = 2.0
+            mapper_options.filter_min_tri_angle = 2.5
             num_retriangulated = mapper.retriangulate(tri_options)
             logger.info(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
 
             # make sure there are at least two more BA iterations after retriangulation
             # (to finish loop closure + filter outliers)
-            #additional_iterations = max(0, 2 - ba_iterations_remaining)
             additional_iterations = max(0, 2 - ba_iterations_remaining)
             num_ba_iterations_total += additional_iterations
             ba_iterations_remaining += additional_iterations
             
-            ba_options.refine_focal_length = True
-            ba_options.refine_extra_params = True
+            #ba_options.refine_focal_length = True
+            #ba_options.refine_extra_params = True
         #"""
 
 
