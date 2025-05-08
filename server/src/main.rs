@@ -1,8 +1,10 @@
-use std::time::Duration;
+use std::{collections::HashMap, hash::Hash, sync::Arc, time::Duration};
 
-use domain::{auth::AuthClient, cluster::DomainCluster, datastore::remote::RemoteDatastore};
+use async_trait::async_trait;
+use domain::{auth::{AuthClient, AuthError}, capabilities::public_key::PublicKeyStorage, cluster::DomainCluster, datastore::remote::RemoteDatastore};
+use networking::client::Client;
 use tokio::{self, select, signal::unix::{signal, SignalKind}};
-use futures::StreamExt;
+use futures::{lock::Mutex, StreamExt};
 mod local_refinement;
 mod global_refinement;
 mod utils;
@@ -16,6 +18,38 @@ async fn shutdown_signal() {
         _ = int_signal.recv() => println!("Received SIGINT, exiting..."),
     }
 }
+
+#[derive(Clone)]
+struct PublicKeyLoader {
+    auth_clients: Arc<Mutex<HashMap<String, AuthClient>>>,
+    client: Client,
+    cache_ttl: Duration,
+    domain_manager_id: String
+}
+
+#[async_trait]
+impl PublicKeyStorage for PublicKeyLoader {
+    async fn get_by_domain_id(&self, domain_id: String) -> Result<Vec<u8>, AuthError> {
+        let auth_clients = self.auth_clients.lock().await;
+        if let Some(client) = auth_clients.get(&domain_id) {
+            Ok(client.public_key().await)
+        } else {
+            drop(auth_clients);
+            let auth_client = AuthClient::initialize(self.client.clone(), &self.domain_manager_id.clone(), self.cache_ttl, &domain_id).await?;
+            let public_key = auth_client.public_key().await;
+            let mut auth_clients = self.auth_clients.lock().await;
+            auth_clients.insert(domain_id.clone(), auth_client);
+            Ok(public_key)
+        }
+    }
+}
+
+impl PublicKeyLoader {
+    async fn cleanup(&self) {
+        let mut auth_clients = self.auth_clients.lock().await;
+        auth_clients.clear();
+    }
+}
 /*
     * This is a simple example of a reconstruction node. It will connect to a set of bootstraps and execute reconstruction jobs.
     * Usage: cargo run <port> <name> <domain_manager_addr> 
@@ -24,48 +58,50 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 5 {
-        println!("Usage: {} <port> <name> <domain_manager_addr> <domain_id>", args[0]);
+    if args.len() < 4 {
+        println!("Usage: {} <port> <name> <domain_manager_addr>", args[0]);
         return Ok(());
     }
     let port = args[1].parse::<u16>().unwrap();
     let name = args[2].clone();
     let base_path = format!("./volume/{}", name);
     let domain_manager = args[3].clone();
-    let domain_id = args[4].clone();
     let private_key_path = format!("{}/pkey", base_path);
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
 
     let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
+    let domain_manager_id = domain_cluster.manager_id.clone();
     let mut n = domain_cluster.peer.clone();
-    let auth_client = AuthClient::initialize(n.client.clone(), &domain_cluster.manager_id.clone(), Duration::from_secs(60), &domain_id).await?;
     let mut local_refinement_v1_handler = n.client.set_stream_handler("/local-refinement/v1".to_string()).await.unwrap();
     let mut global_refinement_v1_handler = n.client.set_stream_handler("/global-refinement/v1".to_string()).await.unwrap();
     let remote_storage = RemoteDatastore::new(domain_cluster);
+    let keys_loader = PublicKeyLoader {
+        auth_clients: Arc::new(Mutex::new(HashMap::new())),
+        client: n.client.clone(),
+        cache_ttl: Duration::from_secs(60*60*24),
+        domain_manager_id,
+    };
 
     loop {
         let mut c = n.client.clone();
         select! {
             Some((_, stream)) = local_refinement_v1_handler.next() => {
-                let public_key = auth_client.public_key().await;
-                let _ = tokio::spawn(local_refinement::v1(public_key, base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
+                let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
-                let public_key = auth_client.public_key().await;
-                let _ = tokio::spawn(global_refinement::v1(public_key, base_path.clone(), stream, remote_storage.clone(), n.client.clone()));
+                let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
             }
             _ = shutdown_signal() => {
                 c.cancel().await.unwrap_or_else(|e| {
                     eprintln!("Failed to cancel client: {}", e);
                 });
+                keys_loader.cleanup().await;
                 println!("Received termination signal, shutting down...");
                 break;
             }
             else => break
         }
     }
-
-    println!("Exit");
 
     Ok(())
 }

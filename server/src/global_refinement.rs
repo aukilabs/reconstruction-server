@@ -1,5 +1,5 @@
 use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}, process::Stdio};
-use domain::{auth::{handshake, AuthClient}, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata}, task}};
+use domain::{auth::{handshake, AuthClient}, capabilities::public_key::PublicKeyStorage, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata}, task}};
 use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
 use regex::Regex;
@@ -83,8 +83,8 @@ fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-pub(crate) async fn v1<S: AsyncStream>(public_key: Vec<u8>, base_path: String, mut stream: S, mut datastore: RemoteDatastore, mut c: Client) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let claim = handshake(&public_key, &mut stream).await.expect("Failed to handshake");
+pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(base_path: String, mut stream: S, mut datastore: RemoteDatastore, mut c: Client, key_loader: P) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let claim = handshake(&mut stream, key_loader).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {

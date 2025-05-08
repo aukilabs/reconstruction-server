@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-networking = { git = "https://github.com/aukilabs/posemesh.git", branch = "feature/fix-auth" }
+networking = { git = "https://github.com/aukilabs/posemesh.git", rev = "60c1b4d8575aac53d7517487e51b89a3316dc970" }
 futures = "0.3.30"
-domain = { git = "https://github.com/aukilabs/posemesh.git", branch = "feature/fix-auth" }
+domain = { git = "https://github.com/aukilabs/posemesh.git", rev = "60c1b4d8575aac53d7517487e51b89a3316dc970" }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 tokio = "1.44.0"
@@ -16,3 +16,4 @@ serde_json = "1.0.128"
 zip = "2.2.3"
 regex = "1.10.3"
 scopeguard = "1.2.0"
+async-trait = "0.1.88"
