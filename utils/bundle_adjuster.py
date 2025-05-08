@@ -435,7 +435,10 @@ class PyBundleAdjuster(object):
                 prev_pose.translation
             ]
 
-            self.add_residual_block("OffsetFromUnrefined", cost, None, params, image_id)
+            rel_transform_loss = None
+            #rel_transform_loss = pyceres.CauchyLoss(1.0 * np.sqrt(cov_scale_rot))
+            
+            self.add_residual_block("OffsetFromUnrefined", cost, rel_transform_loss, params, image_id)
 
             if self.is_constant_cam_pose(image.image_id - 1):
                 self.problem.set_parameter_block_constant(prev_pose.rotation.quat)

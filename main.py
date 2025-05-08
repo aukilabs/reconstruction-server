@@ -147,6 +147,7 @@ def get_available_scans(datasets_path):
     Returns:
         List of scan names
     """
+    #return ['2024-12-08_20-10-03']
     return [
         scan.name for scan in datasets_path.iterdir()
         if scan.is_dir() or scan.suffix == ".zip"

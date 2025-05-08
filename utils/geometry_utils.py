@@ -134,6 +134,26 @@ def run_stitching(detections_per_qr,
     return combined_rec, combined_detections
 
 
+def robust_scale(A, B) -> float:
+    """Median distance ratio with MAD-based outlier rejection."""
+    A = np.asarray(A)[::2]
+    B = np.asarray(B)[::2]
+    dA = np.linalg.norm(A[1:] - A[:-1], axis=1)
+    dB = np.linalg.norm(B[1:] - B[:-1], axis=1)
+    mask = dA > 0.01
+    ratios = dB[mask] / dA[mask]
+    med = np.median(ratios)
+    devs = np.abs(ratios - med)
+    mad = np.mean(devs) + 1e-7
+    inlier = devs < 2 * mad
+    print(f"Estimating scale with {np.sum(inlier)} out of {len(ratios)} relative movements. (mask: {np.sum(mask)})")
+    print("median: ", med)
+    print("mad: ", mad)
+    scale = np.median(ratios[inlier])
+    print("scale: ", scale)
+    return scale
+
+
 def filter_reconstruction(reconstruction, normalize_points=False):
     reconstruction.filter_all_points3D(4.0, 1.5)
     reconstruction.filter_observations_with_negative_depth()
@@ -183,7 +203,7 @@ def align_reconstruction_chunks(
 
             cov = np.eye(6)
             #cov[0:3, 0:3] *= 0.01
-            cov[3:, 3:] *= 0.1 # Care more about rotation
+            cov[3:, 3:] *= 0.01 # Care more about rotation
             cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,

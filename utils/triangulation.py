@@ -11,8 +11,8 @@ import pyceres
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features
 import utils.pairs_from_sequential as pairs_from_sequential
-
 from utils.bundle_adjuster import PyBundleAdjuster
+from utils.geometry_utils import robust_scale
 
 
 def run_triangulation(
@@ -81,8 +81,8 @@ def run_triangulation(
             if image_id in new_cam_from_world_per_image_id:
                 image.cam_from_world = new_cam_from_world_per_image_id[image_id]
 
-                if arkit_precomputed and image_id in arkit_precomputed:
-                    arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
+                #if arkit_precomputed and image_id in arkit_precomputed:
+                #    arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
 
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
@@ -157,9 +157,9 @@ def run_triangulation(
             'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
             'rel_se3_pose_cov_scale_rot': 1e4, # Higher to trust ARKit relative rotations more
             'use_arkit_centerdist': False, #True,
-            #'centerdist_weight': 1e2,
+            #'centerdist_weight': 1e0,
             #'use_robust_point_loss': False,
-            'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
+            #'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e3,
             'floor_direction_weight': 1e1,
             'use_arkit_gravityprior': True,
@@ -255,10 +255,32 @@ def run_triangulation(
             num_ba_iterations_total += additional_iterations
             ba_iterations_remaining += additional_iterations
             
-            #ba_options.solver_options.max_num_iterations = 80
             ba_options.refine_focal_length = True
             ba_options.refine_extra_params = True
         #"""
+
+
+    arkit_positions = []
+    refined_positions = []
+    for image_id in reconstruction.reg_image_ids():
+        if not (image_id in arkit_precomputed and image_id in reconstruction.images):
+            raise ValueError(f"Image {image_id} not found in both arkit_precomputed and reconstruction")
+        arkit_positions.append(arkit_precomputed[image_id]["cam_from_world"].translation)
+        refined_positions.append(reconstruction.images[image_id].cam_from_world.translation)
+
+
+    scale_change = robust_scale(refined_positions, arkit_positions)
+    logger.info(f"Scale post-processing to match ARKit. Scale by: {scale_change}")
+    
+    scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
+    reconstruction.transform(scale_transform)
+
+    #for image_id in reconstruction.reg_image_ids():
+    #    if image_id in arkit_precomputed:
+    #        image = reconstruction.images[image_id]
+    #        pose = image.cam_from_world.inverse()
+    #        pose.translation *= scale_change
+    #        image.cam_from_world = pose.inverse()
 
 
     logger.info('Extracting colors...')
