@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-libp2p = { git = "https://github.com/aukilabs/rust-libp2p.git", branch = "fix/gossipsub-wasm" }
 posemesh-networking = { git = "https://github.com/aukilabs/posemesh.git", rev = "a6acafc44ede38afe07c4887b139186358f6d02c" }
 futures = "0.3.30"
 jsonwebtoken = "9.3.0"
@@ -20,3 +19,4 @@ serde_json = "1.0.128"
 zip = "2.2.3"
 regex = "1.10.3"
 scopeguard = "1.2.0"
+async-trait = "0.1.88"

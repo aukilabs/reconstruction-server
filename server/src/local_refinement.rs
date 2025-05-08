@@ -1,15 +1,15 @@
-use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::Duration};
-use domain::{auth::{handshake, AuthClient}, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::Arc, time::Duration};
+use domain::{auth::{handshake, AuthClient}, capabilities::public_key::PublicKeyStorage, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use networking::{client::Client, AsyncStream};
 use quick_protobuf::serialize_into_vec;
-use futures::StreamExt;
+use futures::{lock::Mutex, StreamExt};
 use tokio::{sync::watch, time::sleep};
 use std::io::{BufReader, Read, Write};
 use zip::write::SimpleFileOptions;
 use crate::utils::{execute_python, health, write_scan_data_summary};
 
-pub(crate) async fn v1<S: AsyncStream>(public_key: Vec<u8>, base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client) {
-    let claim = handshake(&public_key,  &mut stream).await.expect("Failed to handshake");
+pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: Client, key_loader: P) {
+    let claim = handshake(&mut stream, key_loader).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
     let t = &mut task::Task {
@@ -87,14 +87,6 @@ struct LocalRefinementContext {
 
 async fn start<S: AsyncStream>(base_path: String, job_id: &str, task_name: &str, stream: S) -> Result<LocalRefinementContext, Box<dyn std::error::Error + Send + Sync>> {
     let input = read_prefix_size_message::<LocalRefinementInputV1>(stream).await?;
-    // if let Err(e) = res {
-    //     eprintln!("Failed to load local refinement input {}", e);
-    //     t.status = task::Status::FAILED;
-    //     let message = serialize_into_vec(t).expect("failed to serialize task update");
-    //     c.publish(job_id.clone(), message).await.expect("failed to publish task update");
-    //     return;
-    // }
-    // let input = res.unwrap();
 
     println!("Start executing {}, {:?}", task_name, input);
 
