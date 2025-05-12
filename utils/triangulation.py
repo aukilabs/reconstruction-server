@@ -49,6 +49,7 @@ def run_triangulation(
         prev_pose = None
         prev_pose_new = None
         prev_diff_pose = None
+        has_spikes = False
         new_cam_from_world_per_image_id = {}
         for image_id in sorted(reconstruction.images.keys()):
             image = reconstruction.images[image_id]
@@ -72,19 +73,22 @@ def run_triangulation(
 
                 logger.info(f"SPIKE> Spike detected at {image_id}. New diff_translation: {diff_pose.translation}")
                 arkit_precomputed[image_id]["arkit_spike"] = True
-                
+                has_spikes = True
+
             pose_new = prev_pose_new * diff_pose
             prev_pose_new = pose_new
             prev_pose = pose
             prev_diff_pose = diff_pose
             new_cam_from_world_per_image_id[image_id] = pose_new.inverse()
 
-        for image_id, image in reconstruction.images.items():
-            if image_id in new_cam_from_world_per_image_id:
-                image.cam_from_world = new_cam_from_world_per_image_id[image_id]
+        if has_spikes:
+            logger.info("SPIKE> Has spikes. Re-triangulating...")
+            for image_id, image in reconstruction.images.items():
+                if image_id in new_cam_from_world_per_image_id:
+                    image.cam_from_world = new_cam_from_world_per_image_id[image_id]
 
-                #if arkit_precomputed and image_id in arkit_precomputed:
-                #    arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
+                    if arkit_precomputed and image_id in arkit_precomputed:
+                        arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
 
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
@@ -108,12 +112,12 @@ def run_triangulation(
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 100
+    ba_options.solver_options.max_num_iterations = 100 # 150
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 1 #3 #5
+    num_ba_iterations_total = 5 # 1 # 3
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -154,18 +158,18 @@ def run_triangulation(
         }
         """
         refinement_config = {
-            'add_rel_constraints': True,
-            'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': False,
+            #'add_rel_constraints': True,
+            #'use_arkit_relposes': True,
+            #'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
+            #rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': True,
             'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
-            'rel_qr_pose_cov_scale': 1e2, # Higher means we trust the QR loop closure more
+            #'rel_qr_pose_cov_scale': 1e2, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e3,
             'floor_direction_weight': 1e1,
-            'use_arkit_gravityprior': True,
-            'gravityprior_weight': 1e2
+            #'use_arkit_gravityprior': True,
+            #'gravityprior_weight': 1e2
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
@@ -246,8 +250,8 @@ def run_triangulation(
             or ba_iterations_remaining == 0
         ):
             logger.info('Retriangulating...')
-            mapper_options.filter_max_reproj_error = 2.0
-            mapper_options.filter_min_tri_angle = 2.5
+            #mapper_options.filter_max_reproj_error = 2.0
+            #mapper_options.filter_min_tri_angle = 2.5
             num_retriangulated = mapper.retriangulate(tri_options)
             logger.info(f'Retriangulated {num_retriangulated} observations')
             retriangulated = True
@@ -275,8 +279,8 @@ def run_triangulation(
     scale_change = robust_scale(refined_positions, arkit_positions)
     logger.info(f"Scale post-processing to match ARKit. Scale by: {scale_change}")
     
-    scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
-    reconstruction.transform(scale_transform)
+    #scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
+    #reconstruction.transform(scale_transform)
 
     #for image_id in reconstruction.reg_image_ids():
     #    if image_id in arkit_precomputed:
