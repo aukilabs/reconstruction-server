@@ -44,6 +44,11 @@ def run_triangulation(
         for point3D_id in reconstruction.point3D_ids():
             reconstruction.delete_point3D(point3D_id)
     
+
+    unfiltered_arkit_poses = {}
+    for image_id in arkit_precomputed:
+        unfiltered_arkit_poses[image_id] = deepcopy(arkit_precomputed[image_id]["cam_from_world"])
+
     filter_spikes = True
     if filter_spikes:
         prev_pose = None
@@ -158,12 +163,12 @@ def run_triangulation(
         }
         """
         refinement_config = {
-            #'add_rel_constraints': True,
-            #'use_arkit_relposes': True,
-            #'rel_se3_pose_cov_scale': 1e2, # Higher to trust ARKit relative positions more
-            #rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': True,
-            'centerdist_weight': 1e2,
+            'add_rel_constraints': True,
+            'use_arkit_relposes': True,
+            'rel_se3_pose_cov_scale': 1e1, # Higher to trust ARKit relative positions more
+            'rel_se3_pose_cov_scale_rot': 1e2, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': False,
+            #'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
             #'rel_qr_pose_cov_scale': 1e2, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e3,
@@ -272,15 +277,15 @@ def run_triangulation(
     for image_id in reconstruction.reg_image_ids():
         if not (image_id in arkit_precomputed and image_id in reconstruction.images):
             raise ValueError(f"Image {image_id} not found in both arkit_precomputed and reconstruction")
-        arkit_positions.append(arkit_precomputed[image_id]["cam_from_world"].translation)
+        arkit_positions.append(unfiltered_arkit_poses[image_id].cam_from_world.translation)
         refined_positions.append(reconstruction.images[image_id].cam_from_world.translation)
 
 
     scale_change = robust_scale(refined_positions, arkit_positions)
     logger.info(f"Scale post-processing to match ARKit. Scale by: {scale_change}")
     
-    #scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
-    #reconstruction.transform(scale_transform)
+    scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
+    reconstruction.transform(scale_transform)
 
     #for image_id in reconstruction.reg_image_ids():
     #    if image_id in arkit_precomputed:
