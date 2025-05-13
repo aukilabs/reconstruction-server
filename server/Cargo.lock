@@ -3858,11 +3858,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "jsonwebtoken",
  "posemesh-domain",
  "posemesh-networking",
  "quick-protobuf",
- "rand 0.9.1",
  "regex",
  "scopeguard",
  "serde",
@@ -3870,7 +3868,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "zip",
 ]
 

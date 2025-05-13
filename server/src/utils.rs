@@ -1,5 +1,5 @@
 use domain::protobuf::task::{Status, Task};
-use networking::client::Client;
+use networking::client::TClient;
 use quick_protobuf::serialize_into_vec;
 use tokio::{sync::watch, task::JoinHandle, time::interval};
 use std::{collections::HashSet, error::Error, fs, path::Path, process::Stdio, time::Duration};
@@ -106,19 +106,23 @@ pub fn write_scan_data_summary(
     Ok(())
 } 
 
-pub async fn health(task: Task, mut c: Client, job_id: &str, rx: watch::Receiver<bool>) -> JoinHandle<()> {
+pub async fn health<C: TClient + Send + Sync + 'static>(task: Task, mut c: C, job_id: &str, rx: watch::Receiver<bool>) -> JoinHandle<()> {
     let job_id_clone = job_id.to_string();
     tokio::spawn(async move {
-        let mut rx = rx;
+        let mut rx = rx.clone();
         let mut interval = interval(Duration::from_secs(30)); // Send heartbeat every 30 seconds
-        
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     let mut progress_task = task.clone();
                     progress_task.status = Status::PROCESSING;
                     if let Ok(message) = serialize_into_vec(&progress_task) {
-                        let _ = c.publish(job_id_clone.clone(), message).await;
+                        if let Err(e) = c.publish(job_id_clone.clone(), message).await {
+                            tracing::error!("Error publishing heartbeat: {}", e);
+                            continue;
+                        }
+                    } else {
+                        tracing::error!("Failed to serialize heartbeat");
                     }
                 }
                 // Check if we should stop
@@ -154,7 +158,7 @@ pub async fn execute_python(params: Vec<&str>) -> Result<(), Box<dyn Error + Sen
         tokio::spawn(async move {
             let mut lines = stderr_reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("stderr: {}", line);
+                println!("stderr: {}", line);
             }
         });
     }
@@ -162,7 +166,83 @@ pub async fn execute_python(params: Vec<&str>) -> Result<(), Box<dyn Error + Sen
     // Wait for the process to complete
     let status = child.wait().await?;
     if !status.success() {
-        return Err("Python process failed".into());
+        tracing::info!("Python process failed");
+        return Err(format!("Python process failed with status {}", status).into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use networking::client::TClient;
+    use networking::libp2p::NetworkError;
+    use tokio::sync::watch;
+    use tokio::time::{sleep, Duration};
+    use std::sync::{Arc, Mutex};
+
+    // Mock Client to capture published messages
+    #[derive(Clone)]
+    struct MockClient {
+        published_messages: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl MockClient {
+        fn new() -> Self {
+            MockClient {
+                published_messages: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn get_published_messages(&self) -> Vec<Vec<u8>> {
+            self.published_messages.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl TClient for MockClient {
+        async fn publish(&mut self, _job_id: String, message: Vec<u8>) -> Result<(), NetworkError> {
+            self.published_messages.lock().unwrap().push(message);
+            Ok(())
+        }
+        async fn subscribe(&mut self, _job_id: String) -> Result<(), NetworkError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_health_sends_heartbeat() {
+        let task = Task {
+            status: Status::PROCESSING,
+            ..Default::default()
+        };
+        let client = MockClient::new();
+        let (tx, rx) = watch::channel(false);
+        // Start the health task
+        let heartbeat_handle = health(task, client.clone(), "job_id", rx).await;
+
+        // Allow some time for heartbeats to be sent
+        sleep(Duration::from_secs(32)).await;
+
+        // Check that heartbeats were sent
+        let messages = client.get_published_messages();
+        assert!(messages.len() >= 1, "Expected at least 1 heartbeat, got {}", messages.len());
+
+        // Stop the heartbeat task
+        tx.send(true).unwrap();
+        let _ = heartbeat_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_python_should_fail_when_python_script_does_not_exist() {
+        async fn run() -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+            let params = vec!["non_existent_script.py"];
+            execute_python(params).await?;
+            Ok(())
+        }
+
+        let res = run().await;
+        assert!(res.is_err(), "Expected error when script does not exist");
+    }
 }

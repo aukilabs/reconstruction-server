@@ -5,6 +5,7 @@ use domain::{auth::{AuthClient, AuthError}, capabilities::public_key::PublicKeyS
 use networking::client::Client;
 use tokio::{self, select, signal::unix::{signal, SignalKind}};
 use futures::{lock::Mutex, StreamExt};
+use tracing_subscriber::{fmt, prelude::__tracing_subscriber_SubscriberExt, EnvFilter, Registry};
 mod local_refinement;
 mod global_refinement;
 mod utils;
@@ -14,8 +15,8 @@ async fn shutdown_signal() {
     let mut int_signal = signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
 
     tokio::select! {
-        _ = term_signal.recv() => println!("Received SIGTERM, exiting..."),
-        _ = int_signal.recv() => println!("Received SIGINT, exiting..."),
+        _ = term_signal.recv() => tracing::info!("Received SIGTERM, exiting..."),
+        _ = int_signal.recv() => tracing::info!("Received SIGINT, exiting..."),
     }
 }
 
@@ -67,7 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let base_path = format!("./volume/{}", name);
     let domain_manager = args[3].clone();
     let private_key_path = format!("{}/pkey", base_path);
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+    let subscriber = Registry::default()
+            .with(fmt::layer().with_file(true).with_line_number(true))
+            .with(EnvFilter::new("info"));
+    tracing::subscriber::set_global_default(subscriber).expect("failed to set subscriber");
 
     let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
     let domain_manager_id = domain_cluster.manager_id.clone();
@@ -89,14 +93,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
+                let res = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
+                if let Err(e) = res.await {
+                    tracing::error!("Error: {}", e);
+                }
             }
             _ = shutdown_signal() => {
                 c.cancel().await.unwrap_or_else(|e| {
-                    eprintln!("Failed to cancel client: {}", e);
+                    tracing::error!("Failed to cancel client: {}", e);
                 });
                 keys_loader.cleanup().await;
-                println!("Received termination signal, shutting down...");
+                tracing::info!("Received termination signal, shutting down...");
                 break;
             }
             else => break
