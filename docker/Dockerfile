@@ -186,7 +186,7 @@ ENV CARGO_HOME="/usr/local/cargo"
 
 # Standalone image: Use the compiled server binary
 FROM runtime AS reconstruction
-COPY --from=rust-build /app/server/target/release/server /app/server
+COPY --from=rust-build /app/server/target/release/server /app/reconstruction
 RUN chmod +x /app/server
 
 # Final stage: Select between dev and prod
@@ -194,4 +194,6 @@ FROM reconstruction${IS_DEVELOPMENT:+_dev} AS final
 
 WORKDIR /app
 USER $USERNAME
+ENTRYPOINT ["/app/reconstruction"]
+
 
