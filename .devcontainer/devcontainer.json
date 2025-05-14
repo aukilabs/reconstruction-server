@@ -15,7 +15,8 @@
             "extensions":[
                 "golang.Go",
                 "ms-python.python",
-                "ms-python.debugpy"
+                "ms-python.debugpy",
+                "rust-lang.rust-analyzer"
             ]
         }
     },
@@ -36,5 +37,5 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": "sudo chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_server.sh"
+    "postCreateCommand": "sudo .devcontainer/build_server.sh && sudo chown -R reconstruction-server:reconstruction-server /app"
 }
