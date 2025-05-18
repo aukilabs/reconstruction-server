@@ -9,7 +9,7 @@ import pycolmap
 import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
-from hloc import pairs_from_poses, extract_features, match_features
+from hloc import pairs_from_poses, extract_features, match_features, pairs_from_retrieval
 import utils.pairs_from_sequential as pairs_from_sequential
 from utils.bundle_adjuster import PyBundleAdjuster
 from utils.geometry_utils import robust_scale
@@ -38,18 +38,16 @@ def run_triangulation(
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
 
     reconstruction = deepcopy(reference_model)
-
-    clear_points = True
+    clear_points = False #True
     if clear_points:
         for point3D_id in reconstruction.point3D_ids():
             reconstruction.delete_point3D(point3D_id)
-    
 
     unfiltered_arkit_poses = {}
     for image_id in arkit_precomputed:
         unfiltered_arkit_poses[image_id] = deepcopy(arkit_precomputed[image_id]["cam_from_world"])
 
-    filter_spikes = True
+    filter_spikes = False
     if filter_spikes:
         prev_pose = None
         prev_pose_new = None
@@ -106,17 +104,23 @@ def run_triangulation(
     for image_id in reconstruction.reg_image_ids():
         image = reconstruction.images[image_id]
         num_existing_points = image.num_points3D
-        mapper.triangulate_image(tri_options, image_id)
+        try:
+            mapper.triangulate_image(tri_options, image_id)
+        except IndexError as e:
+            logger.error(f"Error triangulating image {image_id}: {e}")
+            continue
         #logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
 
     mapper.complete_and_merge_tracks(tri_options)
 
     ba_options = pycolmap.BundleAdjustmentOptions()
 
+    skip_cam_pose_refinement = True
+
     ba_options.refine_focal_length = False
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
-    ba_options.refine_extrinsics = True
+    ba_options.refine_extrinsics = not skip_cam_pose_refinement
     ba_options.solver_options.max_num_iterations = 100 # 150
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
@@ -128,6 +132,13 @@ def run_triangulation(
 
     retriangulated = False
     ba_iterations_remaining = num_ba_iterations_total
+
+    # CUSTOM!
+    if skip_cam_pose_refinement:
+        num_ba_iterations_total = 1
+        ba_iterations_remaining = 1
+        retriangulated = True
+
     while ba_iterations_remaining > 0:
         mapper.observation_manager.filter_observations_with_negative_depth()
 
@@ -163,18 +174,20 @@ def run_triangulation(
         }
         """
         refinement_config = {
-            'add_rel_constraints': True,
-            'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e1, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e2, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': False,
-            #'centerdist_weight': 1e2,
+            #'add_rel_constraints': True,
+            #'use_arkit_relposes': True,
+            #'rel_se3_pose_cov_scale': 1e1, # Higher to trust ARKit relative positions more
+            #'rel_se3_pose_cov_scale_rot': 1e2, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': True,
+            'centerdist_weight': 1e-1, #1e2,
             #'use_robust_point_loss': False,
-            #'rel_qr_pose_cov_scale': 1e2, # Higher means we trust the QR loop closure more
-            'floor_height_weight': 1e3,
-            'floor_direction_weight': 1e1,
+            'rel_qr_pose_cov_scale': 1e-4, #1e3, # Higher means we trust the QR loop closure more
+            'floor_height_weight': 1e-4, #1e4,
+            'floor_direction_weight': 1e-4, #1e2,
             #'use_arkit_gravityprior': True,
             #'gravityprior_weight': 1e2
+        } if not skip_cam_pose_refinement else {
+            'use_arkit_centerdist': False,
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
@@ -251,8 +264,8 @@ def run_triangulation(
         # Retriangulate underreconstructed image pairs after first BA success
         #"""
         if not retriangulated and (
-            summary.termination_type == pyceres.TerminationType.CONVERGENCE
-            or ba_iterations_remaining == 0
+           summary.termination_type == pyceres.TerminationType.CONVERGENCE
+           or ba_iterations_remaining == 0
         ):
             logger.info('Retriangulating...')
             #mapper_options.filter_max_reproj_error = 2.0
@@ -267,25 +280,30 @@ def run_triangulation(
             num_ba_iterations_total += additional_iterations
             ba_iterations_remaining += additional_iterations
             
+            #if ba_iterations_remaining == 1:
+            #    ba_options.refine_focal_length = True
+            #    ba_options.refine_extra_params = True
+
             #ba_options.refine_focal_length = True
             #ba_options.refine_extra_params = True
         #"""
 
+    refix_scale = True
 
-    arkit_positions = []
-    refined_positions = []
-    for image_id in reconstruction.reg_image_ids():
-        if not (image_id in arkit_precomputed and image_id in reconstruction.images):
-            raise ValueError(f"Image {image_id} not found in both arkit_precomputed and reconstruction")
-        arkit_positions.append(unfiltered_arkit_poses[image_id].cam_from_world.translation)
-        refined_positions.append(reconstruction.images[image_id].cam_from_world.translation)
+    if refix_scale:
+        arkit_positions = []
+        refined_positions = []
+        for image_id in reconstruction.reg_image_ids():
+            if not (image_id in arkit_precomputed and image_id in reconstruction.images):
+                raise ValueError(f"Image {image_id} not found in both arkit_precomputed and reconstruction")
+            arkit_positions.append(unfiltered_arkit_poses[image_id].inverse().translation)
+            refined_positions.append(reconstruction.images[image_id].cam_from_world.inverse().translation)
 
-
-    scale_change = robust_scale(refined_positions, arkit_positions)
-    logger.info(f"Scale post-processing to match ARKit. Scale by: {scale_change}")
-    
-    scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
-    reconstruction.transform(scale_transform)
+        scale_change = robust_scale(refined_positions, arkit_positions)
+        logger.info(f"Scale post-processing to match ARKit. Scale by: {scale_change}")
+        
+        scale_transform = pycolmap.Sim3d(scale_change, pycolmap.Rotation3d(), np.zeros(3))
+        reconstruction.transform(scale_transform)
 
     #for image_id in reconstruction.reg_image_ids():
     #    if image_id in arkit_precomputed:
@@ -293,7 +311,6 @@ def run_triangulation(
     #        pose = image.cam_from_world.inverse()
     #        pose.translation *= scale_change
     #        image.cam_from_world = pose.inverse()
-
 
     logger.info('Extracting colors...')
     reconstruction.extract_colors_for_all_images(image_dir)
@@ -362,14 +379,32 @@ def process_features_and_matching(
     # Generate pairs from poses
     logger.info("Generating image pairs from poses")
 
+    use_loop_closure = False
+    # Feature extraction for loop closure
+    if use_loop_closure:
+        global_feature_conf = extract_features.confs["eigenplaces"]
+        global_feature_conf["output"] = paths.global_features
+        extract_features.main(
+            global_feature_conf,
+            paths.images,
+            paths.sfm_dir,
+            feature_path=paths.global_features,
+            as_half=True,
+            image_list=references
+        )
+
     use_pairs_from_sequential = True
     if use_pairs_from_sequential:
         pairs_from_sequential.main(
-            paths.sfm_pairs, 
-            references, 
+            paths.sfm_pairs,
+            references,
             features=None,
-            window_size=5,
-            quadratic_overlap=True
+            window_size=2, #4,
+            quadratic_overlap=True,
+            use_loop_closure=use_loop_closure,
+            retrieval_path=paths.global_features if use_loop_closure else None,
+            retrieval_interval=2,
+            num_loc=5
         )
     else:
         pairs_from_poses.main(
@@ -380,10 +415,13 @@ def process_features_and_matching(
         )
 
     # Feature extraction
-    #feature_conf = extract_features.confs["aliked-n16"]
-    feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf = extract_features.confs["aliked-n16"]
+    feature_conf["model"]["max_num_keypoints"] = 1024
+    feature_conf["model"]["detection_threshold"] = 0.3 # 0.2
+    #feature_conf = extract_features.confs["superpoint_max"]
+    #feature_conf = extract_features.confs["superpoint_aachen"]
     feature_conf["output"] = paths.features
-    feature_conf["model"]["max_keypoints"] = 1024
+    #feature_conf["model"]["max_keypoints"] = 1024
     #feature_conf["model"]["nms_radius"] = 4
     #feature_conf["preprocessing"]["resize_max"] = 1200
     logger.info(f"Extracting features with config: {feature_conf}")
@@ -399,8 +437,9 @@ def process_features_and_matching(
 
     # Feature matching
     logger.info("Matching features")
-    #matcher_conf = match_features.confs["aliked+lightglue"]
-    matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf = match_features.confs["aliked+lightglue"]
+    #matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf["model"]["compile_network"] = False
     match_features.main(
         matcher_conf, 
         paths.sfm_pairs, 

@@ -403,7 +403,7 @@ class PyBundleAdjuster(object):
 
         # CUSTOM!
         use_relposes = self.refinement_config.get('add_rel_constraints', False)
-        has_spike = image_id in arkit_precomputed and arkit_precomputed[image_id]["arkit_spike"]
+        has_spike = image_id in arkit_precomputed and arkit_precomputed[image_id].get("arkit_spike", False)
         if use_relposes and image_id > 1 and not constant_cam_pose and not has_spike:
             prev_image = reconstruction.images[image_id - 1]
             prev_pose = prev_image.cam_from_world

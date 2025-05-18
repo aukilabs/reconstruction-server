@@ -170,6 +170,8 @@ def align_reconstruction_chunks(
         with_scale: bool = True
     ):
 
+    print("Going to optimize chunk alignment...")
+
     t_local_chunk_quat = [pycolmap.Rigid3d().rotation.quat for _ in range(len(chunks_image_ids))]
     t_local_chunk_translation = [pycolmap.Rigid3d().translation for _ in range(len(chunks_image_ids))]
     image_id_to_chunk_id = {image_id : chunk_id for chunk_id, image_ids in enumerate(chunks_image_ids) for image_id in image_ids}
@@ -181,9 +183,9 @@ def align_reconstruction_chunks(
     # TODO: Robust loss (cauchy / huber) to care less about occasional bad QR detections.
     # TODO: Human constraints optional support
 
-    #loss = pyceres.HuberLoss(1.0)
-    loss = None
-    
+    loss = pyceres.HuberLoss(0.05)
+    #loss = None
+
     qr_ids_per_chunk = [set() for _ in range(len(chunks_image_ids))]
     connected_chunks = [set() for _ in range(len(chunks_image_ids))]
     for qr_id, cam_space_detections in detections_per_qr.items():
@@ -272,5 +274,7 @@ def align_reconstruction_chunks(
         for det_idx, (image_id, _) in enumerate(zip(image_ids_per_qr[qr_id], cam_space_detections)):
             chunk_id = image_id_to_chunk_id[image_id]
             detections_per_qr[qr_id][det_idx].translation *= t_local_chunks[chunk_id].scale
+
+    print("Chunk alignment optimization DONE\n")
 
     return

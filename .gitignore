@@ -11,6 +11,7 @@ reconstruction
 /src/cost_functions.cpython-38-x86_64-linux-gnu.so
 /src/ply_export.cpython-38-x86_64-linux-gnu.so
 
-/challenge_scans
+/challenge_scans/*
+!/challenge_scans/refine.sh
 /server/target/
 /volume/

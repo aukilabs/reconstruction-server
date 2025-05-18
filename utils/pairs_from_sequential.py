@@ -73,9 +73,10 @@ def main(
             pairs.append((names_q[i], names_q[j]))
 
             if quadratic_overlap:
-                q = 2 ** (j - i)
+                q = 2 ** (j - i) + window_size
                 if q > window_size and i + q < N:
                     pairs.append((names_q[i], names_q[i + q]))
+        
 
 
     if use_loop_closure:
@@ -90,17 +91,24 @@ def main(
         match_mask = np.zeros((M, N), dtype=bool)
 
         for i in range(M):
-            for k in range(window_size + 1):
+            blocked_range = window_size + 1
+            if quadratic_overlap:
+                blocked_range += 2 ** window_size
+
+            blocked_range += 50
+
+            for k in range(blocked_range): #range(window_size + 1):
                 if i * retrieval_interval - k >= 0 and i * retrieval_interval - k < N:
                     match_mask[i][i * retrieval_interval - k] = 1
                 if i * retrieval_interval + k >= 0 and i * retrieval_interval + k < N:
                     match_mask[i][i * retrieval_interval + k] = 1
 
-                if quadratic_overlap:
-                    if i * retrieval_interval - 2**k >= 0 and i * retrieval_interval - 2**k < N:
-                        match_mask[i][i * retrieval_interval - 2**k] = 1
-                    if i * retrieval_interval + 2**k >= 0 and i * retrieval_interval + 2**k < N:
-                        match_mask[i][i * retrieval_interval + 2**k] = 1
+                #if quadratic_overlap:
+                #    offset = 2**k
+                #    if i * retrieval_interval - 2**k >= 0 and i * retrieval_interval - 2**k < N:
+                #        match_mask[i][i * retrieval_interval - 2**k] = 1
+                #    if i * retrieval_interval + 2**k >= 0 and i * retrieval_interval + 2**k < N:
+                #        match_mask[i][i * retrieval_interval + 2**k] = 1
 
         pairs_from_retrieval.main(
             retrieval_path,
