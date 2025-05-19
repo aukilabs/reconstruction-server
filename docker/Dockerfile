@@ -118,9 +118,9 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && python3 -m pip install -e .
 
 # Hloc
-RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
+RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    git checkout --recurse-submodules abb252080282e31147db6291206ca102c43353f7 && \
+    git checkout --recurse-submodules auki-master && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 

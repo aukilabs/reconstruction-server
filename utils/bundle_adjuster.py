@@ -189,21 +189,41 @@ class PyBundleAdjuster(object):
             } for image_id in self.config.image_ids
         }
 
+        raw_costs_per_category = {} # Print raw costs before applying loss function, to help balancing huber, cauchy loss etc.
         for category, datas in self.residuals_per_category.items():
             for data in datas:
                 cost, loss, parameter_blocks, image_id = data
 
                 residuals, jacobians = cost.evaluate(*parameter_blocks)
                 if residuals is not None:
+                    raw_residuals = np.abs(residuals)
+
                     cost = norm(residuals) ** 2
+                    
+                    if category not in raw_costs_per_category:
+                        raw_costs_per_category[category] = []
+                    raw_costs_per_category[category].append(cost)
+
                     if loss is not None:
                         cost = loss.evaluate(cost)[0] # First index is the modified cost ('loss' function downsizes outliers)
+                    cost /= 2
                     loss_breakdown[category]["sum"] += cost
                     loss_breakdown[category]["count"] += 1
 
                     if image_id is not None:
                         loss_breakdown_per_image_id[image_id][category]["sum"] += cost
                         loss_breakdown_per_image_id[image_id][category]["count"] += 1
+
+        for category, raw_costs in raw_costs_per_category.items():
+            if category not in loss_breakdown:
+                loss_breakdown[category]["outlier_80perc"] = 0.0
+                loss_breakdown[category]["outlier_90perc"] = 0.0
+                loss_breakdown[category]["outlier_95perc"] = 0.0
+                continue
+            loss_breakdown[category]["outlier_90perc"] = np.percentile(raw_costs, 90)
+            loss_breakdown[category]["outlier_80perc"] = np.percentile(raw_costs, 80)
+            loss_breakdown[category]["outlier_95perc"] = np.percentile(raw_costs, 95)
+
 
         return loss_breakdown, loss_breakdown_per_image_id
 
@@ -436,8 +456,8 @@ class PyBundleAdjuster(object):
                 prev_pose.translation
             ]
 
-            rel_transform_loss = None
-            #rel_transform_loss = pyceres.HuberLoss(1.0 * np.sqrt(cov_scale_rot))
+            #rel_transform_loss = None
+            rel_transform_loss = pyceres.HuberLoss(0.1 * np.sqrt(cov_scale_rot))
 
             self.add_residual_block("OffsetFromUnrefined", cost, rel_transform_loss, params, image_id)
 

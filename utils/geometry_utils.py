@@ -134,7 +134,9 @@ def run_stitching(detections_per_qr,
     return combined_rec, combined_detections
 
 
-def robust_scale(A, B) -> float:
+def robust_scale(A, B, logger=None) -> float:
+    _print = logger.info if logger else print
+
     """Median distance ratio with MAD-based outlier rejection."""
     A = np.asarray(A)[::2]
     B = np.asarray(B)[::2]
@@ -145,12 +147,12 @@ def robust_scale(A, B) -> float:
     med = np.median(ratios)
     devs = np.abs(ratios - med)
     mad = np.mean(devs) + 1e-7
-    inlier = devs < 2 * mad
-    print(f"Estimating scale with {np.sum(inlier)} out of {len(ratios)} relative movements. (mask: {np.sum(mask)})")
-    print("median: ", med)
-    print("mad: ", mad)
+    inlier = devs < 1.5 * mad
+    _print(f"Estimating scale with {np.sum(inlier)} out of {len(ratios)} relative movements. (mask: {np.sum(mask)})")
+    _print(f"median: {med}")
+    _print(f"mad: {mad}")
     scale = np.median(ratios[inlier])
-    print("scale: ", scale)
+    _print(f"scale: {scale}")
     return scale
 
 
@@ -177,14 +179,12 @@ def align_reconstruction_chunks(
     image_id_to_chunk_id = {image_id : chunk_id for chunk_id, image_ids in enumerate(chunks_image_ids) for image_id in image_ids}
     problem = pyceres.Problem()
 
-    # TODO: Care less about qr rotation "loop closure", more about position.
     # TODO: Add gravity prior
     # TODO: Use reprojection error of QR code corners in cameras which observed it
-    # TODO: Robust loss (cauchy / huber) to care less about occasional bad QR detections.
     # TODO: Human constraints optional support
 
-    loss = pyceres.HuberLoss(0.05)
-    #loss = None
+    #loss = pyceres.CauchyLoss(0.05) # HuberLoss(0.05)
+    loss = None
 
     qr_ids_per_chunk = [set() for _ in range(len(chunks_image_ids))]
     connected_chunks = [set() for _ in range(len(chunks_image_ids))]
