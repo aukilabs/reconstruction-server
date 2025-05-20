@@ -37,7 +37,7 @@ def run_triangulation(
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
 
     reconstruction = deepcopy(reference_model)
-    clear_points = True #False
+    clear_points = False
     if clear_points:
         for point3D_id in reconstruction.point3D_ids():
             reconstruction.delete_point3D(point3D_id)
@@ -121,12 +121,12 @@ def run_triangulation(
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = not skip_cam_pose_refinement
-    ba_options.solver_options.max_num_iterations = 100 # 150
+    ba_options.solver_options.max_num_iterations = 150
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 3 # 1 # 3
+    num_ba_iterations_total = 5 # 1 # 3
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -174,15 +174,15 @@ def run_triangulation(
         }
         """
         refinement_config = {
-            'add_rel_constraints': True,
-            'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e5, # Higher to trust ARKit relative positions more
+            #'add_rel_constraints': True,
+            #'use_arkit_relposes': True,
+            #'rel_se3_pose_cov_scale': 1e5, # Higher to trust ARKit relative positions more
             #'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
             'use_arkit_centerdist': False,
-            'centerdist_weight': 1e0, #1e2,
+            'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
             'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
-            'floor_height_weight': 1e5, # 1e4
+            'floor_height_weight': 1e4,
             'floor_direction_weight': 1e2,
             #'use_arkit_gravityprior': True,
             #'gravityprior_weight': 1e2
@@ -265,7 +265,7 @@ def run_triangulation(
         #"""
         if not retriangulated and (
            summary.termination_type == pyceres.TerminationType.CONVERGENCE
-           or ba_iterations_remaining == 0
+           #or ba_iterations_remaining == 0
         ):
             logger.info('Retriangulating...')
             #mapper_options.filter_max_reproj_error = 2.0
@@ -288,7 +288,7 @@ def run_triangulation(
             #ba_options.refine_extra_params = True
         #"""
 
-    refix_scale = True
+    refix_scale = False
 
     if refix_scale:
         arkit_positions = []
