@@ -114,7 +114,8 @@ def global_main_wrapper(args, logger):
         ply_remove_outliers=True,
         domain_id=args.domain_id,
         job_id=args.job_id,
-        log_level=args.log_level
+        log_level=args.log_level,
+        refix_scale=False
     )
     global_main(global_args)
     logger.info("Done with global refinement")

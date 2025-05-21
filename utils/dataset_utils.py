@@ -26,7 +26,7 @@ from utils.data_utils import (
     save_manifest_json,
     export_rec_as_ply
 )
-from utils.geometry_utils import align_reconstruction_chunks, run_stitching
+from utils.geometry_utils import align_reconstruction_chunks, run_stitching, robust_scale, robust_scale
 from utils.io import Model, read_portal_csv
 
 
@@ -94,7 +94,8 @@ def stitching_helper(
     use_refined_outputs: bool = False,
     with_3dpoints: bool = False,
     basic_stitch_only: bool = False,
-    logger_name: Optional[str] = None
+    logger_name: Optional[str] = None,
+    refix_scale=False
 ) -> StitchingResult:
     """Main function to stitch multiple reconstructions together.
     
@@ -127,6 +128,7 @@ def stitching_helper(
         stitch_data,
         use_refined_outputs,
         with_3dpoints,
+        refix_scale,
         logger
     )
 
@@ -140,7 +142,7 @@ def stitching_helper(
         stitch_data,
         truth_portal_poses,
         paths,
-        with_3dpoints,
+        False,
         logger
     )
     print("DONE\n")
@@ -186,6 +188,7 @@ def load_partial(
     partial_rec_dir: Optional[Path],
     gt_observations: bool = False,
     with_3dpoints: bool = False,
+    refix_scale: bool = False,
     logger_name: Optional[str] = None
 ) -> StitchingData:
     """Load and process a partial reconstruction for stitching.
@@ -228,11 +231,87 @@ def load_partial(
         truth_portal_poses if gt_observations else None
     )
 
+    scale = 1.0
+    
+    if refix_scale:
+        ar_poses_path = unzip_folder / "ARposes.csv"
+        ar_poses_per_timestamp = {}
+        logger.info(f'Loading AR poses from {ar_poses_path}')
+        
+        with open(ar_poses_path, newline='') as csvfile:
+            for row in csv.reader(csvfile):
+                timestamp = round(float(row[0]) * 1e9)  # s to ns
+                ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]]
+        logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
+
+        # All camera world positions (chronological order!)
+        rec = pycolmap.Reconstruction()
+        rec.read(loaded_rec.get_path())
+        images = [rec.images[image_id] for image_id in sorted(rec.images.keys())]
+        timestamps = [timestamp_chunk[image.name] for image in images]
+        rec_trajectory = [
+            image.cam_from_world.inverse().translation
+            for image in images
+        ]
+        arkit_trajectory = [
+            ar_poses_per_timestamp[timestamp]
+            for timestamp in timestamps
+        ]
+
+        assert len(rec_trajectory) == len(arkit_trajectory)
+        assert len(rec_trajectory) > 0
+    
+        def trajectory_length(traj):
+            length = 0
+            for i in range(len(traj) - 1):
+                length += norm(np.array(traj[i]) - np.array(traj[i+1]))
+            return length, norm(np.array(traj[0]) - np.array(traj[-1]))
+
+        print("trajectory length:")
+        print("COLMAP: ", trajectory_length(rec_trajectory))
+        print("ARKIT: ", trajectory_length(arkit_trajectory))
+
+        """
+        # Plot trajectories from top-down view (ignoring x coordinate)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Convert trajectories to numpy arrays for easier plotting
+        rec_traj = np.array(rec_trajectory)
+        arkit_traj = np.array(arkit_trajectory)
+        
+        # Plot COLMAP trajectory
+        ax1.plot(rec_traj[:,1], rec_traj[:,2], 'b-')
+        ax1.set_title('COLMAP Trajectory')
+        ax1.axis('equal')
+        
+        # Plot ARKit trajectory
+        ax2.plot(arkit_traj[:,0], arkit_traj[:,2], 'r-')
+        ax2.set_title('ARKit Trajectory')
+        ax2.axis('equal')
+        
+        plt.tight_layout()
+        plt.show()
+        """
+
+        scale = robust_scale(rec_trajectory, arkit_trajectory, logger)
+        logger.info(f"Applying scale {scale} to match ARKit")
+
+    tmp_scaled_qr_poses = {
+        qr_id: pycolmap.Rigid3d(pose.rotation, scale * pose.translation)
+        for qr_id, pose in chunk_mean_qr_poses.items()
+    }
+
     # Find overlapping portals and calculate alignment
-    alignment_transform = _calculate_alignment_transform(
-        chunk_mean_qr_poses,
+    rigid_alignment_transform = _calculate_alignment_transform(
+        tmp_scaled_qr_poses,
         stitch_data.placed_portal,
-        logger
+        logger,
+    )
+
+    alignment_transform = pycolmap.Sim3d(
+        scale,
+        rigid_alignment_transform.rotation.quat,
+        rigid_alignment_transform.translation
     )
 
     # Update placed portals
@@ -336,7 +415,6 @@ def _calculate_alignment_transform(
     has_overlap = len(target_poses) > 0
     is_first_chunk = len(placed_portal) == 0
 
-
     if not has_overlap and not is_first_chunk:
         raise NoOverlapException()
 
@@ -346,32 +424,35 @@ def _calculate_alignment_transform(
             for qr_id in target_poses.keys()
         ]
         return mean_pose(alignment_transforms)
-    
+
     if is_first_chunk:
         origin_portal_id = list(mean_qr_poses.keys())[0]
-        clean_origin_portal_pose = pycolmap.Rigid3d(
-            pycolmap.Rotation3d(np.array([0.0, 0.0, 0.0, 1.0])),
-            mean_qr_poses[origin_portal_id].translation
-        )
-        return clean_origin_portal_pose.inverse()
+        return floor_origin_portal_pose * mean_qr_poses[origin_portal_id].inverse()
 
 
 def _update_placed_portals(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
-    alignment_transform: Optional[pycolmap.Rigid3d],
+    alignment_transform: Optional[pycolmap.Sim3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
     logger
 ) -> None:
     """Update placed portal positions."""
+
     for qr_id, pose in mean_qr_poses.items():
         if alignment_transform is not None:
-            pose = alignment_transform * pose
+            pose = transform_with_scale(alignment_transform, pose)
         placed_portal[qr_id] = pose
         logger.info(f"Portal: {qr_id} Pose: {pose}")
 
+
+def transform_with_scale(alignment_transform: pycolmap.Sim3d, pose: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
+    pose = pycolmap.Sim3d(1.0, pose.rotation, pose.translation)
+    pose = alignment_transform * pose
+    return pycolmap.Rigid3d(pose.rotation, pose.translation)
+
 def _process_reconstruction_optimized(
     loaded_rec: Model,
-    alignment_transform: Optional[pycolmap.Rigid3d],
+    alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
     timestamp_chunk: Dict[str, int],
     stitch_data: StitchingData,
@@ -382,17 +463,14 @@ def _process_reconstruction_optimized(
     pycolmap_rec = pycolmap.Reconstruction()
     pycolmap_rec.read(loaded_rec.get_path())
     if alignment_transform is not None:
-        pycolmap_rec.transform(pycolmap.Sim3d(
-            1.0, 
-            alignment_transform.rotation.quat, 
-            alignment_transform.translation
-        ))
+        pycolmap_rec.transform(alignment_transform)
         for detection in qr_detections:
-            detection["pose"] = alignment_transform * detection["pose"]
+            detection["pose"] = transform_with_scale(alignment_transform, detection["pose"])
 
     # Step 2: Copy cameras and images but with incremented IDs
     image_id_old_to_new = {}
-    for old_img_id, old_img in pycolmap_rec.images.items():
+    for old_img_id in pycolmap_rec.reg_image_ids():
+        old_img = pycolmap_rec.images[old_img_id]
         old_cam_id = old_img.camera_id
         old_cam = pycolmap_rec.cameras[old_cam_id]
 
@@ -464,7 +542,7 @@ def _process_reconstruction_optimized(
 
 def _process_reconstruction(
     loaded_rec: Model,
-    alignment_transform: Optional[pycolmap.Rigid3d],
+    alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
     timestamp_chunk: Dict[str, int],
     stitch_data: StitchingData,
@@ -475,13 +553,9 @@ def _process_reconstruction(
     pycolmap_rec = pycolmap.Reconstruction()
     pycolmap_rec.read(loaded_rec.get_path())
     if alignment_transform is not None:
-        pycolmap_rec.transform(pycolmap.Sim3d(
-            1.0, 
-            alignment_transform.rotation.quat, 
-            alignment_transform.translation
-        ))
+        pycolmap_rec.transform(alignment_transform)
         for detection in qr_detections:
-            detection["pose"] = alignment_transform * detection["pose"]
+            detection["pose"] = transform_with_scale(alignment_transform, detection["pose"])
 
     image_id_old_to_new = {}
     arkit_cam_from_world_transforms = {}
@@ -592,7 +666,9 @@ def _process_datasets(
     stitch_data: StitchingData,
     use_refined_outputs: bool,
     with_3dpoints: bool,
+    refix_scale: bool,
     logger
+
 ) -> Set[Path]:
     """Process all datasets and attempt to align them."""
     datasets_already_aligned = set()
@@ -632,6 +708,7 @@ def _process_datasets(
                 stitch_data,
                 partial_rec_dir,
                 with_3dpoints=with_3dpoints,
+                refix_scale=refix_scale,
                 logger_name=logger.name
             )
 
@@ -775,7 +852,7 @@ def _get_refined_results(
         stitch_data.chunks_image_ids,
         stitch_data.detections_per_qr,
         stitch_data.image_ids_per_qr,
-        with_scale=False
+        with_scale=True
     )
     
     # World space QR detections using globally refined camera poses

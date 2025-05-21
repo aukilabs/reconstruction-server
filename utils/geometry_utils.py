@@ -142,12 +142,21 @@ def robust_scale(A, B, logger=None) -> float:
     B = np.asarray(B)[::2]
     dA = np.linalg.norm(A[1:] - A[:-1], axis=1)
     dB = np.linalg.norm(B[1:] - B[:-1], axis=1)
-    mask = dA > 0.01
+    slow_mask = dB > np.percentile(dB, 10)
+    fast_mask = dB < np.percentile(dB, 90)
+    valid = (dA > 0.001) & (dB > 0.001)
+    mask = slow_mask & fast_mask & valid
+
+    print(f"RAW mean deltas: A={np.mean(dA)}, B={np.mean(dB)}")
+    print(f"MASKED mean deltas: A={np.mean(dA[mask])}, B={np.mean(dB[mask])}")
     ratios = dB[mask] / dA[mask]
+    print("Mean scaling ratio: ", np.mean(ratios))
+    print("Median scaling ratio: ", np.median(ratios))
+
     med = np.median(ratios)
-    devs = np.abs(ratios - med)
-    mad = np.mean(devs) + 1e-7
-    inlier = devs < 1.5 * mad
+    mad = np.median(np.abs(ratios - med)) + 1e-9
+    inlier = np.abs(ratios - med) < 3 * mad
+
     _print(f"Estimating scale with {np.sum(inlier)} out of {len(ratios)} relative movements. (mask: {np.sum(mask)})")
     _print(f"median: {med}")
     _print(f"mad: {mad}")

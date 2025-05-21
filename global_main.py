@@ -59,7 +59,8 @@ def main(args):
         use_refined_outputs=args.use_refined_outputs,
         with_3dpoints=args.add_3dpoints,
         basic_stitch_only=args.basic_stitch_only,
-        logger_name="global_refinement"
+        logger_name="global_refinement",
+        refix_scale=args.refix_scale
     )
 
     if result is None:
@@ -83,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--ply_remove_outliers", action='store_true', default=False, help="Remove outliers from the point cloud")
     parser.add_argument("--domain_id", type=str, default="")
     parser.add_argument("--job_id", type=str, default="")
+    parser.add_argument("--refix_scale", action='store_true', default=False, help="Refix scale")
     parser.add_argument("--log_level", type=str, default="INFO", 
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
