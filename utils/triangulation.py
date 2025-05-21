@@ -382,7 +382,7 @@ def process_features_and_matching(
     retrieval_interval = 5
     # Feature extraction for loop closure
     if use_loop_closure:
-        global_feature_conf = extract_features.confs["megaloc"]
+        global_feature_conf = extract_features.confs["eigenplaces"]
         global_feature_conf["output"] = paths.global_features
         extract_features.main(
             global_feature_conf,

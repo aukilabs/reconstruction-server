@@ -120,7 +120,7 @@ RUN git clone https://github.com/colmap/colmap.git && \
 # Hloc
 RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    git checkout --recurse-submodules auki-master && \
+    git checkout --recurse-submodules fee50e704a0656e25fc2cdd6a7e3852c637fd4d8 && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
@@ -154,8 +154,6 @@ COPY utils /app/utils
 RUN chmod 755 /app/utils
 COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
-COPY src/hloc_extras/lightglue.py /src/Hierarchical-Localization/hloc/matchers/
-COPY src/hloc_extras/superpoint.py /src/Hierarchical-Localization/hloc/extractors/
 
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
 
