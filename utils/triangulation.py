@@ -382,7 +382,7 @@ def process_features_and_matching(
     retrieval_interval = 5
     # Feature extraction for loop closure
     if use_loop_closure:
-        global_feature_conf = extract_features.confs["eigenplaces"]
+        global_feature_conf = extract_features.confs["megaloc"]
         global_feature_conf["output"] = paths.global_features
         extract_features.main(
             global_feature_conf,
@@ -405,7 +405,7 @@ def process_features_and_matching(
             retrieval_path=paths.global_features if use_loop_closure else None,
             retrieval_interval=retrieval_interval,
             num_loc=10,
-            min_retrieval_distance=40,
+            min_retrieval_distance=40, # prevent picking only very close pairs
         )
     else:
         pairs_from_poses.main(
