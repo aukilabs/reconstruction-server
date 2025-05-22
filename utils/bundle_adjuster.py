@@ -456,8 +456,8 @@ class PyBundleAdjuster(object):
                 prev_pose.translation
             ]
 
-            rel_transform_loss = None
-            #rel_transform_loss = pyceres.HuberLoss(0.1 * np.sqrt(cov_scale_rot))
+            #rel_transform_loss = None
+            rel_transform_loss = pyceres.HuberLoss(0.1 * np.sqrt(cov_scale_rot))
 
             self.add_residual_block("OffsetFromUnrefined", cost, rel_transform_loss, params, image_id)
 
