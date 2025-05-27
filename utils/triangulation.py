@@ -126,7 +126,7 @@ def run_triangulation(
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 3 # 1 # 3
+    num_ba_iterations_total = 4 # 1 # 3
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -177,11 +177,11 @@ def run_triangulation(
             'add_rel_constraints': True,
             'use_arkit_relposes': True,
             'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e4, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': True,
-            'centerdist_weight': 1e0,
+            'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': False,
+            #'centerdist_weight': 1e0,
             #'use_robust_point_loss': False,
-            'rel_qr_pose_cov_scale': 1e3, # Higher means we trust the QR loop closure more
+            'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e4,
             'floor_direction_weight': 1e2,
             #'use_arkit_gravityprior': True,
@@ -268,7 +268,7 @@ def run_triangulation(
            #or ba_iterations_remaining == 0
         ):
             logger.info('Retriangulating...')
-            mapper_options.filter_max_reproj_error = 2.0
+            #mapper_options.filter_max_reproj_error = 2.0
             #mapper_options.filter_min_tri_angle = 2.0
             num_retriangulated = mapper.retriangulate(tri_options)
             logger.info(f'Retriangulated {num_retriangulated} observations')

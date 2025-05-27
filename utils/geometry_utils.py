@@ -111,7 +111,7 @@ def run_stitching(detections_per_qr,
                 ba_config.set_constant_cam_pose(image_id)
 
         print("Start Global Bundle Adjustment")
-        summary, loss_details = dmt_global_stitching(detections_per_qr,
+        summary, loss_details = dmt_global_stitching(detections_pqr,
                                                      image_ids_per_qr,
                                                      timestamp_per_image,
                                                      arkit_precomputed,
@@ -172,6 +172,32 @@ def filter_reconstruction(reconstruction, normalize_points=False):
         reconstruction.normalize(5.0, 0.1, 0.9, True)
     return reconstruction
 
+class QuaternionNormalizationCostFunction(pyceres.CostFunction):
+    def __init__(self, weight=1.0):
+        super().__init__()
+        self.set_num_residuals(1)
+        self.set_parameter_block_sizes([4])
+        self.weight = weight
+
+    def Evaluate(self, parameters, residuals, jacobians):
+        q = parameters[0]
+        n = np.linalg.norm(q)
+        # residual = (1 - ||q||)^2
+        residuals[0] = (1.0 - n)**2 * self.weight
+
+        if jacobians is not None:
+            # avoid division by zero
+            if n > 0:
+                factor = -2.0 * (1.0 - n) / n * self.weight
+                for i in range(4):
+                    jacobians[0][i] = factor * q[i]
+            else:
+                # Jacobian undefined at zero; you could set it to zero or some large value
+                for i in range(4):
+                    jacobians[0][i] = 0.0
+
+        return True
+
 
 def align_reconstruction_chunks(
         reconstruction: pycolmap.Reconstruction,
@@ -192,7 +218,7 @@ def align_reconstruction_chunks(
     # TODO: Use reprojection error of QR code corners in cameras which observed it
     # TODO: Human constraints optional support
 
-    #loss = pyceres.CauchyLoss(0.05) # HuberLoss(0.05)
+    #loss = pyceres.HuberLoss(0.1)
     loss = None
 
     qr_ids_per_chunk = [set() for _ in range(len(chunks_image_ids))]
@@ -214,7 +240,7 @@ def align_reconstruction_chunks(
 
             cov = np.eye(6)
             #cov[0:3, 0:3] *= 0.01
-            #cov[3:, 3:] *= 0.01 # Care more about rotation
+            cov[3:, 3:] *= 0.01
             cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,
@@ -242,18 +268,23 @@ def align_reconstruction_chunks(
                     quat = t_local_chunk_quat[chunk_fix_idx]
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                         problem.set_manifold(quat, pyceres.QuaternionManifold())
+            else:
+                weight = 5000.0
+                scale_cost = QuaternionNormalizationCostFunction(weight=weight)
+                params = [t_local_chunk_quat[chunk_idx]]
+                problem.add_residual_block(scale_cost, None, params)
     else:
         for quat in t_local_chunk_quat:
             if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                 problem.set_manifold(quat, pyceres.QuaternionManifold())
 
     solver_options = pyceres.SolverOptions()
-    solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
+    solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_NORMAL_CHOLESKY
     solver_options.minimizer_progress_to_stdout = True
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
     solver_options.parameter_tolerance = 0.0
-    solver_options.max_num_iterations = 50
+    solver_options.max_num_iterations = 100
     solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
 
     summary = pyceres.SolverSummary()
