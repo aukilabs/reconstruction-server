@@ -33,6 +33,7 @@ type ExpectedOutput struct {
 	FilePath string // relative to job folder
 	Name     string
 	DataType string
+	Optional bool
 }
 
 type jobList struct {
@@ -357,6 +358,7 @@ func UploadJobManifestToDomain(j *job) error {
 		FilePath: "job_manifest.json",
 		Name:     "refined_manifest",
 		DataType: "refined_manifest_json",
+		Optional: false,
 	}
 
 	return UploadOutputToDomain(j, output)
@@ -366,21 +368,22 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 	refinedOutput := path.Join("refined", "global")
 	expectedOutputs := []ExpectedOutput{
 		{
-			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
+			FilePath: path.Join(refinedOutput, "refined_manifest.json"), 
 			Name:     "refined_manifest",
 			DataType: "refined_manifest_json",
+			Optional: false,
 		},
 		{
-			FilePath: path.Join(refinedOutput, "RefinedPointCloud.ply"),
+			FilePath: path.Join(refinedOutput, "RefinedPointCloudReduced.ply"),
 			Name:     "refined_pointcloud",
 			DataType: "refined_pointcloud_ply",
+			Optional: false,
 		},
 		{
-			// The unrefined point cloud after just basic stitch from overlap QR codes
-			// Not really useful to apps, but for debugging the refinement
-			FilePath: path.Join(refinedOutput, "BasicStitchPointCloud.ply"),
-			Name:     "unrefined_pointcloud",
-			DataType: "unrefined_pointcloud_ply",
+			FilePath: path.Join(refinedOutput, "RefinedPointCloud.ply.drc"),
+			Name:     "refined_pointcloud_full_draco",
+			DataType: "refined_pointcloud_ply_draco",
+			Optional: true,
 		},
 		/*{
 			FilePath: path.Join(refinedOutput, "occlusion", "meshes.obj"),
@@ -421,6 +424,19 @@ func UploadOutputsToDomain(j *job, expectedOutputs []ExpectedOutput) error {
 }
 
 func UploadOutputToDomain(j *job, output ExpectedOutput) error {
+	if err := UploadOutputToDomainHelper(j, output); err != nil {
+		if output.Optional {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("Uploading output %s failed (but won't fail the job): %s", output.Name, err.Error())
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func UploadOutputToDomainHelper(j *job, output ExpectedOutput) error {
 	outputPath := j.JobPath
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 		return err

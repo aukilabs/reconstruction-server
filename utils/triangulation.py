@@ -8,6 +8,7 @@ import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features
+import utils.pairs_from_sequential as pairs_from_sequential
 
 from utils.bundle_adjuster import PyBundleAdjuster
 
@@ -100,7 +101,9 @@ def run_triangulation(
             'add_rel_constraints': False,
             'use_arkit_relposes': False,
             'use_arkit_centerdist': True,
-            'centerdist_weight': 1e2
+            'centerdist_weight': 1e2,
+            'floor_height_weight': 1e3,
+            'floor_direction_weight': 1e1
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
@@ -235,7 +238,7 @@ def process_features_and_matching(
             paths.sfm_pairs, 
             references, 
             features=None,
-            window_size=7,
+            window_size=5,
             quadratic_overlap=True
         )
     else:
@@ -249,6 +252,7 @@ def process_features_and_matching(
     # Feature extraction
     feature_conf = extract_features.confs["superpoint_max"]
     feature_conf["output"] = paths.features
+    feature_conf["model"]["max_keypoints"] = 1024
     logger.info(f"Extracting features with config: {feature_conf}")
 
     extract_features.main(

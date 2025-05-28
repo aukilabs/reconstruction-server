@@ -109,7 +109,9 @@ def global_main_wrapper(args, logger):
         data_dir=Path(args.job_root_path) / "datasets",
         use_refined_outputs=True,
         add_3dpoints=True,
-        basic_stitch_only=True,
+        basic_stitch_only=False,
+        ply_downsample=0.03,
+        ply_remove_outliers=True,
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level
@@ -131,14 +133,6 @@ def local_and_global_main_wrapper(args, logger):
     
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
-
-    global_out_folder = args.job_root_path / "refined" / "global"
-
-    ply_output_path = global_out_folder / "RefinedPointCloud.ply"
-    if ply_output_path.exists():
-        logger.info(f"Refined point cloud created! {ply_output_path}")
-    else:
-        logger.info(f"Point cloud wasn't created, expected at: {ply_output_path}")
 
     # TODO: needs some fixing and testing before re-enabling
     #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
