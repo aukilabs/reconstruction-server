@@ -269,7 +269,7 @@ def align_reconstruction_chunks(
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                         problem.set_manifold(quat, pyceres.QuaternionManifold())
             else:
-                weight = 5000.0
+                weight = 10000.0
                 scale_cost = QuaternionNormalizationCostFunction(weight=weight)
                 params = [t_local_chunk_quat[chunk_idx]]
                 problem.add_residual_block(scale_cost, None, params)

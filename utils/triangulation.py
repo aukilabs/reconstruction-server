@@ -190,8 +190,8 @@ def run_triangulation(
             'use_arkit_relposes': True,
             'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
             'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': False,
-            #'centerdist_weight': 1e0,
+            'use_arkit_centerdist': True,
+            'centerdist_weight': 1e0,
             #'use_robust_point_loss': False,
             'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e4,
