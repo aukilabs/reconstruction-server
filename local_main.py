@@ -3,28 +3,31 @@ import argparse
 from utils.refinement_util import refine_dataset
 
 
-def main(args):
+def main(args, pool_executor=None):
     """
     Main function to run local refinement algorithm.
 
     Args:
-        dataset_path: Path to the input dataset
-        output_path: Path for output files
-        every_nth_image: Process every nth image
-        remove_outputs: Whether to remove existing outputs
-        domain_id: Domain identifier
-        job_id: Job identifier
-        log_level: Logging level
+        args: Namespace containing:
+            dataset_path: Path to the input dataset
+            output_path: Path for output files
+            every_nth_image: Process every nth image
+            remove_outputs: Whether to remove existing outputs
+            domain_id: Domain identifier
+            job_id: Job identifier
+            log_level: Logging level
+        pool_executor: Optional ThreadPoolExecutor instance for parallel processing
     """
 
-    refined_rec, unrefined_rec = refine_dataset(
+    return refine_dataset(
         args.dataset_path, 
         args.output_path,
         args.every_nth_image,
         args.remove_outputs,
         args.domain_id,
         args.job_id,
-        args.log_level
+        args.log_level,
+        pool_executor=pool_executor
     )
 
 
