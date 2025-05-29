@@ -1,8 +1,8 @@
 use std::{collections::HashMap, hash::Hash, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use domain::{auth::{AuthClient, AuthError}, capabilities::public_key::PublicKeyStorage, cluster::DomainCluster, datastore::remote::RemoteDatastore};
-use networking::client::Client;
+use posemesh_domain::{auth::{AuthClient, AuthError}, capabilities::public_key::PublicKeyStorage, cluster::DomainCluster, datastore::remote::RemoteDatastore};
+use posemesh_networking::client::Client;
 use tokio::{self, select, signal::unix::{signal, SignalKind}};
 use futures::{lock::Mutex, StreamExt};
 use tracing_subscriber::{fmt, prelude::__tracing_subscriber_SubscriberExt, EnvFilter, Registry};
@@ -90,13 +90,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut c = n.client.clone();
         select! {
             Some((_, stream)) = local_refinement_v1_handler.next() => {
-                let _ = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
+                static LOCAL_REFINEMENT_RUNNING: tokio::sync::Mutex<bool> = tokio::sync::Mutex::const_new(false);
+                let mut lock = LOCAL_REFINEMENT_RUNNING.lock().await;
+                if *lock {
+                    tracing::warn!("There is already a local refinement running, skipping...");
+                    continue;
+                }
+                *lock = true;
+                drop(lock);
+                let _guard = scopeguard::guard((), |_| {
+                    tokio::spawn(async move {
+                        let mut lock = LOCAL_REFINEMENT_RUNNING.lock().await;
+                        *lock = false;
+                    });
+                });
+                if let Err(e) = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), c, keys_loader.clone())).await {
+                    tracing::error!("Local Refinement Error: {}", e);
+                }
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
-                let res = tokio::spawn(global_refinement::v1(base_path.clone(), stream, remote_storage.clone(), n.client.clone(), keys_loader.clone()));
-                if let Err(e) = res.await {
-                    tracing::error!("Error: {}", e);
-                }
+                let base_path = base_path.clone();
+                let remote_storage = remote_storage.clone();
+                let keys_loader = keys_loader.clone();
+                let c = c.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = global_refinement::v1(base_path, stream, remote_storage, c, keys_loader).await {
+                        tracing::error!("Global Refinement Error: {}", e);
+                    }
+                });
             }
             _ = shutdown_signal() => {
                 c.cancel().await.unwrap_or_else(|e| {
