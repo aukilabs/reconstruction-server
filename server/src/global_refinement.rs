@@ -1,10 +1,10 @@
-use std::{collections::HashMap, fs::{self, File}, io::Cursor, path::{Path, PathBuf}};
-use domain::{auth::{handshake, TaskTokenClaim}, capabilities::public_key::PublicKeyStorage, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata}, task::{self, Task}}};
-use networking::{client::{Client, TClient}, AsyncStream};
-use quick_protobuf::serialize_into_vec;
+use std::{collections::HashMap, fs::{self, File}, io::{self, Cursor, Error, ErrorKind}, path::{Path, PathBuf}, pin::Pin, sync::{Arc, Mutex}, task::{Context, Poll}};
+use posemesh_domain::{auth::{handshake, TaskTokenClaim}, capabilities::public_key::PublicKeyStorage, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{self, Metadata, Query, UpsertMetadata}, task}};
+use posemesh_networking::{client::{Client, TClient}, AsyncStream};
+use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
 use regex::Regex;
 use tokio::{self, sync::watch, time::{sleep, Duration}};
-use futures::StreamExt;
+use futures::AsyncWrite;
 use zip::ZipArchive;
 
 use crate::utils::{execute_python, health};
@@ -55,7 +55,7 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, datastore: &mut R
     Ok(())
 }
 
-fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn unzip_bytes(path: PathBuf, zip_bytes: &[u8]) -> io::Result<()> {
     let cursor = Cursor::new(zip_bytes);
     let mut archive = ZipArchive::new(cursor)?;
     tracing::info!("Zip archive opened, contains {} files", archive.len());
@@ -73,7 +73,7 @@ fn unzip_bytes(path: PathBuf, zip_bytes: Vec<u8>) -> Result<(), Box<dyn std::err
         }
         
         let mut output_file: File = File::create(&file_path)?;
-        let bytes_copied = std::io::copy(&mut input_file, &mut output_file)?;
+        let _ = std::io::copy(&mut input_file, &mut output_file)?;
     }
     Ok(())
 }
@@ -118,6 +118,81 @@ async fn initialize_task<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone
     Ok((task, job_id, claim, task_path, input_path, output_path))
 }
 
+fn download_local_refinement_result(input_path: &Path, dataset_path: &Path, name: &str, data: &[u8]) -> io::Result<String> {
+    let suffix = extract_suffix(name).map_err(|_| Error::new(ErrorKind::Other, "Failed to extract suffix"))?;
+    fs::create_dir_all(dataset_path.join(&suffix))?;
+    let path = input_path.join(&suffix).join("sfm");
+    unzip_bytes(path, data)?;
+    Ok(suffix)
+}
+
+#[derive(Clone)]
+struct ToZipArchive {
+    input_path: PathBuf,
+    dataset_path: PathBuf,
+    size: u32,
+    name: String,
+    content: Vec<u8>,
+    scan_ids: Arc<Mutex<Vec<String>>>,
+}
+impl ToZipArchive {
+    fn new(input_path: PathBuf, dataset_path: PathBuf) -> Self {
+        Self {
+            input_path,
+            dataset_path,
+            size: 0,
+            name: "".to_string(),
+            content: vec![],
+            scan_ids: Arc::new(Mutex::new(vec![])),
+        }
+    }
+
+    pub fn scan_ids(&self) -> Vec<String> {
+        self.scan_ids.lock().unwrap().clone()
+    }
+}
+
+impl AsyncWrite for ToZipArchive {
+    fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, content: &[u8]) -> Poll<Result<usize, Error>> {
+        if self.size == 0 {
+            if content.len() < 4 {
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, "Content is too short")));
+            }
+            let metadata = deserialize_from_slice::<Metadata>(&content[..4]).map_err(|_| Error::new(ErrorKind::Other, "Failed to deserialize metadata"))?;
+            self.size = metadata.size;
+            self.name = metadata.name;
+            self.content = vec![];
+            return Poll::Ready(Ok(content.len()));
+        } else {
+            self.content.extend_from_slice(content);
+            return Poll::Ready(Ok(content.len()));
+        }
+    }
+    
+    fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        if self.size == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        if self.size > self.content.len() as u32 {
+            return Poll::Ready(Ok(()));
+        }
+        let suffix = download_local_refinement_result(&self.input_path, &self.dataset_path, &self.name, &self.content)?;
+        self.scan_ids.lock().unwrap().push(suffix);
+        self.content = vec![];
+        self.size = 0;
+        self.name = "".to_string();
+        
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        self.content = vec![];
+        self.size = 0;
+        self.name = "".to_string();
+        Poll::Ready(Ok(()))
+    }
+}
+
 async fn download_data(
     datastore: &mut RemoteDatastore,
     domain_id: &str,
@@ -125,34 +200,18 @@ async fn download_data(
     input_path: &Path,
     dataset_path: &Path,
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut downloader = datastore.load(domain_id.to_string(), query, false).await?;
-    let mut scan_ids = Vec::new();
+    let to_file_system = ToZipArchive::new(input_path.to_path_buf(), dataset_path.to_path_buf());
+    let mut downloader = datastore.load(domain_id.to_string(), query, false, to_file_system.clone()).await?;
+    downloader.wait_for_done().await?;
 
-    while let Some(data) = downloader.next().await {
-        match data {
-            Ok(data) => {
-                let suffix = extract_suffix(&data.metadata.name)?;
-                scan_ids.push(suffix.clone());
-
-                fs::create_dir_all(dataset_path.join(&suffix))?;
-                let path = input_path.join(&suffix).join("sfm");
-                unzip_bytes(path, data.content)?;
-                tracing::info!("downloaded {}", data.metadata.name);
-            }
-            Err(e) => {
-                return Err(Box::new(e));
-            }
-        }
-    }
-
-    if scan_ids.is_empty() {
+    if to_file_system.scan_ids().is_empty() {
         return Err("No scans to refine".into());
     }
 
-    Ok(scan_ids)
+    Ok(to_file_system.scan_ids())
 }
 
-fn extract_suffix(name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn extract_suffix(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     let date_time_regex = Regex::new(r"\d{4}-\d{2}-\d{2}[_-]\d{2}-\d{2}-\d{2}")?;
     date_time_regex
         .find(name)
@@ -170,7 +229,7 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(
     let (mut t, job_id, claim, task_path, input_path, output_path) =
         initialize_task(&base_path, &mut stream, &mut c, key_loader).await?;
 
-    let input = read_prefix_size_message::<task::GlobalRefinementInputV1>(&mut stream).await?;
+    let input = read_prefix_size_message::<task::GlobalRefinementInputV1, _>(&mut stream).await?;
     tracing::info!("Received global refinement input: {:?}", input);
 
     let mut query = Query::default();

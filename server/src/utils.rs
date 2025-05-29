@@ -1,5 +1,5 @@
-use domain::protobuf::task::{Status, Task};
-use networking::client::TClient;
+use posemesh_domain::{datastore::common::DomainError, protobuf::task::{Status, Task}};
+use posemesh_networking::{client::TClient, libp2p::NetworkError};
 use quick_protobuf::serialize_into_vec;
 use tokio::{sync::watch, task::JoinHandle, time::interval};
 use std::{collections::HashSet, error::Error, fs, path::Path, process::Stdio, time::Duration};
@@ -176,8 +176,8 @@ pub async fn execute_python(params: Vec<&str>) -> Result<(), Box<dyn Error + Sen
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use networking::client::TClient;
-    use networking::libp2p::NetworkError;
+    use posemesh_networking::client::TClient;
+    use posemesh_networking::libp2p::NetworkError;
     use tokio::sync::watch;
     use tokio::time::{sleep, Duration};
     use std::sync::{Arc, Mutex};
