@@ -186,12 +186,12 @@ def run_triangulation(
         }
         """
         refinement_config = {
-            'add_rel_constraints': True,
-            'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
+            #'add_rel_constraints': True,
+            #'use_arkit_relposes': True,
+            #'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
+            #'rel_se3_pose_cov_scale_rot': 1e5, # Higher to trust ARKit relative rotations more
             'use_arkit_centerdist': True,
-            'centerdist_weight': 1e0,
+            'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
             'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e4,
@@ -411,13 +411,13 @@ def process_features_and_matching(
             paths.sfm_pairs,
             references,
             features=None,
-            window_size=3,
+            window_size=5,
             quadratic_overlap=True,
             use_loop_closure=use_loop_closure,
             retrieval_path=paths.global_features if use_loop_closure else None,
             retrieval_interval=retrieval_interval,
             num_loc=10,
-            min_retrieval_distance=40, # prevent picking only very close pairs
+            min_retrieval_distance=50, # prevent picking only very close pairs
         )
     else:
         pairs_from_poses.main(

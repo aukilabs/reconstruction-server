@@ -240,7 +240,8 @@ def align_reconstruction_chunks(
 
             cov = np.eye(6)
             #cov[0:3, 0:3] *= 0.01
-            cov[3:, 3:] *= 0.01
+            #cov[3:, 3:] *= 0.01
+            cov[3:, 3:] *= 0.1
             cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,
