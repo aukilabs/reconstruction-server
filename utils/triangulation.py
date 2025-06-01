@@ -58,7 +58,7 @@ def run_triangulation(
     for image_id in arkit_precomputed:
         unfiltered_arkit_poses[image_id] = deepcopy(arkit_precomputed[image_id]["cam_from_world"])
 
-    filter_spikes = False
+    filter_spikes = True
     if filter_spikes:
         prev_pose = None
         prev_pose_new = None
@@ -189,9 +189,9 @@ def run_triangulation(
             'add_rel_constraints': True,
             'use_arkit_relposes': True,
             'rel_se3_pose_cov_scale': 1e4, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e6, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': True,
-            'centerdist_weight': 1e0,
+            'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': False,
+            #'centerdist_weight': 1e2,
             #'use_robust_point_loss': False,
             'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
             'floor_height_weight': 1e4,
@@ -402,7 +402,7 @@ def process_features_and_matching(
             paths.sfm_dir,
             feature_path=paths.global_features,
             as_half=True,
-            image_list=references,
+            image_list=references[::retrieval_interval],
         )
 
     use_pairs_from_sequential = True
