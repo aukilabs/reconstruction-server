@@ -714,20 +714,23 @@ def process_frames(
     return sorted(references), use_frames_from_video, original_image_count
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=True, logger_name=""):
+def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
     logger = logging.getLogger(logger_name)
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
     logger.info(f"convert_to_opengl = {convert_to_opengl}")
     logger.info("...")
-    # As text for now, as mobile DMT doesn't work with binary domain data blobs
-    rec_openGL = pycolmap.Reconstruction()
-    for point in rec.points3D.values():
-        x,y,z = point.xyz
-        if convert_to_opengl:
-            x,y,z = y,x,-z
-        _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
-    export_ply_text(rec_openGL, str(path))
+
+    if convert_to_opengl:
+        rec_openGL = pycolmap.Reconstruction()
+        for point in rec.points3D.values():
+            x,y,z = point.xyz
+            if convert_to_opengl:
+                x,y,z = y,x,-z
+            _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
+        rec = rec_openGL
+
+    rec.export_PLY(str(path))
     logger.info(f"PLY export done")
 
 

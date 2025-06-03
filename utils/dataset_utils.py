@@ -142,7 +142,7 @@ def stitching_helper(
         stitch_data,
         truth_portal_poses,
         paths,
-        False,
+        with_3dpoints and basic_stitch_only, # No need to export the unrefined ply if global refinement is enabled.
         logger
     )
     print("DONE\n")
@@ -882,7 +882,7 @@ def _get_refined_results(
         stitch_data.combined_rec.write(sfm_dir)
         
         ply_path = paths.refined_group_dir / 'global' / "RefinedPointCloud.ply"
-        export_rec_as_ply(stitch_data.combined_rec, ply_path)
+        export_rec_as_ply(stitch_data.combined_rec, ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
 
     if truth_portal_poses:
         compare_portals(
