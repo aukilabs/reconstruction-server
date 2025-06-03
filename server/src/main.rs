@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use posemesh_domain::{auth::{AuthClient, AuthError}, capabilities::public_key::PublicKeyStorage, cluster::DomainCluster, datastore::remote::RemoteDatastore};
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let private_key_path = format!("{}/pkey", base_path);
     let subscriber = Registry::default()
             .with(fmt::layer().with_file(true).with_line_number(true))
-            .with(EnvFilter::new("info"));
+            .with(EnvFilter::try_new(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string())).unwrap_or_else(|_| EnvFilter::new("info")));
     tracing::subscriber::set_global_default(subscriber).expect("failed to set subscriber");
 
     let domain_cluster = DomainCluster::new(domain_manager.clone(), name, false, port, false, false, None, Some(private_key_path), vec![domain_manager.clone()]);
@@ -104,9 +104,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         *lock = false;
                     });
                 });
-                if let Err(e) = tokio::spawn(local_refinement::v1(base_path.clone(), stream, remote_storage.clone(), c, keys_loader.clone())).await {
-                    tracing::error!("Local Refinement Error: {}", e);
-                }
+                let base_path = base_path.clone();
+                let remote_storage = remote_storage.clone();
+                let c = c.clone();
+                let keys_loader = keys_loader.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = local_refinement::v1(base_path, stream, remote_storage, c, keys_loader).await {
+                        tracing::error!("Local refinement error: {}", e);
+                    }
+                });
             }
             Some((_, stream)) = global_refinement_v1_handler.next() => {
                 let base_path = base_path.clone();

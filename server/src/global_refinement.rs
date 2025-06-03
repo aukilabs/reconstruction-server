@@ -83,7 +83,7 @@ async fn initialize_task<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone
     stream: &mut S,
     c: &mut C,
     key_loader: P,
-) -> Result<(task::Task, String, TaskTokenClaim, PathBuf, PathBuf, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(task::Task, String, TaskTokenClaim, PathBuf, PathBuf, PathBuf, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
     let claim = handshake(stream, key_loader).await.expect("Failed to handshake");
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
@@ -115,31 +115,33 @@ async fn initialize_task<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone
     fs::create_dir_all(&dataset_path)?;
     fs::create_dir_all(&output_path)?;
 
-    Ok((task, job_id, claim, task_path, input_path, output_path))
+    Ok((task, job_id, claim, task_path, dataset_path, input_path, output_path))
 }
 
-fn download_local_refinement_result(input_path: &Path, dataset_path: &Path, name: &str, data: &[u8]) -> io::Result<String> {
+fn download_local_refinement_result(dataset_path: &Path, input_path: &Path, name: &str, data: &[u8]) -> io::Result<String> {
     let suffix = extract_suffix(name).map_err(|_| Error::new(ErrorKind::Other, "Failed to extract suffix"))?;
-    fs::create_dir_all(dataset_path.join(&suffix))?;
+    
+    fs::create_dir_all(dataset_path.join(&suffix))?; // This is because python may expect there is dataset folder even it is empty
     let path = input_path.join(&suffix).join("sfm");
+    fs::create_dir_all(&path)?;
     unzip_bytes(path, data)?;
     Ok(suffix)
 }
 
 #[derive(Clone)]
 struct ToZipArchive {
-    input_path: PathBuf,
     dataset_path: PathBuf,
+    input_path: PathBuf,
     size: u32,
     name: String,
     content: Vec<u8>,
     scan_ids: Arc<Mutex<Vec<String>>>,
 }
 impl ToZipArchive {
-    fn new(input_path: PathBuf, dataset_path: PathBuf) -> Self {
+    fn new(dataset_path: PathBuf, input_path: PathBuf) -> Self {
         Self {
-            input_path,
             dataset_path,
+            input_path,
             size: 0,
             name: "".to_string(),
             content: vec![],
@@ -158,7 +160,7 @@ impl AsyncWrite for ToZipArchive {
             if content.len() < 4 {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, "Content is too short")));
             }
-            let metadata = deserialize_from_slice::<Metadata>(&content[..4]).map_err(|_| Error::new(ErrorKind::Other, "Failed to deserialize metadata"))?;
+            let metadata = deserialize_from_slice::<Metadata>(&content[4..]).map_err(|_| Error::new(ErrorKind::Other, "Failed to deserialize metadata"))?;
             self.size = metadata.size;
             self.name = metadata.name;
             self.content = vec![];
@@ -176,7 +178,7 @@ impl AsyncWrite for ToZipArchive {
         if self.size > self.content.len() as u32 {
             return Poll::Ready(Ok(()));
         }
-        let suffix = download_local_refinement_result(&self.input_path, &self.dataset_path, &self.name, &self.content)?;
+        let suffix = download_local_refinement_result(&self.dataset_path, &self.input_path, &self.name, &self.content)?;
         self.scan_ids.lock().unwrap().push(suffix);
         self.content = vec![];
         self.size = 0;
@@ -197,10 +199,10 @@ async fn download_data(
     datastore: &mut RemoteDatastore,
     domain_id: &str,
     query: Query,
-    input_path: &Path,
     dataset_path: &Path,
+    input_path: &Path,
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let to_file_system = ToZipArchive::new(input_path.to_path_buf(), dataset_path.to_path_buf());
+    let to_file_system = ToZipArchive::new(dataset_path.to_path_buf(), input_path.to_path_buf());
     let mut downloader = datastore.load(domain_id.to_string(), query, false, to_file_system.clone()).await?;
     downloader.wait_for_done().await?;
 
@@ -226,7 +228,7 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(
     mut c: Client,
     key_loader: P,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (mut t, job_id, claim, task_path, input_path, output_path) =
+    let (mut t, job_id, claim, task_path, dataset_path, input_path, output_path) =
         initialize_task(&base_path, &mut stream, &mut c, key_loader).await?;
 
     let input = read_prefix_size_message::<task::GlobalRefinementInputV1, _>(&mut stream).await?;
@@ -248,8 +250,9 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(
     });
 
     let domain_id = claim.domain_id.clone();
-    let res = run(&domain_id, &input_path, &task_path, &output_path, datastore, query, &job_id).await;
+    let res = run(&domain_id, &task_path, &dataset_path, &input_path, &output_path, datastore, query, &job_id).await;
 
+    tx.send(true).unwrap();
     if let Err(e) = res {
         t.status = task::Status::FAILED;
         t.output = Some(task::Any {
@@ -263,7 +266,6 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(
         t.status = task::Status::DONE;
     }
 
-    tx.send(true).unwrap();
     let _ = heartbeat_handle.await;
 
     let buf = serialize_into_vec(&t)?;
@@ -276,14 +278,15 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage>(
 
 async fn run(
     domain_id: &str,
-    input_path: &Path,
     task_path: &Path,
+    dataset_path: &Path,
+    input_path: &Path,
     output_path: &Path,
     mut datastore: RemoteDatastore,
     query: Query,
     job_id: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let scan_ids = download_data(&mut datastore, &domain_id, query, &input_path, &task_path.join("datasets")).await?;
+    let scan_ids = download_data(&mut datastore, &domain_id, query, dataset_path, input_path).await?;
         
     let mut params = vec![
         "-u",
@@ -299,6 +302,6 @@ async fn run(
 
     execute_python(params).await?;
     upload_results(&domain_id, output_path.to_path_buf(), &mut datastore).await?;
-    std::fs::remove_dir_all(output_path)?;
+    std::fs::remove_dir_all(task_path)?;
     Ok(())
 }

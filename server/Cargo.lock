@@ -807,7 +807,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -3102,7 +3102,7 @@ checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
 [[package]]
 name = "posemesh-domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=06e93d86ea214b51087799c805797e50c41519ed#06e93d86ea214b51087799c805797e50c41519ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=422341bd87588aad02bf8b18052031e97ef64a4d#422341bd87588aad02bf8b18052031e97ef64a4d"
 dependencies = [
  "async-timer",
  "async-trait",
@@ -3139,7 +3139,7 @@ dependencies = [
 [[package]]
 name = "posemesh-networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=06e93d86ea214b51087799c805797e50c41519ed#06e93d86ea214b51087799c805797e50c41519ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=422341bd87588aad02bf8b18052031e97ef64a4d#422341bd87588aad02bf8b18052031e97ef64a4d"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -3171,7 +3171,7 @@ dependencies = [
 [[package]]
 name = "posemesh-runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=06e93d86ea214b51087799c805797e50c41519ed#06e93d86ea214b51087799c805797e50c41519ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=422341bd87588aad02bf8b18052031e97ef64a4d#422341bd87588aad02bf8b18052031e97ef64a4d"
 dependencies = [
  "once_cell",
  "tokio",
@@ -3180,7 +3180,7 @@ dependencies = [
 [[package]]
 name = "posemesh-utils"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=06e93d86ea214b51087799c805797e50c41519ed#06e93d86ea214b51087799c805797e50c41519ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=422341bd87588aad02bf8b18052031e97ef64a4d#422341bd87588aad02bf8b18052031e97ef64a4d"
 dependencies = [
  "futures",
  "gloo-timers 0.3.0",
@@ -4187,9 +4187,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.19.1"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7437ac7763b9b123ccf33c338a5cc1bac6f69b45a136c19bdd8a65e3916435bf"
+checksum = "e8a64e3985349f2441a1a9ef0b853f869006c3855f2cda6862a94d26ebb9d6a1"
 dependencies = [
  "fastrand",
  "getrandom 0.3.2",

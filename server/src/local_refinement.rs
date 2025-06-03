@@ -13,7 +13,6 @@ const REFINED_SCAN_NAME: &str = "refined_scan_";
 #[derive(Clone)]
 struct ToFileSystem {
     size: u32,
-    content: Option<Vec<u8>>,
     path: Option<PathBuf>,
     input_folder: PathBuf,
     count: Arc<Mutex<u32>>,
@@ -26,7 +25,6 @@ impl ToFileSystem {
             input_folder,
             path: None,
             size: 0,
-            content: None,
             count: Arc::new(Mutex::new(0)),
             written: 0,
             refined_res_id: Arc::new(Mutex::new(None)),
@@ -48,93 +46,82 @@ impl AsyncWrite for ToFileSystem {
             if content.len() < 4 {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, "Content is too short")));
             }
-            match deserialize_from_slice::<Metadata>(&content[..4]) {
-                Ok(metadata) => {
-                    if let Some(_) = metadata.name.strip_prefix("refined_scan_") {
-                        self.refined_res_id.lock().unwrap().insert(metadata.id.clone());
-                        return Poll::Ready(Err(Error::new(ErrorKind::Other, format!("RefinedAlready({})", metadata.id))));
-                    }
-                    let filename = match metadata.name.as_str() {
-                        "Manifest.json" => "Manifest.json".to_string(),
-                        "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
-                        "ARposes.csv" => "ARposes.csv".to_string(),
-                        "PortalDetections.csv" => "PortalDetections.csv".to_string(),
-                        "CameraIntrinsics.csv" => "CameraIntrinsics.csv".to_string(),
-                        "Frames.csv" => "Frames.csv".to_string(),
-                        "Gyro.csv" => "Gyro.csv".to_string(),
-                        "Accel.csv" => "Accel.csv".to_string(),
-                        "gyro_accel.csv" => "gyro_accel.csv".to_string(),
-                        "Frames.mp4" => "Frames.mp4".to_string(),
-                        _ => {
-                            match metadata.data_type.as_str() {
-                                "dmt_manifest_json" => "Manifest.json".to_string(),
-                                "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
-                                "dmt_arposes_csv" => "ARposes.csv".to_string(),
-                                "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
-                                "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
-                                "dmt_frames_csv" => "Frames.csv".to_string(),
-                                "dmt_gyro_csv" => "Gyro.csv".to_string(),
-                                "dmt_accel_csv" => "Accel.csv".to_string(),
-                                "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
-                                "dmt_recording_mp4" => "Frames.mp4".to_string(),
-                                _ => {
-                                    tracing::info!("unknown domain data type: {}", metadata.data_type);
-                                    format!("{}.{}", metadata.name, metadata.data_type)
-                                }
-                            }
-                        }
-                    };
-
-                    self.path = Some(self.input_folder.join(&filename));
-                    self.written = 0;
-                    return Poll::Ready(Ok(content.len()));
-                }
-                Err(_) => {
-                    return Poll::Ready(Err(Error::new(ErrorKind::Other, "Failed to deserialize metadata")));
-                }
+            let metadata = deserialize_from_slice::<Metadata>(&content[4..]).map_err(|e| Error::other(e))?;
+            if let Some(_) = metadata.name.strip_prefix(REFINED_SCAN_NAME) {
+                tracing::warn!("found refined result");
+                let _ = self.refined_res_id.lock().unwrap().insert(metadata.id.clone());
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, format!("RefinedAlready({})", metadata.id))));
             }
+            let filename = match metadata.name.as_str() {
+                "Manifest.json" => "Manifest.json".to_string(),
+                "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
+                "ARposes.csv" => "ARposes.csv".to_string(),
+                "PortalDetections.csv" => "PortalDetections.csv".to_string(),
+                "CameraIntrinsics.csv" => "CameraIntrinsics.csv".to_string(),
+                "Frames.csv" => "Frames.csv".to_string(),
+                "Gyro.csv" => "Gyro.csv".to_string(),
+                "Accel.csv" => "Accel.csv".to_string(),
+                "gyro_accel.csv" => "gyro_accel.csv".to_string(),
+                "Frames.mp4" => "Frames.mp4".to_string(),
+                _ => {
+                    match metadata.data_type.as_str() {
+                        "dmt_manifest_json" => "Manifest.json".to_string(),
+                        "dmt_featurepoints_ply" | "dmt_pointcloud_ply" => "FeaturePoints.ply".to_string(),
+                        "dmt_arposes_csv" => "ARposes.csv".to_string(),
+                        "dmt_portal_detections_csv" | "dmt_observations_csv" => "PortalDetections.csv".to_string(),
+                        "dmt_intrinsics_csv" | "dmt_cameraintrinsics_csv" => "CameraIntrinsics.csv".to_string(),
+                        "dmt_frames_csv" => "Frames.csv".to_string(),
+                        "dmt_gyro_csv" => "Gyro.csv".to_string(),
+                        "dmt_accel_csv" => "Accel.csv".to_string(),
+                        "dmt_gyroaccel_csv" => "gyro_accel.csv".to_string(),
+                        "dmt_recording_mp4" => "Frames.mp4".to_string(),
+                        _ => {
+                            tracing::warn!("unknown domain data type: {}", metadata.data_type);
+                            return Poll::Ready(Ok(0));
+                        }
+                    }
+                }
+            };
+            tracing::debug!("write to: {}", self.input_folder.join(&filename).to_str().unwrap());
+
+            self.path = Some(self.input_folder.join(&filename));
+            self.written = 0;
+            self.size = metadata.size;
+            return Poll::Ready(Ok(content.len()));
         } else {
-            self.content
-                .get_or_insert_with(Vec::new)
-                .extend_from_slice(content);
+            self.written += content.len() as u32;
+            let path = self.path.as_ref().unwrap();
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
+            file.write_all(&content)?;
+            file.flush()?;
+            if self.written == self.size {
+                self.path = None;
+                self.written = 0;
+                self.size = 0;
+                let mut count = self.count.lock().unwrap();
+                *count += 1;
+            }
             return Poll::Ready(Ok(content.len()));
         }
     }
     
-    fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        if self.path.is_none() {
-            return Poll::Ready(Ok(()));
-        }
-        let path = self.path.as_ref().unwrap();
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        let content = self.content.take().unwrap_or_default();
-        file.write_all(&content)?;
-
-        self.written += content.len() as u32;
-        if self.written == self.size {
-            self.path = None;
-            self.written = 0;
-            let mut count = self.count.lock().unwrap();
-            *count += 1;
-        }
-        
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        self.content = None;
         self.path = None;
         Poll::Ready(Ok(()))
     }
 }
 
-pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone + Send + Sync + 'static>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: C, key_loader: P) {
-    let claim = handshake(&mut stream, key_loader).await.expect("Failed to handshake");
+pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone + Send + Sync + 'static>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: C, key_loader: P) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let claim = handshake(&mut stream, key_loader).await?;
     let job_id = claim.job_id.clone();
-    c.subscribe(job_id.clone()).await.expect("Failed to subscribe to job");
+    c.subscribe(job_id.clone()).await?;
     let t = &mut task::Task {
         name: claim.task_name.clone(),
         receiver: Some(claim.receiver.clone()),
@@ -150,8 +137,8 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone +
     match res {
         Ok(context) => {
             t.status = task::Status::STARTED;
-            let message = serialize_into_vec(t).expect("failed to serialize task update");
-            c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+            let message = serialize_into_vec(t)?;
+            c.publish(job_id.clone(), message).await?;
             let (tx, rx) = watch::channel(false);
 
             let heartbeat_handle = health(t.clone(), c.clone(), &job_id, rx).await;
@@ -161,6 +148,7 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone +
             });
 
             let output = run(&claim.domain_id, &job_id, &claim.task_name, context, datastore).await;
+            let _ = tx.send(true); // stop heartbeat task
             match output {
                 Ok(output) => {
                     t.output = Some(task::Any {
@@ -180,8 +168,6 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone +
                     });
                 }
             }
-
-            tx.send(true).unwrap();
             let _ = heartbeat_handle.await;
         }
         Err(e) => {
@@ -195,10 +181,12 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone +
             });
         }
     }
-    let message = serialize_into_vec(t).expect("failed to serialize task update");
-    c.publish(job_id.clone(), message).await.expect("failed to publish task update");
+    let message = serialize_into_vec(t)?;
+    c.publish(job_id.clone(), message).await?;
 
     tracing::info!("finished local refinement {}", job_id);
+    
+    Ok(())
 }
 
 struct LocalRefinementContext {
@@ -259,19 +247,21 @@ async fn start<S: AsyncStream>(base_path: String, job_id: &str, task_name: &str,
 async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefinementContext, mut datastore: RemoteDatastore) -> Result<LocalRefinementOutputV1, Box<dyn std::error::Error + Send + Sync>> { 
     let query = context.query;
 
-    let writer = ToFileSystem::new(context.output_folder.clone());
-    let mut downloader = datastore.load(domain_id.to_string(), Query {
-        metadata_only: false,
-        ..query
-    }, false, writer.clone()).await?;
+    let writer = ToFileSystem::new(context.input_folder.clone());
+    let mut downloader = datastore.load(domain_id.to_string(), query, false, writer.clone()).await?;
     if let Err(e) = downloader.wait_for_done().await {
         let refined_res_id = writer.refined_res_id();
         if refined_res_id.is_some() {
+            let _ = fs::remove_dir_all(context.input_folder);
             return Ok(LocalRefinementOutputV1 {
                 result_ids: vec![refined_res_id.unwrap()],
             });
         }
         return Err(Box::new(e));
+    }
+
+    if writer.count() == 0 {
+        return Err("No data downloaded".into());
     }
 
     tracing::info!("Finished downloading {} data for {}", writer.count(), task_name);
@@ -342,7 +332,7 @@ async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefin
         sleep(Duration::from_secs(3)).await;
     }
     producer.close().await;
-    std::fs::remove_dir_all(&context.task_folder)?;
+    std::fs::remove_dir_all(&context.input_folder)?;
     
     let output = LocalRefinementOutputV1 {
         result_ids: vec![res_id],
