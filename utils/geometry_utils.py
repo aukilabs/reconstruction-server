@@ -241,19 +241,35 @@ def align_reconstruction_chunks(
             cov = np.eye(6)
             #cov[0:3, 0:3] *= 0.01
             cov[3:, 3:] *= 0.01
-            cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
+
+            # First relative to second
+            cost_1 = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,
                                                           t_tgtworld_qr.translation, cov)
 
-            params = [
+            params_1 = [
                 t_local_chunk_quat[chunk_id_tgt],
                 t_local_chunk_translation[chunk_id_tgt],
                 t_local_chunk_quat[chunk_id_ref],
                 t_local_chunk_translation[chunk_id_ref]
             ]
 
-            problem.add_residual_block(cost, loss, params)
+            problem.add_residual_block(cost_1, loss, params_1)
+
+            # Second relative to first (to ensure scale impacts in both ways symetrically)
+            cost_2 = RelativeTransformationSim3CostFunction(t_tgtworld_qr.rotation.quat,
+                                                          t_tgtworld_qr.translation,
+                                                          t_refworld_qr.rotation.quat,
+                                                          t_refworld_qr.translation, cov)
+            params_2 = [
+                t_local_chunk_quat[chunk_id_ref],
+                t_local_chunk_translation[chunk_id_ref],
+                t_local_chunk_quat[chunk_id_tgt],
+                t_local_chunk_translation[chunk_id_tgt]
+            ]
+            problem.add_residual_block(cost_2, loss, params_2)
+
             qr_ids_per_chunk[chunk_id_ref].add(qr_id)
             qr_ids_per_chunk[chunk_id_tgt].add(qr_id)
             connected_chunks[chunk_id_ref].add(chunk_id_tgt)
@@ -262,7 +278,6 @@ def align_reconstruction_chunks(
     if with_scale:
         for chunk_idx in range(len(chunks_image_ids)):
             if len(qr_ids_per_chunk[chunk_idx]) < 2:
-                #chunks_to_fix_scale = list(connected_chunks[chunk_idx]) + [chunk_idx]
                 chunks_to_fix_scale = [chunk_idx]
                 print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale') # for chunks {chunks_to_fix_scale}.')
                 for chunk_fix_idx in chunks_to_fix_scale:
