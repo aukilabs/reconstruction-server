@@ -262,14 +262,15 @@ def align_reconstruction_chunks(
     if with_scale:
         for chunk_idx in range(len(chunks_image_ids)):
             if len(qr_ids_per_chunk[chunk_idx]) < 2:
-                chunks_to_fix_scale = list(connected_chunks[chunk_idx]) + [chunk_idx]
-                print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale for chunks {chunks_to_fix_scale}.')
+                #chunks_to_fix_scale = list(connected_chunks[chunk_idx]) + [chunk_idx]
+                chunks_to_fix_scale = [chunk_idx]
+                print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale') # for chunks {chunks_to_fix_scale}.')
                 for chunk_fix_idx in chunks_to_fix_scale:
                     quat = t_local_chunk_quat[chunk_fix_idx]
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                         problem.set_manifold(quat, pyceres.QuaternionManifold())
             else:
-                weight = 10000.0
+                weight = 5000.0
                 scale_cost = QuaternionNormalizationCostFunction(weight=weight)
                 params = [t_local_chunk_quat[chunk_idx]]
                 problem.add_residual_block(scale_cost, None, params)
