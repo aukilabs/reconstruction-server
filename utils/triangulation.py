@@ -188,7 +188,7 @@ def run_triangulation(
         refinement_config = {
             'add_rel_constraints': True,
             'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e4, # Higher to trust ARKit relative positions more
+            'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
             'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
             'use_arkit_centerdist': False,
             #'centerdist_weight': 1e2,
