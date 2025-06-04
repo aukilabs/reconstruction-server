@@ -416,7 +416,7 @@ def process_features_and_matching(
             use_loop_closure=use_loop_closure,
             retrieval_path=paths.global_features if use_loop_closure else None,
             retrieval_interval=retrieval_interval,
-            num_loc=5,
+            num_loc=10,
             min_retrieval_distance=50, # prevent picking only very close pairs
         )
     else:
