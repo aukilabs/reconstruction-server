@@ -1,14 +1,48 @@
-use std::{collections::HashMap, fs::{self, OpenOptions}, io::{Error, ErrorKind}, path::{Path, PathBuf}, pin::Pin, sync::{Arc, Mutex}, task::{Context, Poll}, time::Duration};
+use std::{collections::HashMap, fs::{self, OpenOptions}, io::{Error, ErrorKind}, path::{Path, PathBuf}, pin::Pin, sync::{atomic::{AtomicI32, Ordering}, Arc, Mutex}, task::{Context, Poll}, time::Duration};
 use posemesh_domain::{auth::handshake, capabilities::public_key::PublicKeyStorage, datastore::{common::{data_id_generator, Datastore}, remote::RemoteDatastore}, message::read_prefix_size_message, protobuf::{domain_data::{Metadata, Query, UpsertMetadata},task::{self, LocalRefinementInputV1, LocalRefinementOutputV1}}};
 use posemesh_networking::{client::TClient, AsyncStream};
 use quick_protobuf::{deserialize_from_slice, serialize_into_vec};
-use futures::{AsyncWrite, StreamExt};
+use futures::AsyncWrite;
 use tokio::{sync::watch, time::sleep};
 use std::io::{BufReader, Read, Write};
 use zip::write::SimpleFileOptions;
 use crate::utils::{execute_python, health, write_scan_data_summary};
 
 const REFINED_SCAN_NAME: &str = "refined_scan_";
+
+#[derive(Clone)]
+struct FindScanResult {
+    id: Arc<Mutex<String>>,
+}
+impl FindScanResult {
+    fn new() -> Self {
+        Self {
+            id: Arc::new(Mutex::new("".to_string()))
+        }
+    }
+    fn scan_id(&self) -> String {
+        self.id.lock().unwrap().to_string()
+    }
+}
+impl AsyncWrite for FindScanResult {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, content: &[u8]) -> Poll<Result<usize, Error>> {
+        if content.len() < 4 {
+            return Poll::Ready(Err(Error::new(ErrorKind::Other, "Content is too short")));
+        }
+        let metadata = deserialize_from_slice::<Metadata>(&content[4..]).map_err(|e| Error::other(e))?;
+        let mut id = self.id.lock().unwrap();
+        *id = metadata.id;
+        Poll::Ready(Ok(content.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
 
 #[derive(Clone)]
 struct ToFileSystem {
@@ -47,11 +81,6 @@ impl AsyncWrite for ToFileSystem {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, "Content is too short")));
             }
             let metadata = deserialize_from_slice::<Metadata>(&content[4..]).map_err(|e| Error::other(e))?;
-            if let Some(_) = metadata.name.strip_prefix(REFINED_SCAN_NAME) {
-                tracing::warn!("found refined result");
-                let _ = self.refined_res_id.lock().unwrap().insert(metadata.id.clone());
-                return Poll::Ready(Err(Error::new(ErrorKind::Other, format!("RefinedAlready({})", metadata.id))));
-            }
             let filename = match metadata.name.as_str() {
                 "Manifest.json" => "Manifest.json".to_string(),
                 "FeaturePoints.ply" => "FeaturePoints.ply".to_string(),
@@ -118,7 +147,7 @@ impl AsyncWrite for ToFileSystem {
     }
 }
 
-pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone + Send + Sync + 'static>(base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: C, key_loader: P) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone + Send + Sync + 'static>(left_slots: Arc<AtomicI32>, base_path: String, mut stream: S, datastore: RemoteDatastore, mut c: C, key_loader: P) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let claim = handshake(&mut stream, key_loader).await?;
     let job_id = claim.job_id.clone();
     c.subscribe(job_id.clone()).await?;
@@ -132,6 +161,20 @@ pub(crate) async fn v1<S: AsyncStream, P: PublicKeyStorage, C: TClient + Clone +
         job_id: job_id.clone(),
         output: None,
     };
+    let current_slots = left_slots.fetch_sub(1, Ordering::SeqCst);
+    let _guard = scopeguard::guard((), |_| {
+        left_slots.fetch_add(1, Ordering::SeqCst);
+    });
+
+    if current_slots < 0 {
+        tracing::warn!("Reconstruction has no vacancy, skipping this local refinement request");
+        t.receiver = None;
+        t.status = task::Status::RETRY;
+        t.access_token = None;
+        let message = serialize_into_vec(t)?;
+        c.publish(job_id.clone(), message).await?;
+        return Ok(());
+    }
 
     let res = start(base_path, &job_id, &claim.task_name, &mut stream).await;
     match res {
@@ -246,6 +289,20 @@ async fn start<S: AsyncStream>(base_path: String, job_id: &str, task_name: &str,
 
 async fn run(domain_id: &str, job_id: &str, task_name: &str, context: LocalRefinementContext, mut datastore: RemoteDatastore) -> Result<LocalRefinementOutputV1, Box<dyn std::error::Error + Send + Sync>> { 
     let query = context.query;
+
+    let find_refine_result = FindScanResult::new();
+    let mut find_refine_query = Query::default();
+    find_refine_query.metadata_only = true;
+    find_refine_query.name_regexp = Some(format!("{}.*", REFINED_SCAN_NAME));
+    let mut finding = datastore.load(domain_id.to_string(), find_refine_query, false, find_refine_result.clone()).await?;
+    if let Err(e) = finding.wait_for_done().await {
+        return Err(Box::new(e));
+    }
+    if find_refine_result.scan_id() != "".to_string() {
+        return Ok(LocalRefinementOutputV1 {
+            result_ids: vec![find_refine_result.scan_id()],
+        });
+    }
 
     let writer = ToFileSystem::new(context.input_folder.clone());
     let mut downloader = datastore.load(domain_id.to_string(), query, false, writer.clone()).await?;

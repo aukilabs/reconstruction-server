@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-posemesh-networking = { git = "https://github.com/aukilabs/posemesh.git", rev = "422341bd87588aad02bf8b18052031e97ef64a4d" }
+posemesh-networking = { git = "https://github.com/aukilabs/posemesh.git", rev = "0176b1d0998d13875580917b6708dfe9ce4b27ed" }
 futures = "0.3.30"
-posemesh-domain = { git = "https://github.com/aukilabs/posemesh.git", rev = "422341bd87588aad02bf8b18052031e97ef64a4d" }
+posemesh-domain = { git = "https://github.com/aukilabs/posemesh.git", rev = "0176b1d0998d13875580917b6708dfe9ce4b27ed" }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 tokio = "1.44.0"
