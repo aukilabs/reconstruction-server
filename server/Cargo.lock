@@ -3121,7 +3121,7 @@ checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
 [[package]]
 name = "posemesh-domain"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=0176b1d0998d13875580917b6708dfe9ce4b27ed#0176b1d0998d13875580917b6708dfe9ce4b27ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=a6acafc44ede38afe07c4887b139186358f6d02c#a6acafc44ede38afe07c4887b139186358f6d02c"
 dependencies = [
  "async-timer",
  "async-trait",
@@ -3157,7 +3157,7 @@ dependencies = [
 [[package]]
 name = "posemesh-networking"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=0176b1d0998d13875580917b6708dfe9ce4b27ed#0176b1d0998d13875580917b6708dfe9ce4b27ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=a6acafc44ede38afe07c4887b139186358f6d02c#a6acafc44ede38afe07c4887b139186358f6d02c"
 dependencies = [
  "async-trait",
  "cbindgen",
@@ -3189,7 +3189,7 @@ dependencies = [
 [[package]]
 name = "posemesh-runtime"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=0176b1d0998d13875580917b6708dfe9ce4b27ed#0176b1d0998d13875580917b6708dfe9ce4b27ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=a6acafc44ede38afe07c4887b139186358f6d02c#a6acafc44ede38afe07c4887b139186358f6d02c"
 dependencies = [
  "once_cell",
  "tokio",
@@ -3198,7 +3198,7 @@ dependencies = [
 [[package]]
 name = "posemesh-utils"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=0176b1d0998d13875580917b6708dfe9ce4b27ed#0176b1d0998d13875580917b6708dfe9ce4b27ed"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=a6acafc44ede38afe07c4887b139186358f6d02c#a6acafc44ede38afe07c4887b139186358f6d02c"
 dependencies = [
  "futures",
  "gloo-timers 0.3.0",
