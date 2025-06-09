@@ -9,7 +9,11 @@ use zip::ZipArchive;
 
 use crate::utils::{execute_python, health};
 
-async fn upload_results(domain_id: &str, output_path: PathBuf, datastore: &mut RemoteDatastore) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn add_suffix(name: &str, suffix: &str) -> String {
+    format!("{name}_{suffix}")
+}
+
+async fn upload_results(domain_id: &str, job_id: &str, output_path: PathBuf, datastore: &mut RemoteDatastore) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut uploader = datastore.upsert(domain_id.to_string()).await?;
     // open output_path and upload to datastore
     let files = fs::read_dir(output_path)?;
@@ -18,7 +22,7 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, datastore: &mut R
         let path = file.path();
         let metadata: UpsertMetadata = match file.file_name().to_str().unwrap() {
             "refined_manifest.json" => UpsertMetadata {
-                name: "refined_manifest".to_string(),
+                name: add_suffix("refined_manifest", job_id),
                 data_type: "refined_manifest_json".to_string(),
                 size: file.metadata()?.len() as u32,
                 id: data_id_generator(),
@@ -26,7 +30,7 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, datastore: &mut R
                 is_new: true,
             },
             "RefinedPointCloud.ply" => UpsertMetadata {
-                name: "refined_pointcloud".to_string(),
+                name: add_suffix("refined_pointcloud", job_id),
                 data_type: "refined_pointcloud_ply".to_string(),
                 size: file.metadata()?.len() as u32,
                 id: data_id_generator(),
@@ -34,7 +38,7 @@ async fn upload_results(domain_id: &str, output_path: PathBuf, datastore: &mut R
                 is_new: true
             },
             "BasicStitchPointCloud.ply" => UpsertMetadata {
-                name: "unrefined_pointcloud".to_string(),
+                name: add_suffix("unrefined_pointcloud", job_id),
                 data_type: "unrefined_pointcloud_ply".to_string(),
                 size: file.metadata()?.len() as u32,
                 id: data_id_generator(),
@@ -301,7 +305,7 @@ async fn run(
     params.extend(scan_ids.iter().map(|s| s.as_str()));
 
     execute_python(params).await?;
-    upload_results(&domain_id, output_path.to_path_buf(), &mut datastore).await?;
+    upload_results(&domain_id, job_id, output_path.to_path_buf(), &mut datastore).await?;
     std::fs::remove_dir_all(task_path)?;
     Ok(())
 }
