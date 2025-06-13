@@ -186,6 +186,32 @@ def run_triangulation(
 
         initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
+        if ba_options.refine_focal_length or ba_options.refine_extra_params:
+            for camera_id in reconstruction.cameras.keys():
+                camera = reconstruction.cameras[camera_id]
+                reference_intrinsics = reference_model.cameras[camera_id].params
+
+                if not bundle_adjuster.problem.has_parameter_block(camera.params) \
+                    or bundle_adjuster.problem.is_parameter_block_constant(camera.params):
+                    continue
+
+                # Keep intrinsics close to ARKit values.
+                # Assuming SIMPLE_RADIAL camera model.
+
+                # Focal length
+                if ba_options.refine_focal_length:
+                    for idx in camera.focal_length_idxs():
+                        #logger.info(f"SET BOUNDS: Cam {camera_id}: Focal length (params[{idx}]) near {reference_intrinsics[idx]}")
+                        bundle_adjuster.problem.set_parameter_lower_bound(camera.params, idx, reference_intrinsics[idx] * 0.99)
+                        bundle_adjuster.problem.set_parameter_upper_bound(camera.params, idx, reference_intrinsics[idx] * 1.01)
+
+                # Extra params
+                if ba_options.refine_extra_params:
+                    for idx in camera.extra_params_idxs():
+                        #logger.info(f"SET BOUNDS: Cam {camera_id}: Distortion (params[{idx}]) near {reference_intrinsics[idx]}")
+                        bundle_adjuster.problem.set_parameter_lower_bound(camera.params, idx, -0.01)
+                        bundle_adjuster.problem.set_parameter_upper_bound(camera.params, idx, 0.01)
+
         summary = pyceres.SolverSummary()
         pyceres.solve(solver_options, bundle_adjuster.problem, summary)
         logger.info("Solved!")
@@ -226,6 +252,10 @@ def run_triangulation(
             additional_iterations = max(0, 2 - ba_iterations_remaining)
             num_ba_iterations_total += additional_iterations
             ba_iterations_remaining += additional_iterations
+            
+            if ba_iterations_remaining == 1:
+                ba_options.refine_focal_length = True
+                ba_options.refine_extra_params = True
 
 
     logger.info('Extracting colors...')

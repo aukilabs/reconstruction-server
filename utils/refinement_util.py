@@ -88,9 +88,9 @@ def initialize_reconstruction(references, metadata):
         fx, fy, cx, cy, w, h = intrinsics
         
         if fx == fy:
-            model, params = 'SIMPLE_PINHOLE', [fx, cx, cy]
+            model, params = 'SIMPLE_RADIAL', [fx, cx, cy, 0.0]
         else:
-            model, params = 'PINHOLE', [fx, fy, cx, cy]
+            model, params = 'RADIAL', [fx, fy, cx, cy, 0.0]
             
         cam = pycolmap.Camera(
             model=model,
