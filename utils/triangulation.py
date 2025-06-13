@@ -125,12 +125,12 @@ def run_triangulation(
     ba_options.refine_principal_point = False
     ba_options.refine_extra_params = False
     ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 150
+    ba_options.solver_options.max_num_iterations = 100
     ba_options.solver_options.gradient_tolerance = 1.0
     ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
     ba_options.solver_options.minimizer_progress_to_stdout = True
 
-    num_ba_iterations_total = 5
+    num_ba_iterations_total = 4
 
     sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
@@ -157,14 +157,16 @@ def run_triangulation(
         # Adjust refinement config to add more weight to relative se3 poses (to keep scale from changing),
         # and set max speed between adjacent frames (to filter out potential arkit pose jumps).
         # These values were selected experimentally, and might require some adjustment.
-        # TODO: rewrite bundle adjuster to choose appropriate weights automatically
+
         refinement_config = {
-            'add_rel_constraints': False,
-            'use_arkit_relposes': False,
-            'use_arkit_centerdist': True,
-            'centerdist_weight': 1e2,
-            'floor_height_weight': 1e3,
-            'floor_direction_weight': 1e1
+            'add_rel_constraints': True,
+            'use_arkit_relposes': True,
+            'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
+            'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
+            'use_arkit_centerdist': False,
+            'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
+            'floor_height_weight': 1e4,
+            'floor_direction_weight': 1e2,
         }
 
         bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
@@ -293,14 +295,34 @@ def process_features_and_matching(
     # Generate pairs from poses
     logger.info("Generating image pairs from poses")
 
+    use_loop_closure = True
+    retrieval_interval = 5
+    # Feature extraction for loop closure
+    if use_loop_closure:
+        global_feature_conf = extract_features.confs["eigenplaces"]
+        global_feature_conf["output"] = paths.global_features
+        extract_features.main(
+            global_feature_conf,
+            paths.images,
+            paths.sfm_dir,
+            feature_path=paths.global_features,
+            as_half=True,
+            image_list=references[::retrieval_interval],
+        )
+
     use_pairs_from_sequential = True
     if use_pairs_from_sequential:
         pairs_from_sequential.main(
-            paths.sfm_pairs, 
-            references, 
+            paths.sfm_pairs,
+            references,
             features=None,
-            window_size=5,
-            quadratic_overlap=True
+            window_size=3,
+            quadratic_overlap=True,
+            use_loop_closure=use_loop_closure,
+            retrieval_path=paths.global_features if use_loop_closure else None,
+            retrieval_interval=retrieval_interval,
+            num_loc=10,
+            min_retrieval_distance=50, # prevent picking only very close pairs
         )
     else:
         pairs_from_poses.main(
@@ -311,9 +333,12 @@ def process_features_and_matching(
         )
 
     # Feature extraction
-    feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf = extract_features.confs["aliked-n16"]
+    feature_conf["model"]["max_num_keypoints"] = 1024
+    feature_conf["model"]["detection_threshold"] = 0.3
+    feature_conf["model"]["nms_radius"] = 4
+    feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = paths.features
-    feature_conf["model"]["max_keypoints"] = 1024
     logger.info(f"Extracting features with config: {feature_conf}")
 
     extract_features.main(
@@ -327,7 +352,7 @@ def process_features_and_matching(
 
     # Feature matching
     logger.info("Matching features")
-    matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf = match_features.confs["aliked+lightglue"]
     matcher_conf["model"]["compile_network"] = True
     match_features.main(
         matcher_conf, 

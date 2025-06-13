@@ -30,6 +30,7 @@ class RefinementPaths(NamedTuple):
     sfm_dir: Path
     colmap_rec: Path
     features: Path
+    global_features: Path
     matches: Path
     sfm_pairs: Path
     log_path: Path
@@ -54,6 +55,7 @@ def setup_refinement_paths(scan_folder_path, output_path):
         sfm_dir=output_path / experiment_name / 'sfm',
         colmap_rec=output_path / experiment_name / 'colmap_rec',
         features=output_path / experiment_name / 'sfm/features.h5',
+        global_features=output_path / experiment_name / 'sfm/global_features.h5',
         matches=output_path / experiment_name / 'sfm/matches.h5',
         sfm_pairs=output_path / experiment_name / 'sfm/pairs-sfm.txt',
         log_path=output_path / experiment_name
