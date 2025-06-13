@@ -33,13 +33,23 @@ def run_triangulation(
     image_names = set()
     database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
 
-    reconstruction = deepcopy(reference_model)
-
-    clear_points = True
-    if clear_points:
-        for point3D_id in reconstruction.point3D_ids():
-            reconstruction.delete_point3D(point3D_id)
+    #reconstruction = deepcopy(reference_model)
     
+    # Instead of deepcopy.
+    # Workaround for occasional bug in pycolmap 3.10.
+    # Supposedly fixed in 3.11, but has several breaking changes we need to check more carefully.
+    reconstruction = pycolmap.Reconstruction()
+    for img in reference_model.images.values():
+        if database_cache.exists_image(img.image_id):
+            reconstruction.add_image(img)
+    for cam in reference_model.cameras.values():
+        if database_cache.exists_camera(cam.camera_id):
+            reconstruction.add_camera(cam)
+
+    #clear_points = False
+    #if clear_points:
+    #    for point3D_id in reconstruction.point3D_ids():
+    #        reconstruction.delete_point3D(point3D_id)
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
 
