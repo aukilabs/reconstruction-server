@@ -2,6 +2,7 @@ import pycolmap
 import json
 import numpy as np
 import csv
+import os
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
@@ -675,7 +676,9 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
         ret, frame = capture.read()
         if not ret:
             break
-        cv2.imwrite(f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg", frame)
+        img_path = f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg"
+        if not os.path.exists(img_path):
+            cv2.imwrite(img_path, frame)
         frame_count += 1
     print(f"Unpacked {frame_count} frames from mp4")
     capture.release()
@@ -711,20 +714,23 @@ def process_frames(
     return sorted(references), use_frames_from_video, original_image_count
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=True, logger_name=""):
+def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
     logger = logging.getLogger(logger_name)
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
     logger.info(f"convert_to_opengl = {convert_to_opengl}")
     logger.info("...")
-    # As text for now, as mobile DMT doesn't work with binary domain data blobs
-    rec_openGL = pycolmap.Reconstruction()
-    for point in rec.points3D.values():
-        x,y,z = point.xyz
-        if convert_to_opengl:
-            x,y,z = y,x,-z
-        _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
-    export_ply_text(rec_openGL, str(path))
+
+    if convert_to_opengl:
+        rec_openGL = pycolmap.Reconstruction()
+        for point in rec.points3D.values():
+            x,y,z = point.xyz
+            if convert_to_opengl:
+                x,y,z = y,x,-z
+            _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
+        rec = rec_openGL
+
+    rec.export_PLY(str(path))
     logger.info(f"PLY export done")
 
 
@@ -922,6 +928,12 @@ def load_scan_summary(scan_folder_path, logger):
                 scan_data_summary["portalSizes"]
             ):
                 portal_sizes[portal_id] = portal_size
+        else:
+            scan_manifest_path = scan_folder_path / "Manifest.json"
+            if scan_manifest_path.exists():
+                scan_manifest = json.load(open(scan_manifest_path))
+                for portal in scan_manifest["portals"]:
+                    portal_sizes[portal["shortId"]] = portal["physicalSize"]
     except Exception as e:
         logger.error(f"Failed to read job scan summary: {e}")
         raise

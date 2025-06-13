@@ -2,6 +2,7 @@ import open3d as o3d
 import os
 import subprocess
 import shutil
+import numpy as np
 
 # Reduce decimals making the ply file smaller.
 # Also changes the vertex type to float instead of double, which is required by draco encoding.
@@ -56,9 +57,20 @@ def downsample_ply_to_max_size(ply_path, downsampled_ply_path, max_bytes, logger
     if logger is not None:
         logger.info(f"Point cloud downsampled to {os.path.getsize(downsampled_ply_path)} bytes: {downsampled_ply_path}")
 
-def filter_ply(ply_path, filtered_ply_path, ply_remove_outliers=True, ply_downsample=True, logger=None):
+def filter_ply(ply_path, filtered_ply_path, ply_remove_outliers=True, ply_downsample=True, convert_opencv_to_opengl=False, logger=None):
 
     point_cloud = o3d.io.read_point_cloud(ply_path)
+
+    if convert_opencv_to_opengl:
+        logger.info("Converting OpenCV to OpenGL coordinate system...")
+        trans = np.zeros((4,4))
+        trans[0,1] = 1
+        trans[1,0] = 1
+        trans[2,2] = -1
+        trans[3,3] = 1
+        point_cloud = point_cloud.transform(trans)
+        logger.info("Done converting to OpenGL")
+
     old_size = ply_path.stat().st_size
     filtered_point_cloud = filter_point_cloud(point_cloud, ply_remove_outliers, ply_downsample, logger)
     o3d.io.write_point_cloud(filtered_ply_path, filtered_point_cloud, write_ascii=True)
