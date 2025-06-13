@@ -2,6 +2,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 import logging
+import numpy as np
+from numpy.linalg import norm
 
 import pycolmap
 import pyceres
@@ -50,6 +52,53 @@ def run_triangulation(
     #if clear_points:
     #    for point3D_id in reconstruction.point3D_ids():
     #        reconstruction.delete_point3D(point3D_id)
+
+    filter_spikes = True
+    if filter_spikes:
+        prev_pose = None
+        prev_pose_new = None
+        prev_diff_pose = None
+        has_spikes = False
+        new_cam_from_world_per_image_id = {}
+        for image_id in sorted(reconstruction.images.keys()):
+            image = reconstruction.images[image_id]
+            pose = image.cam_from_world.inverse()
+            arkit_precomputed[image_id]["arkit_spike"] = False
+
+            if prev_pose is None:
+                prev_pose = pose
+                prev_pose_new = pose
+                prev_diff_pose = pycolmap.Rigid3d()
+                new_cam_from_world_per_image_id[image_id] = image.cam_from_world
+                continue
+
+            diff_pose = prev_pose.inverse() * pose
+            if norm(diff_pose.translation - prev_diff_pose.translation) > 0.3: # Probable ARKit spike (loop closure)
+                logger.info(f"SPIKE> Spike detected at {image_id}. Diff translation: {diff_pose.translation}")
+                diff_pose.rotation = pycolmap.Rotation3d()
+                diff_pose.translation = np.array(prev_diff_pose.translation)
+                if norm(diff_pose.translation) > 0.05:
+                    diff_pose.translation *= 0.05 / norm(diff_pose.translation)
+
+                logger.info(f"SPIKE> Spike detected at {image_id}. New diff_translation: {diff_pose.translation}")
+                arkit_precomputed[image_id]["arkit_spike"] = True
+                has_spikes = True
+
+            pose_new = prev_pose_new * diff_pose
+            prev_pose_new = pose_new
+            prev_pose = pose
+            prev_diff_pose = diff_pose
+            new_cam_from_world_per_image_id[image_id] = pose_new.inverse()
+
+        if has_spikes:
+            logger.info("SPIKE> Has spikes")
+            for image_id, image in reconstruction.images.items():
+                if image_id in new_cam_from_world_per_image_id:
+                    image.cam_from_world = new_cam_from_world_per_image_id[image_id]
+
+                    if arkit_precomputed and image_id in arkit_precomputed:
+                        arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
+
     mapper = pycolmap.IncrementalMapper(database_cache)
     mapper.begin_reconstruction(reconstruction)
 
