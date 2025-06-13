@@ -110,8 +110,12 @@ def run_triangulation(
     for image_id in reconstruction.reg_image_ids():
         image = reconstruction.images[image_id]
         num_existing_points = image.num_points3D
-        mapper.triangulate_image(tri_options, image_id)
-        logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
+        try:
+            mapper.triangulate_image(tri_options, image_id)
+        except IndexError as e:
+            logger.error(f"Error triangulating image {image_id}: {e}")
+            continue
+        #logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
 
     mapper.complete_and_merge_tracks(tri_options)
 
