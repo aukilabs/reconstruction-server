@@ -7,9 +7,7 @@ import pycolmap
 import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
-from hloc import pairs_from_poses, extract_features, match_features
-import utils.pairs_from_sequential as pairs_from_sequential
-
+from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
 from utils.bundle_adjuster import PyBundleAdjuster
 
 
@@ -267,6 +265,7 @@ def process_features_and_matching(
     # Feature matching
     logger.info("Matching features")
     matcher_conf = match_features.confs["superpoint+lightglue"]
+    matcher_conf["model"]["compile_network"] = True
     match_features.main(
         matcher_conf, 
         paths.sfm_pairs, 

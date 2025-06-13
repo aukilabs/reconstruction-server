@@ -11,7 +11,7 @@ ARG VERSION
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 
-FROM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -118,9 +118,9 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && python3 -m pip install -e .
 
 # Hloc
-RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
+RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    git checkout --recurse-submodules abb252080282e31147db6291206ca102c43353f7 && \
+    git checkout --recurse-submodules 6dc1714ba1b8df653ac973abf2779a718b7634c9 && \
     python3 -m pip install -e . --config-settings editable_mode=compat && \
     python3 -m pip install --upgrade plotly
 
