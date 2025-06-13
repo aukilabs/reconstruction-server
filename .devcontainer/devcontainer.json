@@ -32,5 +32,12 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
+    "postCreateCommand": [
+        "pwd",
+        "ls -la",
+        "sudo .devcontainer/build_golang_server.sh",
+        "mkdir -p build",
+        "sudo (cd build && pwd && ls -la && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all)",
+        "echo 'Done!'"
+    ]
 }
