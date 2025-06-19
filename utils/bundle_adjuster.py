@@ -184,21 +184,41 @@ class PyBundleAdjuster(object):
             } for image_id in self.config.image_ids
         }
 
+        raw_costs_per_category = {} # Print raw costs before applying loss function, to help balancing huber, cauchy loss etc.
         for category, datas in self.residuals_per_category.items():
             for data in datas:
                 cost, loss, parameter_blocks, image_id = data
 
                 residuals, jacobians = cost.evaluate(*parameter_blocks)
                 if residuals is not None:
+                    raw_residuals = np.abs(residuals)
+
                     cost = norm(residuals) ** 2
+                    
+                    if category not in raw_costs_per_category:
+                        raw_costs_per_category[category] = []
+                    raw_costs_per_category[category].append(cost)
+
                     if loss is not None:
                         cost = loss.evaluate(cost)[0] # First index is the modified cost ('loss' function downsizes outliers)
+                    cost /= 2
                     loss_breakdown[category]["sum"] += cost
                     loss_breakdown[category]["count"] += 1
 
                     if image_id is not None:
                         loss_breakdown_per_image_id[image_id][category]["sum"] += cost
                         loss_breakdown_per_image_id[image_id][category]["count"] += 1
+
+        for category, raw_costs in raw_costs_per_category.items():
+            if category not in loss_breakdown:
+                loss_breakdown[category]["outlier_80perc"] = 0.0
+                loss_breakdown[category]["outlier_90perc"] = 0.0
+                loss_breakdown[category]["outlier_95perc"] = 0.0
+                continue
+            loss_breakdown[category]["outlier_90perc"] = np.percentile(raw_costs, 90)
+            loss_breakdown[category]["outlier_80perc"] = np.percentile(raw_costs, 80)
+            loss_breakdown[category]["outlier_95perc"] = np.percentile(raw_costs, 95)
+
 
         return loss_breakdown, loss_breakdown_per_image_id
 
@@ -388,38 +408,34 @@ class PyBundleAdjuster(object):
 
         # CUSTOM!
         use_relposes = self.refinement_config.get('add_rel_constraints', False)
-        if use_relposes and image_id > 1 and not constant_cam_pose:
+        has_spike = image_id in arkit_precomputed and arkit_precomputed[image_id].get("arkit_spike", False)
+        if use_relposes and image_id > 1 and not constant_cam_pose and not has_spike \
+           and image_id in reconstruction.images and (image_id - 1) in reconstruction.images:
+           
             prev_image = reconstruction.images[image_id - 1]
             prev_pose = prev_image.cam_from_world
 
             use_precomputed_relposes = self.refinement_config.get('use_arkit_relposes', False)
-
             if use_precomputed_relposes:
-                if image_id not in arkit_precomputed:
-                    return
-                
-                arkit_offset_moved = arkit_precomputed[image_id]["offset_moved"]
-                arkit_offset_rotated = arkit_precomputed[image_id]["offset_rotated"]
-
-                relpose = pycolmap.Rigid3d(arkit_offset_rotated, arkit_offset_moved)
+                if image_id in arkit_precomputed and prev_image.image_id in arkit_precomputed:
+                    #arkit_offset_moved = arkit_precomputed[image_id]["offset_moved"]
+                    #arkit_offset_rotated = arkit_precomputed[image_id]["offset_rotated"]
+                    #relpose = pycolmap.Rigid3d(arkit_offset_rotated, arkit_offset_moved)
+                    arkit_prev_pose = arkit_precomputed[prev_image.image_id]["cam_from_world"]
+                    arkit_pose = arkit_precomputed[image_id]["cam_from_world"]
+                    relpose = arkit_prev_pose.inverse() * arkit_pose
+                else:
+                    relpose = prev_pose.inverse() * pose
             else:
-                relpose = pose * prev_pose.inverse()
+                relpose = prev_pose.inverse() * pose
 
-            if relpose is None:
-                return
-
-            delta_time = (timestamp_per_image[image.name] - timestamp_per_image[prev_image.name]) / 1.0e9
-            speed = norm(relpose.translation) / delta_time
-
-            max_speed = self.refinement_config.get('arkit_max_speed', 100.0)
-
-            if abs(delta_time) > 1.0:
-                return
-            if speed > max_speed:
-                return
-    
             cov_scale = self.refinement_config.get('rel_se3_pose_cov_scale', 1.0)
-            cost = RelativeTransformationSE3CostFunction(relpose.rotation.quat, relpose.translation, np.eye(6) / cov_scale)
+            # optional, to trust rotation more (or less) than translation
+            cov_scale_rot = self.refinement_config.get('rel_se3_pose_cov_scale_rot', cov_scale)
+            cov = np.eye(6)
+            cov[:3,:3] /= cov_scale_rot
+            cov[3:,3:] /= cov_scale
+            cost = RelativeTransformationSE3CostFunction(relpose.rotation.quat, relpose.translation, cov)
             params = [
                 pose.rotation.quat,
                 pose.translation,
@@ -621,6 +637,7 @@ class PyBundleAdjuster(object):
                     self.problem.set_parameter_block_constant(camera.params)
 
                 continue
+
             const_camera_params = []
             if not self.options.refine_focal_length:
                 const_camera_params.extend(camera.focal_length_idxs())

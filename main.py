@@ -82,6 +82,15 @@ def local_main_wrapper(args, logger):
                 ))
             else:
                 logger.info(f"Done refining scan {scan}")
+            
+            # Abort early if any refinement thread throws an exception
+            if futures:
+                for f in futures:
+                    if f.done() and f.exception():
+                        for f2 in futures:
+                            if not f2.done():
+                                f2.cancel()
+                        f.result() # raises the exception (with callstack)
 
         # Wait for all threads. Does nothing if running without pool.
         for f in futures:

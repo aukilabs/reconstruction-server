@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"net/http"
 	"net/http/httputil"
@@ -22,17 +25,45 @@ var (
 )
 
 func main() {
-
 	apiKey := flag.String("api-key", "", "API key for the server")
 	port := flag.String("port", ":8080", "Port to run the server on")
 	loglevel := flag.String("log-level", "info", "Log Level")
 	numCpuWorkers := flag.Int("cpu-workers", 2, "Number of CPU workers for local refinement")
+	jobRequestPath := flag.String("job-request", "", "Path to job request JSON file to process a single job")
+	jobRequestRetrigger := flag.Bool("retrigger", false, "Path to job request JSON file to process a single job, rerunning within the same local job folder")
 	flag.Parse()
 
 	// Configure logging to include file name, line number, and timestamp
 	logs.SetLevel(logs.ParseLevel(*loglevel))
 	logs.Encoder = json.Marshal
 
+	// If job request file is provided, process single job
+	if *jobRequestPath != "" {
+		logs.Info("Processing single job from request file: ", *jobRequestPath)
+
+		// Read job request file
+		reqBytes, err := os.ReadFile(*jobRequestPath)
+		if err != nil {
+			logs.Fatal(errors.Newf("Failed to read job request file: %v", err))
+		}
+
+		retriggerJobID := ""
+		if *jobRequestRetrigger {
+			retriggerJobID = strings.TrimPrefix(filepath.Base(filepath.Dir(*jobRequestPath)), "job_")
+		}
+
+		// Create job metadata
+		j, err := CreateJobMetadata("jobs", string(reqBytes), "localhost", retriggerJobID) // Using localhost since we're running locally
+		if err != nil {
+			logs.Fatal(errors.Newf("Job creation failed: %v", err))
+		}
+
+		// Execute job
+		executeJob(j, *numCpuWorkers)
+		return // Exit after processing single job
+	}
+
+	// Normal server mode
 	if apiKey == nil || *apiKey == "" {
 		logs.Fatal(errors.New("API key is required"))
 	}
@@ -81,7 +112,7 @@ func main() {
 		reconstructionServerURL := r.Host
 
 		// Create job metadata
-		j, err := CreateJobMetadata("jobs", reqBodyString, reconstructionServerURL)
+		j, err := CreateJobMetadata("jobs", reqBodyString, reconstructionServerURL, "")
 		if err != nil {
 			logs.Error(errors.New("Job creation failed with error: " + err.Error()))
 			http.Error(w, err.Error(), http.StatusInternalServerError)

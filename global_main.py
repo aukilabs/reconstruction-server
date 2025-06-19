@@ -7,7 +7,7 @@ from utils.point_cloud_utils import filter_ply, downsample_ply_to_max_size, redu
 
 def post_process_ply(output_path, logger):
     ply_path = output_path / "RefinedPointCloud.ply"
-    filter_ply(ply_path, ply_path, logger=logger)
+    filter_ply(ply_path, ply_path, convert_opencv_to_opengl=True, logger=logger)
 
     # Ensure ply fits in domain data
     logger.info("Downsampling ply if needed to be under 20 MB file size...")

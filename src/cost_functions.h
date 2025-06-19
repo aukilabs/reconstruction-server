@@ -157,9 +157,9 @@ class RelativeTransformationSE3CostFunction {
 
   template <typename T>
   bool operator()(const T* const t_target_local_quat,
-                  const T* const t_target_local_translation,
+                  const T* const t_target_local_translation, // pose
                   const T* const t_reference_local_quat,
-                  const T* const t_reference_local_translation,
+                  const T* const t_reference_local_translation, // prev_pose
                   T* residuals) const {
     const Sophus::SE3<T> t_target_local =
         Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_quat),
@@ -169,9 +169,10 @@ class RelativeTransformationSE3CostFunction {
                        Eigen::Matrix<T, 3, 1>(t_reference_local_translation));
 
     Eigen::Matrix<T, residuals_num, 1> parameters =
-        (t_target_reference_.cast<T>() * t_reference_local *
-         t_target_local.inverse())
-            .log();
+        (
+            t_target_reference_.cast<T>() * // Expected relative transform (from constructor)
+            (t_target_local.inverse() * t_reference_local) // Actual relative transform (from current parameters)
+        ).log();
 
     return normal_prior_(parameters.data(), residuals);
   }

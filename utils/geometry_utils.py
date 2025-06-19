@@ -141,6 +141,32 @@ def filter_reconstruction(reconstruction, normalize_points=False):
         reconstruction.normalize(5.0, 0.1, 0.9, True)
     return reconstruction
 
+class QuaternionNormalizationCostFunction(pyceres.CostFunction):
+    def __init__(self, weight=1.0):
+        super().__init__()
+        self.set_num_residuals(1)
+        self.set_parameter_block_sizes([4])
+        self.weight = weight
+
+    def Evaluate(self, parameters, residuals, jacobians):
+        q = parameters[0]
+        n = np.linalg.norm(q)
+        # residual = (1 - ||q||)^2
+        residuals[0] = (1.0 - n)**2 * self.weight
+
+        if jacobians is not None:
+            # avoid division by zero
+            if n > 0:
+                factor = -2.0 * (1.0 - n) / n * self.weight
+                for i in range(4):
+                    jacobians[0][i] = factor * q[i]
+            else:
+                # Jacobian undefined at zero; you could set it to zero or some large value
+                for i in range(4):
+                    jacobians[0][i] = 0.0
+
+        return True
+
 
 def align_reconstruction_chunks(
         reconstruction: pycolmap.Reconstruction,
@@ -150,10 +176,16 @@ def align_reconstruction_chunks(
         with_scale: bool = True
     ):
 
+    print("Going to optimize chunk alignment...")
+
     t_local_chunk_quat = [pycolmap.Rigid3d().rotation.quat for _ in range(len(chunks_image_ids))]
     t_local_chunk_translation = [pycolmap.Rigid3d().translation for _ in range(len(chunks_image_ids))]
     image_id_to_chunk_id = {image_id : chunk_id for chunk_id, image_ids in enumerate(chunks_image_ids) for image_id in image_ids}
     problem = pyceres.Problem()
+
+
+    #loss = pyceres.HuberLoss(0.1)
+    loss = None
 
     qr_ids_per_chunk = [set() for _ in range(len(chunks_image_ids))]
     connected_chunks = [set() for _ in range(len(chunks_image_ids))]
@@ -172,19 +204,37 @@ def align_reconstruction_chunks(
             t_refworld_qr = reconstruction.image(image_id_ref).cam_from_world.inverse() * t_refcam_qr
             t_tgtworld_qr = reconstruction.image(image_id_tgt).cam_from_world.inverse() * t_tgtcam_qr
 
-            cost = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
+            cov = np.eye(6)
+            cov[3:, 3:] *= 0.01
+
+            # First relative to second
+            cost_1 = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
                                                           t_refworld_qr.translation,
                                                           t_tgtworld_qr.rotation.quat,
-                                                          t_tgtworld_qr.translation, np.eye(6))
+                                                          t_tgtworld_qr.translation, cov)
 
-            params = [
+            params_1 = [
                 t_local_chunk_quat[chunk_id_tgt],
                 t_local_chunk_translation[chunk_id_tgt],
                 t_local_chunk_quat[chunk_id_ref],
                 t_local_chunk_translation[chunk_id_ref]
             ]
 
-            problem.add_residual_block(cost, None, params)
+            problem.add_residual_block(cost_1, loss, params_1)
+
+            # Second relative to first (to ensure scale impacts in both ways symetrically)
+            cost_2 = RelativeTransformationSim3CostFunction(t_tgtworld_qr.rotation.quat,
+                                                          t_tgtworld_qr.translation,
+                                                          t_refworld_qr.rotation.quat,
+                                                          t_refworld_qr.translation, cov)
+            params_2 = [
+                t_local_chunk_quat[chunk_id_ref],
+                t_local_chunk_translation[chunk_id_ref],
+                t_local_chunk_quat[chunk_id_tgt],
+                t_local_chunk_translation[chunk_id_tgt]
+            ]
+            problem.add_residual_block(cost_2, loss, params_2)
+
             qr_ids_per_chunk[chunk_id_ref].add(qr_id)
             qr_ids_per_chunk[chunk_id_tgt].add(qr_id)
             connected_chunks[chunk_id_ref].add(chunk_id_tgt)
@@ -193,22 +243,28 @@ def align_reconstruction_chunks(
     if with_scale:
         for chunk_idx in range(len(chunks_image_ids)):
             if len(qr_ids_per_chunk[chunk_idx]) < 2:
-                chunks_to_fix_scale = list(connected_chunks[chunk_idx]) + [chunk_idx]
-                print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale for chunks {chunks_to_fix_scale}.')
+                chunks_to_fix_scale = [chunk_idx]
+                print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale') # for chunks {chunks_to_fix_scale}.')
                 for chunk_fix_idx in chunks_to_fix_scale:
                     quat = t_local_chunk_quat[chunk_fix_idx]
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                         problem.set_manifold(quat, pyceres.QuaternionManifold())
+            else:
+                weight = 5000.0
+                scale_cost = QuaternionNormalizationCostFunction(weight=weight)
+                params = [t_local_chunk_quat[chunk_idx]]
+                problem.add_residual_block(scale_cost, None, params)
     else:
         for quat in t_local_chunk_quat:
             if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                 problem.set_manifold(quat, pyceres.QuaternionManifold())
 
     solver_options = pyceres.SolverOptions()
-    solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
+    solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_NORMAL_CHOLESKY
     solver_options.minimizer_progress_to_stdout = True
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
+    solver_options.parameter_tolerance = 0.0
     solver_options.max_num_iterations = 100
     solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
 
@@ -239,5 +295,7 @@ def align_reconstruction_chunks(
         for det_idx, (image_id, _) in enumerate(zip(image_ids_per_qr[qr_id], cam_space_detections)):
             chunk_id = image_id_to_chunk_id[image_id]
             detections_per_qr[qr_id][det_idx].translation *= t_local_chunks[chunk_id].scale
+
+    print("Chunk alignment optimization DONE\n")
 
     return
