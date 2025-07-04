@@ -52,6 +52,7 @@ class StitchingData:
     chunks_image_ids: List[List[int]] = None
     combined_rec: pycolmap.Reconstruction = None
     next_image_id: int = 1
+    portal_sizes: Dict[str, float] = None
 
     def __post_init__(self):
         self.detections_per_qr = self.detections_per_qr or {}
@@ -61,6 +62,7 @@ class StitchingData:
         self.placed_portal = self.placed_portal or {}
         self.chunks_image_ids = self.chunks_image_ids or []
         self.combined_rec = self.combined_rec or pycolmap.Reconstruction()
+        self.portal_sizes = self.portal_sizes or {}
 
 @dataclass
 class StitchingResult:
@@ -213,11 +215,6 @@ def load_partial(
     if loaded_rec is None:
         return stitch_data
     
-    # Load frame timestamps
-    timestamp_chunk = _load_frame_timestamps(unzip_folder, logger)
-    if not timestamp_chunk:
-        return stitch_data
-    
     # Extract and process QR code detections
     qr_detections = _process_qr_detections(loaded_rec)
 
@@ -255,7 +252,6 @@ def load_partial(
         loaded_rec,
         alignment_transform,
         qr_detections,
-        timestamp_chunk,
         stitch_data,
         with_3dpoints,
         logger
@@ -382,7 +378,6 @@ def _process_reconstruction_optimized(
     loaded_rec: Model,
     alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
-    timestamp_chunk: Dict[str, int],
     stitch_data: StitchingData,
     with_3dpoints: bool,
     logger
@@ -441,11 +436,6 @@ def _process_reconstruction_optimized(
             for element in point3D_track.elements:
                 element.image_id = image_id_old_to_new[element.image_id]
                 stitch_data.combined_rec.add_observation(point3D_id_new, element)
-
-    # Update timestamps
-    for filename, timestamp in timestamp_chunk.items():
-        assert filename not in stitch_data.timestamp_per_image
-        stitch_data.timestamp_per_image[filename] = timestamp
 
     # Process sorted image IDs
     sorted_new_image_ids = sorted(list(image_id_old_to_new.values()))
@@ -602,6 +592,7 @@ def _process_datasets(
     datasets_to_align = dataset_paths.copy()
     consecutive_alignment_fails = 0
 
+    stitch_data.portal_sizes = {}
     portal_ids_per_dataset = {}
     while datasets_to_align:
         dataset_path = datasets_to_align.pop(0)
@@ -619,8 +610,14 @@ def _process_datasets(
             # Quick overlap check before loading reconstruction, to not waste time
             scanned_portal_ids = portal_ids_per_dataset.get(scan_name, None)
             if scanned_portal_ids is None:
+                portals = read_portal_csv(os.path.join(partial_rec_dir, "portals.csv"))
+                
+                for portal in portals.values():
+                    if portal.short_id not in stitch_data.portal_sizes:
+                        stitch_data.portal_sizes[portal.short_id] = portal.size
+
                 scanned_portal_ids = [
-                    portal.short_id for portal in read_portal_csv(os.path.join(partial_rec_dir, "portals.csv")).values()
+                    portal.short_id for portal in portals.values()
                 ]
                 portal_ids_per_dataset[scan_name] = scanned_portal_ids
 
@@ -749,7 +746,8 @@ def _handle_basic_stitch(
         manifest_path,
         paths.parent_dir,
         job_status="refined",
-        job_progress=100
+        job_progress=100,
+        portal_sizes=stitch_data.portal_sizes
     )
 
     return StitchingResult(
@@ -799,7 +797,8 @@ def _get_refined_results(
         manifest_path,
         paths.parent_dir,
         job_status="refined",
-        job_progress=100
+        job_progress=100,
+        portal_sizes=stitch_data.portal_sizes
     )
 
     if with_3dpoints:

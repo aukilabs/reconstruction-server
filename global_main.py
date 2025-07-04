@@ -33,7 +33,7 @@ def post_process_ply(output_path, logger):
 
 def main(args):
     # Create and configure logger
-    output_path = args.data_dir.parent / "refined" / "global"
+    output_path = args.output_path
     os.makedirs(output_path, exist_ok=True)
     global_log_file = str(output_path) + "/global_logs"
     logger = setup_logger(

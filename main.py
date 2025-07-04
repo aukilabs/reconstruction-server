@@ -44,7 +44,7 @@ def process_local_refinement(args, scan, worker_pool=None):
     """
     local_args = argparse.Namespace(
         dataset_path=Path(args.job_root_path) / 'datasets' / scan,
-        output_path=args.output_path,
+        output_path=Path(args.output_path) / "local",
         every_nth_image=1,
         remove_outputs=False,
         domain_id=args.domain_id,
@@ -116,6 +116,7 @@ def global_main_wrapper(args, logger):
 
     global_args = argparse.Namespace(
         data_dir=Path(args.job_root_path) / "datasets",
+        output_path=Path(args.output_path) / "global",
         use_refined_outputs=True,
         add_3dpoints=True,
         basic_stitch_only=False,
@@ -138,8 +139,6 @@ def local_and_global_main_wrapper(args, logger):
         logger: Logger instance
     """
     local_args = argparse.Namespace(**vars(args))
-    local_args.output_path = args.job_root_path / "refined" / "local"
-    
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
 
@@ -158,7 +157,7 @@ def get_available_scans(datasets_path):
     """
     return [
         scan.name for scan in datasets_path.iterdir()
-        if scan.is_dir() or scan.suffix == ".zip"
+        if (scan.is_dir() or scan.suffix == ".zip")
     ]
 
 
@@ -171,9 +170,7 @@ def process_refinement(args, logger):
     """
     # Set default output path if not specified
     if not args.output_path:
-        args.output_path = args.job_root_path / "refined" / (
-            "local" if args.mode == "local_refinement" else "global"
-        )
+        args.output_path = args.job_root_path / "refined"
 
     # Map refinement modes to their respective functions
     refinement_functions = {

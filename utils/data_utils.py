@@ -151,49 +151,19 @@ def get_data_paths(group_folder, logger_name=None):
     logger = logging.getLogger(logger_name)
     path_to_truth_portals = group_folder / "portals.json"
     if path_to_truth_portals.exists():
-        truth_portal_poses = load_portals_json(group_folder / "portals.json")
+        truth_portal_poses = load_portals_json(path_to_truth_portals)
     else:
         truth_portal_poses = None
 
-    zip_list = group_folder.glob('**/*.zip')
-
-    # These are manually removed by Robin as they have no Frames.csv
-    unwanted_files = [
-        "dmt_scan_2024-06-26_10-18-51.zip",
-        "dmt_scan_2024-06-26_10-21-58.zip",
-        "dmt_scan_2024-06-26_10-42-21.zip",
-        "dmt_scan_2024-06-26_10-47-53.zip",
-        "dmt_scan_2024-06-26_11-00-32.zip",
-        "dmt_scan_2024-06-26_11-03-35.zip",
-        "dmt_scan_2024-06-26_11-04-32.zip",
-        "dmt_scan_2024-06-26_11-05-02.zip",
-        "dmt_scan_2024-06-26_14-07-27.zip",
-        "dmt_scan_2024-06-26_14-14-05.zip",
-        "dmt_scan_2024-06-26_14-18-11.zip"
-    ]
-
     dataset_paths = []
-    zip_count = 0
-    unwanted_count = 0
-    for file in zip_list:
-        if file.name not in unwanted_files:
-            dataset_paths.append(file)
-            zip_count += 1
-        else:
-            unwanted_count += 1
-    logger.info(f"Found {zip_count} valid zip files, {unwanted_count} unwanted zip files skipped")
-
-    subfolder_count = 0
-    for subfolder in group_folder.iterdir():
-        if subfolder.is_dir() and (
-            subfolder.name.startswith("dmt_scan_")
-            or subfolder.name.startswith("20")
+    for scan_folder in group_folder.iterdir():
+        if scan_folder.is_dir() and (
+            scan_folder.name.startswith("dmt_scan_")
+            or scan_folder.name.startswith("20")
         ):
-            dataset_paths.append(subfolder)
-            subfolder_count += 1
-    logger.info(f"Found {subfolder_count} scan subfolders (not zip)")
+            dataset_paths.append(scan_folder)
 
-    logger.info(f"Using in total {len(dataset_paths)} scans from folder '{group_folder.name}'")
+    logger.info(f"Using {len(dataset_paths)} scans from folder '{group_folder.name}'")
     
     if truth_portal_poses:
         logger.info(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
@@ -454,7 +424,7 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None):
+def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None):
 
     job_root_path = Path(job_root_path)
 
@@ -517,7 +487,8 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     # SCAN DATA SUMMARY
     #-------------------------
 
-    portal_sizes = {}
+    if portal_sizes is None:
+        portal_sizes = {}
     try:
         scan_data_summary_path = job_root_path / "scan_data_summary.json"
         if scan_data_summary_path.exists():

@@ -123,14 +123,14 @@ func main() {
 		}
 
 		// Execute Job
-		go func(j job) {
+		go func(j *job) {
 			defer func() {
 				jobMutex.Lock()
 				jobInProgress = false
 				jobMutex.Unlock()
 			}()
-			executeJob(&j, *numCpuWorkers)
-		}(*j)
+			executeJob(j, *numCpuWorkers)
+		}(j)
 
 		w.WriteHeader(http.StatusOK)
 	})

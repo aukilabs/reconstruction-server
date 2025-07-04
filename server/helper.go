@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +31,9 @@ import (
 	"github.com/lestrrat-go/jwx/jwt"
 )
 
+const RefinedManifestDataName = "refined_manifest"
+const RefinedManifestDataType = "refined_manifest_json"
+
 type ExpectedOutput struct {
 	FilePath string // relative to job folder
 	Name     string
@@ -38,14 +43,14 @@ type ExpectedOutput struct {
 
 type jobList struct {
 	lock sync.RWMutex
-	list map[string]job
+	list map[string]*job
 }
 
 func (js *jobList) AddJob(j *job) {
 	js.lock.Lock()
 	defer js.lock.Unlock()
 
-	js.list[j.ID] = *j
+	js.list[j.ID] = j
 }
 
 func ParseStatusFromManifest(manifestPath string) (string, error) {
@@ -67,7 +72,8 @@ func ParseStatusFromManifest(manifestPath string) (string, error) {
 }
 
 func WriteJobManifestFile(j *job, status string) {
-	if status == "failed" {
+	switch status {
+	case "failed":
 		// If python script has already written a manifest with status "failed", don't overwrite it
 		statusFromManifest, err := ParseStatusFromManifest(path.Join(j.JobPath, "job_manifest.json"))
 
@@ -79,10 +85,10 @@ func WriteJobManifestFile(j *job, status string) {
 			WriteFailedJobManifestFile(j, "Reconstruction job script failed")
 		}
 
-	} else if status == "processing" {
+	case "processing":
 		progress := 0
 		WriteJobManifestFileHelper(j, status, progress, "Request received by reconstruction server")
-	} else {
+	default:
 		return
 	}
 
@@ -99,16 +105,15 @@ func (js *jobList) UpdateJob(id string, status string) {
 	j, ok := js.list[id]
 	if ok {
 		j.Status = status
-		js.list[id] = j
 	}
 	js.lock.Unlock()
 
 	if ok {
-		WriteJobManifestFile(&j, status)
+		WriteJobManifestFile(j, status)
 	}
 }
 
-func (js *jobList) List() []job {
+func (js *jobList) List() []*job {
 	js.lock.RLock()
 	defer js.lock.RUnlock()
 
@@ -117,7 +122,7 @@ func (js *jobList) List() []job {
 	// log.Println("job list count: ", len(js.list))
 	// log.Println("job list null? ", js.list == nil)
 
-	var jobs []job
+	var jobs []*job
 	for _, j := range js.list {
 		jobs = append(jobs, j)
 		logs.Info("APPEND! new job list count: ", len(jobs))
@@ -130,7 +135,7 @@ func (js *jobList) List() []job {
 
 var jobs = jobList{
 	lock: sync.RWMutex{},
-	list: map[string]job{},
+	list: map[string]*job{},
 }
 
 type JobMetadata struct {
@@ -143,21 +148,29 @@ type JobMetadata struct {
 	ReconstructionServerURL string    `json:"reconstruction_server_url"`
 	AccessToken             string    `json:"-"`
 	DataIDs                 []string  `json:"data_ids"`
+	SkipManifestUpload      bool      `json:"skip_manifest_upload"` // Whether to skip uploading job manifest
+	OverrideJobName         string    `json:"override_job_name"`    // Optional
+	OverrideManifestID      string    `json:"override_manifest_id"` // Optional
 }
 
 type job struct {
 	JobMetadata
 	JobPath         string            `json:"job_path"`
 	Status          string            `json:"status"`
-	UploadedDataIDs map[string]string `json:"-"`
+	UploadedDataIDs map[string]string `json:"uploaded_data_ids"`
+	CompletedScans  map[string]bool   `json:"completed_scans"`
+	completedMutex  sync.RWMutex      `json:"-"` // Mutex for thread-safe access to CompletedScans
 }
 
 type JobRequestData struct {
-	DataIDs         []string `json:"data_ids"`
-	DomainID        string   `json:"domain_id"`
-	AccessToken     string   `json:"access_token"`
-	ProcessingType  string   `json:"processing_type"`
-	DomainServerURL string   `json:"domain_server_url"` // Optional. Default: "issuer" of the incoming request, since jobs are triggered via the domain server.
+	DataIDs            []string `json:"data_ids"`
+	DomainID           string   `json:"domain_id"`
+	AccessToken        string   `json:"access_token"`
+	ProcessingType     string   `json:"processing_type"`
+	DomainServerURL    string   `json:"domain_server_url"` // Optional. Default: "issuer" of the incoming request, since jobs are triggered via the domain server.
+	SkipManifestUpload bool     `json:"skip_manifest_upload"`
+	OverrideJobName    string   `json:"override_job_name"`
+	OverrideManifestID string   `json:"override_manifest_id"`
 }
 
 type DomainDataMetadata struct {
@@ -350,14 +363,23 @@ save_manifest_json({},
 }
 
 func UploadJobManifestToDomain(j *job) error {
+
+	// Skip uploading manifest if flag is set
+	if j.SkipManifestUpload {
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Skipping manifest upload due to -skip-manifest-upload flag")
+		return nil
+	}
+
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
 		Infof("Upload job manifest to domain, for job")
 
 	output := ExpectedOutput{
 		FilePath: "job_manifest.json",
-		Name:     "refined_manifest",
-		DataType: "refined_manifest_json",
+		Name:     RefinedManifestDataName,
+		DataType: RefinedManifestDataType,
 		Optional: false,
 	}
 
@@ -365,12 +387,17 @@ func UploadJobManifestToDomain(j *job) error {
 }
 
 func UploadRefinedOutputsToDomain(j *job) (int, error) {
+
+	if j.ProcessingType == "local_refinement" {
+		return 0, nil
+	}
+
 	refinedOutput := path.Join("refined", "global")
 	expectedOutputs := []ExpectedOutput{
 		{
 			FilePath: path.Join(refinedOutput, "refined_manifest.json"),
-			Name:     "refined_manifest",
-			DataType: "refined_manifest_json",
+			Name:     RefinedManifestDataName,
+			DataType: RefinedManifestDataType,
 			Optional: false,
 		},
 		{
@@ -399,9 +426,10 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 		}
 	}
 
-	// Upload manifest using PUT since it already exists from start of the job
-	if err := UploadOutputToDomain(j, expectedOutputs[0]); err != nil {
-		return outputCount, errors.New("failed to upload refined manifest to domain").Wrap(err)
+	if !j.SkipManifestUpload {
+		if err := UploadOutputToDomain(j, expectedOutputs[0]); err != nil {
+			return outputCount, errors.New("failed to upload refined manifest to domain").Wrap(err)
+		}
 	}
 
 	if err := UploadOutputsToDomain(j, expectedOutputs[1:]); err != nil {
@@ -449,6 +477,9 @@ func UploadOutputToDomainHelper(j *job, output ExpectedOutput) error {
 	defer f.Close()
 
 	nameSuffix := j.CreatedAt.Format("2006-01-02_15-04-05")
+	if j.OverrideJobName != "" {
+		nameSuffix = j.OverrideJobName
+	}
 	domainData := DomainData{
 		DomainDataMetadata: DomainDataMetadata{
 			EditableDomainDataMetadata: EditableDomainDataMetadata{
@@ -462,6 +493,7 @@ func UploadOutputToDomainHelper(j *job, output ExpectedOutput) error {
 
 	httpMethod := http.MethodPost
 	alreadyUploadedID := j.UploadedDataIDs[output.Name+"."+output.DataType]
+
 	if alreadyUploadedID != "" {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
@@ -605,6 +637,8 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 			fileName = "gyro_accel.csv"
 		case "dmt_recording_mp4":
 			fileName = "Frames.mp4"
+		case "refined_scan_zip":
+			fileName = "RefinedScan.zip"
 		default:
 			logs.Infof("unknown domain data type: %s", meta.DataType)
 			fileName = meta.Name + "." + meta.DataType
@@ -615,7 +649,8 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 			return err
 		}
 
-		f, err := os.Create(path.Join(scanFolder, fileName))
+		filePath := path.Join(scanFolder, fileName)
+		f, err := os.Create(filePath)
 		if err != nil {
 			return err
 		}
@@ -623,6 +658,45 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 
 		if _, err := io.Copy(f, part); err != nil {
 			return err
+		}
+
+		if fileName == "RefinedScan.zip" {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("Unzipping refined scan for '%s'", scanFolderName)
+			unzipPath := path.Join(j.JobPath, "refined", "local", scanFolderName, "sfm")
+			if err := os.MkdirAll(unzipPath, 0755); err != nil {
+				return err
+			}
+			zipReader, err := zip.OpenReader(filePath)
+			if err != nil {
+				return err
+			}
+			defer zipReader.Close()
+			for _, content := range zipReader.File {
+				if content.FileInfo().IsDir() {
+					continue
+				}
+				outFile, err := os.Create(path.Join(unzipPath, content.Name))
+				if err != nil {
+					return err
+				}
+				defer outFile.Close()
+				contentFile, err := content.Open()
+				if err != nil {
+					return err
+				}
+				defer contentFile.Close()
+
+				if _, err := io.Copy(outFile, contentFile); err != nil {
+					return err
+				}
+
+				logs.WithTag("job_id", j.ID).
+					WithTag("domain_id", j.DomainID).
+					WithTag("scan_id", scanFolderName).
+					Infof("Unzipped %s to %s", content.Name, outFile.Name())
+			}
 		}
 
 		i++
@@ -734,10 +808,15 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 			DomainServerURL:         domainServerURL,
 			ReconstructionServerURL: reconstructionServerURL,
 			AccessToken:             jobRequest.AccessToken,
+			SkipManifestUpload:      jobRequest.SkipManifestUpload,
+			OverrideJobName:         jobRequest.OverrideJobName,
+			OverrideManifestID:      jobRequest.OverrideManifestID,
 		},
 		Status:          "started",
 		UploadedDataIDs: map[string]string{},
+		CompletedScans:  map[string]bool{},
 		JobPath:         path.Join(dirPath, jobRequest.DomainID, jobName),
+		completedMutex:  sync.RWMutex{},
 	}
 
 	if retriggerJobID == "" {
@@ -788,6 +867,19 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 
 func executeJob(j *job, numCpuWorkers int) {
 
+	// When we run in parallel across many nodes,
+	// the global refinement must update the existing manifest json (with PUT)
+	if j.OverrideJobName != "" && j.OverrideManifestID != "" {
+		key := RefinedManifestDataName + "." + RefinedManifestDataType
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Job requested to update existing manifest domain data: %s -> %s", key, j.OverrideManifestID)
+
+		// Adding to this dictionary makes sure the upload will update the existing domain data.
+		// Otherwise it would "POST" and fail with "409 Conflict" since manifest already exists.
+		j.UploadedDataIDs[key] = j.OverrideManifestID
+	}
+
 	// Write in-progress manifest as soon as job starts.
 	// DMT uses this to show job status to the user.
 	WriteJobManifestFile(j, "processing")
@@ -837,8 +929,11 @@ func executeJob(j *job, numCpuWorkers int) {
 			WithTag("domain_id", j.DomainID).
 			Infof("read %d scan folders", len(allScanFolders))
 
-		scanDataSummaryPath := path.Join(j.JobPath, "scan_data_summary.json")
-		WriteScanDataSummary(datasetsRootPath, allScanFolders, scanDataSummaryPath)
+		if j.ProcessingType == "local_and_global_refinement" || j.ProcessingType == "local_refinement" {
+			// for global_refinement we don't download the scan manifests so we can't write scan data summary (and don't need it)
+			scanDataSummaryPath := path.Join(j.JobPath, "scan_data_summary.json")
+			WriteScanDataSummary(datasetsRootPath, allScanFolders, scanDataSummaryPath)
+		}
 
 		for _, folder := range allScanFolders {
 			params = append(params, folder.Name())
@@ -883,60 +978,125 @@ func executeJob(j *job, numCpuWorkers int) {
 
 	// Monitor progress in a separate goroutine
 	progressDone := make(chan bool)
-	go func() {
+
+	checkProgress := func() {
 		refinedPath := path.Join(outputPath, "local")
 
+		// Get total number of datasets
+		datasetFolders, err := os.ReadDir(datasetsRootPath)
+		if err != nil {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Error(errors.Newf("Error reading datasets directory").Wrap(err))
+			return
+		}
+		totalCount := len(datasetFolders)
+
+		// Check number of completed datasets by matching dataset names
+		refinedCount := 0
+		for _, dataset := range datasetFolders {
+			scanID := dataset.Name()
+			refinedScanPath := path.Join(refinedPath, scanID)
+
+			if _, err := os.Stat(refinedScanPath); err == nil {
+				refinedCount++
+
+				// Check if this scan has been completed and uploaded
+				j.completedMutex.RLock()
+				isCompleted := j.CompletedScans[scanID]
+				j.completedMutex.RUnlock()
+
+				if !isCompleted {
+					// Check if sfm directory exists
+					sfmPath := path.Join(refinedScanPath, "sfm")
+					if _, err := os.Stat(sfmPath); err == nil {
+						// Expected outputs
+						waitForFilenames := []string{
+							"images.bin",
+							"cameras.bin",
+							"points3D.bin",
+							"portals.csv",
+						}
+
+						incomplete := false
+						for _, filename := range waitForFilenames {
+							if _, err := os.Stat(path.Join(sfmPath, filename)); err != nil {
+								incomplete = true
+								break
+							}
+						}
+						if incomplete {
+							continue
+						}
+
+						// Scan finished refinement, upload results as zip
+						// (but not for global_refinement jobs)
+						if j.ProcessingType == "local_refinement" || j.ProcessingType == "local_and_global_refinement" {
+							logs.WithTag("job_id", j.ID).
+								WithTag("domain_id", j.DomainID).
+								WithTag("scan_id", scanID).
+								Infof("Scan completed, uploading zip file")
+
+							if err := ZipScanFiles(j, scanID); err != nil {
+								logs.WithTag("job_id", j.ID).
+									WithTag("domain_id", j.DomainID).
+									WithTag("scan_id", scanID).
+									Error(errors.Newf("failed to upload scan zip").Wrap(err))
+								continue
+							} else {
+								logs.WithTag("job_id", j.ID).
+									WithTag("domain_id", j.DomainID).
+									WithTag("scan_id", scanID).
+									Infof("Scan zip file uploaded successfully")
+							}
+						}
+
+						// Mark scan as completed
+						j.completedMutex.Lock()
+						j.CompletedScans[scanID] = true
+						j.completedMutex.Unlock()
+					}
+				}
+			}
+		}
+		refinedCount-- // Last folder created is still refining, remove it
+		if refinedCount < 0 {
+			refinedCount = 0 // Just in case
+		}
+		progress := int((float64(refinedCount) / float64(totalCount)) * 100)
+		if progress > 100 {
+			progress = 100
+		}
+
+		// Update manifest with current progress
+		statusText := fmt.Sprintf("Processed %d of %d scans", refinedCount, totalCount)
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("progress: %d%% - %s", progress, statusText)
+
+		if j.Status == "processing" || j.Status == "started" { // Avoid overwriting final manifest from python when we run the final checkProgress afterwards
+			err = WriteJobManifestFileHelper(j, "processing", progress, statusText)
+			if err != nil {
+				logs.WithTag("job_id", j.ID).
+					WithTag("domain_id", j.DomainID).
+					Error(errors.Newf("failed to write job manifest").Wrap(err))
+			}
+
+			err = UploadJobManifestToDomain(j)
+			if err != nil {
+				logs.WithTag("job_id", j.ID).
+					WithTag("domain_id", j.DomainID).
+					Error(errors.Newf("failed to upload job manifest").Wrap(err))
+			}
+		}
+	}
+	go func() {
 		for {
 			select {
 			case <-progressDone:
 				return
 			default:
-				// Get total number of datasets
-				datasetFolders, err := os.ReadDir(datasetsRootPath)
-				if err != nil {
-					logs.WithTag("job_id", j.ID).
-						WithTag("domain_id", j.DomainID).
-						Error(errors.Newf("Error reading datasets directory").Wrap(err))
-					return
-				}
-				totalCount := len(datasetFolders)
-
-				// Check number of completed datasets by matching dataset names
-				refinedCount := 0
-				for _, dataset := range datasetFolders {
-					if _, err := os.Stat(path.Join(refinedPath, dataset.Name())); err == nil {
-						refinedCount++
-					}
-				}
-				refinedCount-- // Last folder created is still refining, remove it
-				if refinedCount < 0 {
-					refinedCount = 0 // Just in case
-				}
-				progress := int((float64(refinedCount) / float64(totalCount)) * 100)
-				if progress > 100 {
-					progress = 100
-				}
-
-				// Update manifest with current progress
-				statusText := fmt.Sprintf("Processed %d of %d scans", refinedCount, totalCount)
-				logs.WithTag("job_id", j.ID).
-					WithTag("domain_id", j.DomainID).
-					Infof("progress: %d%% - %s", progress, statusText)
-
-				err = WriteJobManifestFileHelper(j, "processing", progress, statusText)
-				if err != nil {
-					logs.WithTag("job_id", j.ID).
-						WithTag("domain_id", j.DomainID).
-						Error(errors.Newf("failed to write job manifest").Wrap(err))
-				}
-
-				err = UploadJobManifestToDomain(j)
-				if err != nil {
-					logs.WithTag("job_id", j.ID).
-						WithTag("domain_id", j.DomainID).
-						Error(errors.Newf("failed to upload job manifest").Wrap(err))
-				}
-
+				checkProgress()
 				time.Sleep(30 * time.Second)
 			}
 		}
@@ -965,6 +1125,8 @@ func executeJob(j *job, numCpuWorkers int) {
 		WithTag("domain_id", j.DomainID).
 		Infof("Going to upload results to domain %s", j.DomainID)
 
+	checkProgress() // One extra check to upload any remaining local refinement outputs
+
 	if _, err := UploadRefinedOutputsToDomain(j); err != nil {
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
@@ -984,4 +1146,142 @@ func executeJob(j *job, numCpuWorkers int) {
 		WithTag("domain_id", j.DomainID).
 		Infof("job succeeded!")
 	jobs.UpdateJob(j.ID, "succeeded")
+}
+
+// ZipScanFiles creates a zip file containing all bin, csv, and txt files from the sfm directory
+func ZipScanFiles(j *job, scanID string) error {
+	sfmPath := path.Join(j.JobPath, "refined", "local", scanID, "sfm")
+
+	// Check if sfm directory exists
+	if _, err := os.Stat(sfmPath); os.IsNotExist(err) {
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			WithTag("scan_id", scanID).
+			Infof("sfm directory does not exist: %s", sfmPath)
+		return nil
+	}
+
+	// Create zip file in memory
+	var zipBuffer bytes.Buffer
+	zipWriter := zip.NewWriter(&zipBuffer)
+
+	// Walk through the sfm directory and add files with specific extensions
+	err := filepath.Walk(sfmPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check if file has the required extension
+		ext := strings.ToLower(filepath.Ext(filePath))
+		if ext != ".bin" && ext != ".csv" && ext != ".txt" {
+			return nil
+		}
+
+		// Get relative path from sfm directory
+		relPath, err := filepath.Rel(sfmPath, filePath)
+		if err != nil {
+			return err
+		}
+
+		// Create zip file entry
+		zipFile, err := zipWriter.Create(relPath)
+		if err != nil {
+			return err
+		}
+
+		// Read and write file content
+		fileContent, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+
+		_, err = zipFile.Write(fileContent)
+		return err
+	})
+
+	if err != nil {
+		return errors.Newf("failed to create zip file for scan %s", scanID).Wrap(err)
+	}
+
+	// Close zip writer
+	if err := zipWriter.Close(); err != nil {
+		return errors.Newf("failed to close zip writer for scan %s", scanID).Wrap(err)
+	}
+
+
+	// Upload the zip file to domain
+	zipData := bytes.NewReader(zipBuffer.Bytes())
+	domainData := DomainData{
+		DomainDataMetadata: DomainDataMetadata{
+			EditableDomainDataMetadata: EditableDomainDataMetadata{
+				Name:     fmt.Sprintf("refined_scan_%s", scanID),
+				DataType: "refined_scan_zip",
+			},
+			DomainID: j.DomainID,
+		},
+		Data: io.NopCloser(zipData),
+	}
+
+	// Create multipart request body
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if err := WriteDomainData(writer, &domainData); err != nil {
+		return errors.Newf("failed to write domain data for scan %s", scanID).Wrap(err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	// Make HTTP request to upload
+	reqUrl := j.DomainServerURL + "/api/v1/domains/" + j.DomainID + "/data"
+	req, err := http.NewRequest(http.MethodPost, reqUrl, body)
+	if err != nil {
+		return errors.Newf("failed to create upload request for scan %s", scanID).Wrap(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+j.AccessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if resp.StatusCode == http.StatusConflict {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				WithTag("scan_id", scanID).
+				Infof("Skip uploading refined outputs zip. Already exists in domain")
+			return nil
+		}
+		return errors.Newf("failed to upload scan zip for scan %s", scanID).Wrap(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Newf("domain server returned status %d for scan %s", resp.StatusCode, scanID)
+	}
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return errors.Newf("failed to read response for scan %s", scanID).Wrap(err)
+	}
+
+	var parsedResp PostDomainDataResponse
+	if err := json.Unmarshal(responseBody, &parsedResp); err != nil {
+		return errors.Newf("failed to parse response for scan %s", scanID).Wrap(err)
+	}
+
+	// Store the uploaded data ID
+	j.UploadedDataIDs[fmt.Sprintf("refined_scan_%s.refined_scan_zip", scanID)] = parsedResp.Data[0].ID
+
+	logs.WithTag("job_id", j.ID).
+		WithTag("domain_id", j.DomainID).
+		WithTag("scan_id", scanID).
+		Infof("Successfully uploaded scan zip file with ID: %s", parsedResp.Data[0].ID)
+
+	return nil
 }
