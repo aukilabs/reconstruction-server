@@ -152,7 +152,7 @@ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDP
 
 COPY utils /app/utils
 RUN chmod 755 /app/utils
-COPY local_main.py global_main.py occlusion_box.py main.py /app/
+COPY local_main.py global_main.py occlusion_box.py topology_main.py main.py /app/
 RUN chmod 755 /app/*.py
 
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig

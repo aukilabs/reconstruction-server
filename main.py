@@ -4,12 +4,13 @@ from concurrent.futures import ProcessPoolExecutor
 
 from local_main import main as local_main
 from global_main import main as global_main
-from occlusion_box import main as occlusion_box_main
+from topology_main import main as topology_main
+from occlusion_box import main as occlusion_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
 
-def occlusion_box_wrapper(path, output_dir, logger):
+def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
     """Run occlusion box extraction on the given point cloud.
     
     Args:
@@ -19,7 +20,7 @@ def occlusion_box_wrapper(path, output_dir, logger):
     """
     config = load_yaml('config/occlusion_box/default.yaml')
     config.update({
-        'path': str(path),
+        'path': str(pointcloud_path),
         'output_dir': str(output_dir),
         'opengl': True,  # Point cloud already in OpenGL coordinates
         'display': False
@@ -31,7 +32,7 @@ def occlusion_box_wrapper(path, output_dir, logger):
 
     save_to_yaml(config)
     logger.info("Starting occlusion box extraction...")
-    occlusion_box_main(config)
+    occlusion_main(config)
     logger.info("Done with occlusion box extraction!")
 
 
@@ -130,6 +131,21 @@ def global_main_wrapper(args, logger):
     logger.info("Done with global refinement")
     logger.info("--------------------------------")
 
+    logger.info("Start extracting topology...")
+
+    # TODO: needs some fixing and testing before re-enabling
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+
+    topology_args = argparse.Namespace(
+        input_path=global_args.output_path / "RefinedPointCloud.ply",
+        output_dir=global_args.output_path / "topology",
+        floor_height=0.0,
+        floor_height_threshold=0.2,
+        voxel_size=0.05
+    )
+
+    topology_main(topology_args, logger)
+
 
 def local_and_global_main_wrapper(args, logger):
     """Run both local and global refinement processes.
@@ -141,9 +157,6 @@ def local_and_global_main_wrapper(args, logger):
     local_args = argparse.Namespace(**vars(args))
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
-
-    # TODO: needs some fixing and testing before re-enabling
-    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
 
 
 def get_available_scans(datasets_path):

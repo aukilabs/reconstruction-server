@@ -151,6 +151,7 @@ def find_best_fit_alphashape_optimized(points, alpha=2.0):
     except:
         print(f"failed to extract alpha shape")
         return False, None
+
     # Check if the result is a Polygon, MultiPolygon, or GeometryCollection
     if isinstance(alpha_shape, Polygon):
         # If it's a single Polygon, extract the exterior
@@ -170,9 +171,9 @@ def find_best_fit_alphashape_optimized(points, alpha=2.0):
             print(type(geom))
         return False, None
     else:
-        # For other cases (like GeometryCollection), handle them appropriately
         print(type(alpha_shape))
         return False, None
+
     return True, exterior_coords
 
 def find_best_fit_convexhull(points):

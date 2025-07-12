@@ -48,12 +48,15 @@ def main(config):
     
 
     # Init from colmap reconstruction folder
-    model = Model()
-    model.read_model(path=config['path'], ext='.bin')
-    print("num_cameras:", len(model.cameras))
-    print("num_images:", len(model.images))
-    print("num_points3D:", len(model.points3D))
-    pcd = model.get_points(in_opengl=True)
+    if(config['path'].endswith('.ply')):
+        pcd = o3d.io.read_point_cloud(config['path'])
+    else:
+        model = Model()
+        model.read_model(path=config['path'], ext='.bin')
+        print("num_cameras:", len(model.cameras))
+        print("num_images:", len(model.images))
+        print("num_points3D:", len(model.points3D))
+        pcd = model.get_points(in_opengl=True)
 
     num_points['Original'] = len(pcd.points)
 

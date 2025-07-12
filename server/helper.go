@@ -417,6 +417,42 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 			Name:     "occlusionmesh_v1",
 			DataType: "obj",
 		},*/
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.111.obj"),
+			Name:     "topologymesh_v1_lowpoly_obj",
+			DataType: "obj",
+			Optional: true,
+		},
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.111.glb"),
+			Name:     "topologymesh_v1_lowpoly_glb",
+			DataType: "glb",
+			Optional: true,
+		},
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.obj"),
+			Name:     "topologymesh_v1_midpoly_obj",
+			DataType: "obj",
+			Optional: true,
+		},
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.glb"),
+			Name:     "topologymesh_v1_midpoly_glb",
+			DataType: "glb",
+			Optional: true,
+		},
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology.obj"),
+			Name:     "topologymesh_v1_highpoly_obj",
+			DataType: "obj",
+			Optional: true,
+		},
+		{
+			FilePath: path.Join(refinedOutput, "topology", "topology.glb"),
+			Name:     "topologymesh_v1_highpoly_glb",
+			DataType: "glb",
+			Optional: true,
+		},
 	}
 
 	outputCount := 0
@@ -1212,7 +1248,6 @@ func ZipScanFiles(j *job, scanID string) error {
 	if err := zipWriter.Close(); err != nil {
 		return errors.Newf("failed to close zip writer for scan %s", scanID).Wrap(err)
 	}
-
 
 	// Upload the zip file to domain
 	zipData := bytes.NewReader(zipBuffer.Bytes())
