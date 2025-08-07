@@ -48,7 +48,7 @@ docker run \
 --entrypoint /usr/bin/python3 \
 -it auki-archive:latest \
 global_main.py \
---data_dir ./datasets \
+--data_dir /path/to/jobs/my_domain_job/full_store_capture \
 --all_poses \
 --all_observations \
 --use_refined_outputs
@@ -63,7 +63,7 @@ docker run \
 --entrypoint /usr/bin/python3 \
 -it auki-archive:latest \
 global_main.py \
---data_dir ./datasets \
+--data_dir /path/to/jobs/my_domain_job/full_store_capture \
 --all_poses \
 --all_observations \
 --use_refined_outputs \
