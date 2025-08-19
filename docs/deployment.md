@@ -11,17 +11,22 @@ nvidia-smi
 
 2. Allow inbound TCP traffic to port 8080 (or a port of your choosing)
 
-3. Configure a domain name to point to your static IP address
+3. If you have a static IP, optionally configure a domain name for it. \
+   Or, if your IP is not static, you need to set up Dynamic DNS pointing to your IP.
 
 ## Option 1 — Use the prebuilt image (recommended)
 
 Start Docker and then run:
 ```shell
-docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-node -cpu-workers 2 -port :8080 -api-key kaffekopp123
+docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-node:latest -cpu-workers 2 -port :8080 -api-key aukilabs123
 ```
 
+💡 **Note 1:** For the -api-key leave as is, or any non-sensitive phrase. During  the community beta, you will need to provide this key to Auki Labs. This key is just an extra gate for incoming jobs, not used to access any user data.
 
-## Option 2 — Build from source
+💡 **Note 2:** if your system has an older CPU or less RAM and you notice any issues, you may try to reduce the `-cpu-workers` to 1, or even 0 (to run only on the main thread).
+
+
+## Option 2 — Build Docker image from source
 
 ### Building Docker
 
@@ -29,74 +34,10 @@ docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-no
 
 ```bash
 # Linux computer or deploy to Linux server
-docker buildx build --platform linux/amd64 -t docker.io/library/auki-archive:latest --load  .
+docker buildx build --platform linux/amd64 -t {/your/docker/repo}:latest --load  .
 
 # Jetson Device
-DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo} -f Dockerfile.jetson .
+DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo}:latest -f Dockerfile.jetson .
 ```
 
-## Running Refinement
-
-**NOTE:** For the closed beta you will not have to worry about manually running refinements; Auki will send jobs to your node. 
-
-The following instructions are provided for reference only.
-
-### Local refinement for single scan
-```
-docker run \
---gpus all \
---shm-size=512m \
--v /path/to/jobs/:/path/to/jobs/ \
---entrypoint /usr/bin/python3 \
--it auki-archive:latest \
-local_main.py \
---dataset_path /path/to/jobs/my_domain_job/datasets/dmt_scan_2024-06-26_10-29-57 \
---output_path /path/to/jobs/my_domain_job/refined/local \
---every_nth_image 2 \
---remove_outputs
-```
-
-### Local refinement for all scans within a folder
-```
-bash ./scripts/local_run_all.sh
-```
-
-### Global refinement pipeline using refined outputs
-
-```
-docker run \
---gpus all \
--v /path/to/jobs/:/path/to/jobs/ \
---entrypoint /usr/bin/python3 \
--it auki-archive:latest \
-global_main.py \
---data_dir /path/to/jobs/my_domain_job/full_store_capture \
---all_poses \
---all_observations \
---use_refined_outputs
-```
-
-### Global refinement pipeline, basic pointcloud stitch only
-
-```
-docker run \
---gpus all \
--v /path/to/jobs/:/path/to/jobs/ \
---entrypoint /usr/bin/python3 \
--it auki-archive:latest \
-global_main.py \
---data_dir /path/to/jobs/my_domain_job/full_store_capture \
---all_poses \
---all_observations \
---use_refined_outputs \
---add_3dpoints \
---basic_stitch_only
-```
-
-## Occlusion box generation
-Modify [default.yaml](/config/occlusion_box/default.yaml) to change source file and output path.
-```
-docker run \
-occlusion_box.py \
---config ./config/occlusion_box/default.yaml
-```
+Run the image as in Option 1.
