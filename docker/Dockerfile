@@ -170,4 +170,4 @@ ENTRYPOINT ["./reconstruction"]
 
 # Overridable using 'docker run ... image_name -api-key <your-api-key>'
 # TODO: we probably don't need api key, or make it optional. Just check domain token.
-CMD ["-api-key", "kaffekopp123"]
+CMD ["-api-key", "aukilabs123"]
