@@ -18,7 +18,7 @@ else
     exit 1
 fi
 
-API_KEY="kaffekopp123"
+API_KEY="aukilabs123"
 
 # Script to redeploy changes in the go code without redeploying the entire docker image.
 # WARNING this interrupts any ongoing jobs. Only for development.
