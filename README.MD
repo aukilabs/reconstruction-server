@@ -12,7 +12,7 @@ For more information on the reconstruction service, please refer to our [whitepa
 ## Acknowledgments
 
 This project builds upon the work of many excellent open-source projects, including
-[hloc](https://github.com/aukilabs/Hierarchical-Localization), [COLMAP](https://colmap.github.io), [Ceres Solver](http://ceres-solver.org),
+[hloc](https://github.com/cvg/Hierarchical-Localization), [COLMAP](https://colmap.github.io), [Ceres Solver](http://ceres-solver.org),
 [Eigen](https://eigen.tuxfamily.org), [PyTorch](https://pytorch.org),
 [OpenCV](https://opencv.org), [Open3D](https://www.open3d.org), and others.
 
