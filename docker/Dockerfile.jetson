@@ -73,7 +73,7 @@ RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
     python3 -m pip install -e . --config-settings editable_mode=compat
 
-RUN python3 -m pip install enlighten evo hloc
+RUN python3 -m pip install enlighten hloc
 
 
 WORKDIR /app

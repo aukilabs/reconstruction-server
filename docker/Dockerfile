@@ -130,7 +130,7 @@ RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization 
 # For now we need to downgrade opencv (after hloc).
 RUN python3 -m pip install opencv-python==4.10.0.84
 
-RUN python3 -m pip install enlighten evo
+RUN python3 -m pip install enlighten
 
 RUN python3 -m pip install open3d trimesh alphashape
 
