@@ -5,6 +5,8 @@ import datetime
 import time
 import os
 import yaml
+import logging
+import sys
 
 from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
 from utils.occlusion_box_utils import (
@@ -37,7 +39,13 @@ def setview_and_capture(vis, jfile, output_file):
     return
 
 
-def main(config):
+def main(config, logger=None):
+    if logger is None:
+        logger = logging.getLogger('occlusion_box')
+        logger.setLevel(logging.INFO)
+        if not logger.hasHandlers():
+            logger.addHandler(logging.StreamHandler(sys.stdout))
+
     # Date and time 
     current_datetime = datetime.datetime.now()
     formatted_datetime = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
@@ -52,16 +60,16 @@ def main(config):
         pcd = o3d.io.read_point_cloud(config['path'])
     else:
         model = Model()
-        model.read_model(path=config['path'], ext='.bin')
-        print("num_cameras:", len(model.cameras))
-        print("num_images:", len(model.images))
-        print("num_points3D:", len(model.points3D))
+        model.read_model(path=config['path'], ext='.bin', logger=logger)
+        logger.info("num_cameras:", len(model.cameras))
+        logger.info("num_images:", len(model.images))
+        logger.info("num_points3D:", len(model.points3D))
         pcd = model.get_points(in_opengl=True)
 
     num_points['Original'] = len(pcd.points)
 
     # Step 0: Swap Axis 
-    print("[Step 0] Swap Y and Z Axis ")
+    logger.info("[Step 0] Swap Y and Z Axis ")
     x_z_swap =  np.array([[1, 0, 0, 0],
                         [0, 0, 1, 0],
                         [0, 1, 0, 0], 
@@ -72,27 +80,27 @@ def main(config):
     pcd = pcd.voxel_down_sample(voxel_size = config['voxel_size'])
     time1 = time.time()
     time_spent["Voxelize"] = time1 - time0
-    print("step1 time spent: ", time_spent["Voxelize"])
+    logger.info("step1 time spent: ", time_spent["Voxelize"])
     num_points['Voxelized'] = len(pcd.points)
 
     # Step 2: Points Cleaning
-    print("[Step 2] Point Cloud Cleaning")
+    logger.info("[Step 2] Point Cloud Cleaning")
     pcd, _ = pcd.remove_radius_outlier(nb_points=config['outlier_min_points'], radius=config['outlier_radius'])
     time2 = time.time()
     time_spent["Point Cloud Cleaning"] = time2 - time1
-    print("step2 time spent: ", time_spent["Point Cloud Cleaning"])
+    logger.info("step2 time spent: ", time_spent["Point Cloud Cleaning"])
     num_points['Outlier Cleaning'] = len(pcd.points)
 
     # Step 3: Floor Removal
-    print("[Step 3] Floor Removal")
+    logger.info("[Step 3] Floor Removal")
     pcd_without_floor, _ = floor_removal(pcd, config['height_threshold'])
     time3 = time.time()
     time_spent["Floor Removal"] = time3 - time2
-    print("step3 time spent: ", time_spent["Floor Removal"])
+    logger.info("step3 time spent: ", time_spent["Floor Removal"])
     num_points['Removed Floor'] = len(pcd.points)
 
     # Step 4: DBSCAN for voxel clustering
-    print("[Step 4] Clustering")
+    logger.info("[Step 4] Clustering")
     if config['xy_plane_clustering']:
         grouped_points_without_floor = group_points_by_xy(pcd_without_floor, config['voxel_size'])
         xy_points = np.asarray([[i[0], i[1]] for i in grouped_points_without_floor])
@@ -120,19 +128,19 @@ def main(config):
         actual_labels = np.array(pcd_without_floor.cluster_dbscan(eps=config['cluster_eps'], min_points=config['cluster_min_points'], print_progress=True))
         pcd_clusters = pcd_without_floor
 
-    print(f"Extracted number of clusters: {actual_labels.max() + 1}")
+    logger.info(f"Extracted number of clusters: {actual_labels.max() + 1}")
     pcd_clusters = assign_cluster_colors(pcd_clusters, actual_labels)
     time4 = time.time()
     time_spent['Clustering'] = time4 - time3
-    print("step4 time spent: ", time_spent['Clustering'])
+    logger.info("step4 time spent: ", time_spent['Clustering'])
 
     # Step 5: Create bounding boxes for each cluster and set them to black
-    print("[Step 5] Extract Occlusion Volume")
+    logger.info("[Step 5] Extract Occlusion Volume")
     geo = []
     meshes = []
 
     if config['occlusion_method'] not in SUPPORTED_OCCLUSION_METHOD:
-        print(f"{config['occlusion_method']} not supported, switching to default aabb")
+        logger.info(f"{config['occlusion_method']} not supported, switching to default aabb")
         config['occlusion_method'] = "aabb"
 
     for i in range(actual_labels.max() + 1):
@@ -160,7 +168,7 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape(cluster_np_points[:, :2], logger=logger)
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
@@ -169,7 +177,7 @@ def main(config):
 
             elif config['occlusion_method'] == 'alphashape_optimized':
                 # Alphashape
-                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_alphashape_optimized(cluster_np_points[:, :2], logger=logger)
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
@@ -178,7 +186,7 @@ def main(config):
 
             elif config['occlusion_method'] == 'convexhull':
                  # Convexhull
-                success, qpoints = find_best_fit_convexhull(cluster_np_points[:, :2])
+                success, qpoints = find_best_fit_convexhull(cluster_np_points[:, :2], logger=logger)
                 if success:
                     occ_pcd, occ_box, mesh = draw_box_from_poly(qpoints, cluster_np_points[:, 2].min(), cluster_np_points[:, 2].max())
                     geo.append(occ_box)
@@ -187,7 +195,7 @@ def main(config):
 
     time5 = time.time()
     time_spent["Occlusion Volume"] = time5 - time4
-    print("step5 time spent: ", time_spent['Occlusion Volume'])
+    logger.info("step5 time spent: ", time_spent['Occlusion Volume'])
 
     # Step 6: Visualize the clusters with black bounding boxes and axes
     vis1 = o3d.visualization.Visualizer()
@@ -199,7 +207,7 @@ def main(config):
     vis1.update_renderer()
 
     if not os.path.exists(config['viewpoint_dir']):
-        print(f"View Point Directory not exist: {config['viewpoint_dir']}")
+        logger.info(f"View Point Directory not exist: {config['viewpoint_dir']}")
     else:
         json_files = [file for file in os.listdir(config['viewpoint_dir']) if file.endswith('.json')]
         # Get full paths to the JSON files

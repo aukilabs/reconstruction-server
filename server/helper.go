@@ -117,19 +117,10 @@ func (js *jobList) List() []*job {
 	js.lock.RLock()
 	defer js.lock.RUnlock()
 
-	logs.Info("job list count: ", len(js.list))
-	logs.Info("job list null? ", js.list == nil)
-	// log.Println("job list count: ", len(js.list))
-	// log.Println("job list null? ", js.list == nil)
-
 	var jobs []*job
 	for _, j := range js.list {
 		jobs = append(jobs, j)
-		logs.Info("APPEND! new job list count: ", len(jobs))
-		// log.Println("APPEND! new job list count: ", len(jobs))
 	}
-	logs.Info("job list null? ", js.list == nil)
-	// log.Println("job list null? ", js.list == nil)
 	return jobs
 }
 
@@ -573,14 +564,20 @@ func UploadOutputToDomainHelper(j *job, output ExpectedOutput) error {
 	}
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Infof("Uploaded domain data! response: %s", string(responseBody))
+		Debug("Uploaded domain data got response.")
+
 	var parsedResp PostDomainDataResponse
 	if err := json.Unmarshal(responseBody, &parsedResp); err != nil {
 		return err
 	}
+
+	if len(parsedResp.Data) == 0 {
+		return errors.New("No data ID in response from domain server. Upload might have failed.")
+	}
+
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Infof("Uploaded domain data! parsed response: %+v", parsedResp)
+		Infof("Uploaded domain data parsed OK! Domain data ID: %s", parsedResp.Data[0].ID)
 	j.UploadedDataIDs[output.Name+"."+output.DataType] = parsedResp.Data[0].ID
 	return nil
 }
@@ -589,7 +586,7 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Infof("downloading %d data from domain", len(ids))
+		Infof("Going to download %d data from domain %s", len(ids), j.DomainID)
 	if len(ids) == 0 {
 		return errors.New("no data ids provided")
 	}
@@ -602,10 +599,6 @@ func DownloadDomainDataFromDomain(ctx context.Context, j *job, ids ...string) er
 	}
 	req.Header.Add("Authorization", "Bearer "+j.AccessToken)
 	req.Header.Add("Accept", "multipart/form-data")
-
-	logs.WithTag("job_id", j.ID).
-		WithTag("domain_id", j.DomainID).
-		Info("Downloading data from domain, request:\n", req)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -779,7 +772,6 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 	logs.Debug("Data IDs: %s\n", jobRequest.DataIDs)
 	logs.Debug("DomainID: %s\n", jobRequest.DomainID)
 	logs.Debug("Processing Type: %s\n", jobRequest.ProcessingType)
-	logs.Debug("Access Token: %s\n", jobRequest.AccessToken)
 	logs.Debug("Domain Server URL: %s\n", jobRequest.DomainServerURL)
 
 	return &jobRequest, nil
@@ -787,7 +779,7 @@ func ReadJobRequestFromJson(requestJson string) (*JobRequestData, error) {
 
 func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerURL string, retriggerJobID string) (*job, error) {
 
-	logs.Info("Will mkdir path ", dirPath)
+	logs.Debug("Will mkdir path ", dirPath)
 	if err := os.MkdirAll(dirPath, 0750); err != nil {
 		return nil, err
 	}
@@ -799,8 +791,8 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 		return nil, err
 	}
 
-	logs.WithTag("domain_id", jobRequest.DomainID).
-		Info("Parsing domain access token: ", jobRequest.AccessToken)
+	logs.WithTag("domain_id", jobRequest.DomainID).Debug("Parsing domain access token")
+
 	t, err := jwt.ParseString(jobRequest.AccessToken, jwt.WithValidate(false))
 	if err != nil {
 		return nil, errors.New("Error parsing domain access token from job request").
@@ -886,17 +878,17 @@ func CreateJobMetadata(dirPath string, requestJson string, reconstructionServerU
 
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
-			Infof("Job Request File: %s", requestFile)
+			Debugf("Job Request File: %s", requestFile)
 
 		logs.WithTag("job_id", j.ID).
 			WithTag("domain_id", j.DomainID).
-			Infof("Job Metadata File: %s", metadataFile)
+			Debugf("Job Metadata File: %s", metadataFile)
 	}
 
 	jobs.AddJob(&j)
 	logs.WithTag("job_id", j.ID).
 		WithTag("domain_id", j.DomainID).
-		Infof("Job added to job list: %s", j.ID)
+		Debugf("Job added to job list: %s", j.ID)
 
 	return &j, nil
 }
@@ -920,7 +912,7 @@ func executeJob(j *job, numCpuWorkers int) {
 	// DMT uses this to show job status to the user.
 	WriteJobManifestFile(j, "processing")
 
-	// Download domain data in batches of 20 ids
+	// Download domain data in small batches
 	batchSize := 20
 	for i := 0; i < len(j.DataIDs); i += batchSize {
 		end := i + batchSize

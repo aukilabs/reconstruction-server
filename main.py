@@ -32,7 +32,7 @@ def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
 
     save_to_yaml(config)
     logger.info("Starting occlusion box extraction...")
-    occlusion_main(config)
+    occlusion_main(config, logger)
     logger.info("Done with occlusion box extraction!")
 
 

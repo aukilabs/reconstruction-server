@@ -130,7 +130,7 @@ def stitching_helper(
         return None
     
     # Get basic stitch results
-    print("Getting basic stitch results...")
+    logger.info("Getting basic stitch results...")
     basic_results = _get_basic_stitch_results(
         stitch_data,
         truth_portal_poses,
@@ -138,7 +138,7 @@ def stitching_helper(
         with_3dpoints and basic_stitch_only, # No need to export the unrefined ply if global refinement is enabled.
         logger
     )
-    print("DONE\n")
+    logger.info("DONE")
 
     if basic_stitch_only:
         return _handle_basic_stitch(
@@ -151,7 +151,7 @@ def stitching_helper(
         )
     
     # Get refined results
-    print("Getting refined results...")
+    logger.info("Getting refined results...")
     refined_results = _get_refined_results(
         stitch_data,
         basic_results,
@@ -160,7 +160,7 @@ def stitching_helper(
         with_3dpoints,
         logger
     )
-    print("DONE\n")
+    logger.info("DONE")
 
     return StitchingResult(
         basic_rec=basic_results.rec,
@@ -252,13 +252,16 @@ def load_partial(
 
     return stitch_data
 
-def _load_refined_reconstruction(partial_rec_dir: Path, logger) -> Optional[Model]:
+def _load_refined_reconstruction(partial_rec_dir: Path, logger=None) -> Optional[Model]:
+    if logger is None:
+        logger = logging.getLogger()
+
     if not (partial_rec_dir and partial_rec_dir.exists()):
         logger.error(f"No refined data found at: {partial_rec_dir}")
         return None
         
     loaded_rec = Model()
-    loaded_rec.read_model(partial_rec_dir)
+    loaded_rec.read_model(partial_rec_dir, logger=logger)
     logger.info(f"Loaded refined reconstruction from {partial_rec_dir}")
     return loaded_rec
 

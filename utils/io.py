@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import os
 import collections
 import struct
@@ -101,13 +102,16 @@ def write_next_bytes(fid, data, format_char_sequence, endian_character="<"):
     fid.write(bytes)
 
 
-def detect_model_format(path, ext):
+def detect_model_format(path, ext, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     if (
         os.path.isfile(os.path.join(path, "cameras" + ext))
         and os.path.isfile(os.path.join(path, "images" + ext))
         and os.path.isfile(os.path.join(path, "points3D" + ext))
     ):
-        print("Detected model format: '" + ext + "'")
+        logger.info("Detected model format: '%s'", ext)
         return True
 
     return False
@@ -523,15 +527,18 @@ def write_portal_csv(portals, csv_path):
             csv_writer.writerow(row)
     return
 
-def read_model(path, ext=""):
+def read_model(path, ext="", logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     # try to detect the extension automatically
     if ext == "":
-        if detect_model_format(path, ".bin"):
+        if detect_model_format(path, ".bin", logger=logger):
             ext = ".bin"
-        elif detect_model_format(path, ".txt"):
+        elif detect_model_format(path, ".txt", logger=logger):
             ext = ".txt"
         else:
-            print("Provide model format: '.bin' or '.txt'")
+            logger.error("Provide model format: '.bin' or '.txt'")
             return
 
     if ext == ".txt":
@@ -567,8 +574,8 @@ class Model:
         self.__vis=None
         self._path=None
 
-    def read_model(self, path, ext=""):
-        self.cameras, self.images, self.points3D = read_model(path, ext)
+    def read_model(self, path, ext="", logger=None):
+        self.cameras, self.images, self.points3D = read_model(path, ext, logger)
         self.portals = read_portal_csv(os.path.join(path, "portals.csv"))
         self._path = path
 
