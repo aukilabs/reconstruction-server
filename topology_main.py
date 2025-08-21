@@ -52,13 +52,14 @@ def main(args, logger=None):
     if logger is None:
         logger = logging.getLogger('topology')
         logger.setLevel(logging.INFO)
-        logger.addHandler(logging.StreamHandler(sys.stdout))
+        if not logger.hasHandlers():
+            logger.addHandler(logging.StreamHandler(sys.stdout))
 
     if args.input_path.suffix == '.ply':
         pcd = o3d.io.read_point_cloud(args.input_path)
     else:
         model = Model()
-        model.read_model(path=args.input_path, ext='.bin')
+        model.read_model(path=args.input_path, ext='.bin', logger=logger)
         pcd = model.get_points(in_opengl=True)
 
     if not args.output_dir.exists():

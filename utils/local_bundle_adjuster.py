@@ -8,8 +8,10 @@ import pyceres
 import pycolmap
 from numpy.linalg import norm
 import numpy as np
+import logging
 
 from utils.data_utils import vec3_angle, pycolmap_to_batch_matrix
+
 # from utils_OLD import *
 
 # Get all detections of same QR code as close to each other as possible.

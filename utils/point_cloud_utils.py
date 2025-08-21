@@ -3,10 +3,14 @@ import os
 import subprocess
 import shutil
 import numpy as np
+import logging
 
 # Reduce decimals making the ply file smaller.
 # Also changes the vertex type to float instead of double, which is required by draco encoding.
 def reduce_decimals_ply(ply_path, reduced_ply_path, decimals=2, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     parsing_header = True
     with open(reduced_ply_path, "w") as reduced_ply:
         with open(ply_path, "r") as original_ply:
@@ -25,7 +29,7 @@ def reduce_decimals_ply(ply_path, reduced_ply_path, decimals=2, logger=None):
                     try:
                         x,y,z = [float(v) for v in values[:3]]
                     except ValueError:
-                        print(f"Not a point: {line}. Skip to next line!")
+                        logger.debug(f"Not a point: {line}. Skip to next line!")
                         continue
 
                     x = round(x, decimals)

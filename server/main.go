@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"net/http"
-	"net/http/httputil"
 	"reflect"
 	"sync"
 
@@ -72,10 +71,7 @@ func main() {
 
 	// Endpoint for triggering refinement jobs (from DMT)
 	r.Post("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		logs.Info("[POST] /jobs endpoint called")
-
-		debug, _ := httputil.DumpRequest(r, true)
-		logs.Debug(debug)
+		logs.Debug("[POST] /jobs endpoint called")
 
 		if apiKey != nil && *apiKey != "" {
 			inApiKey := r.Header.Get("X-API-Key")
@@ -107,7 +103,7 @@ func main() {
 			return
 		}
 		reqBodyString := string(reqBodyBytes)
-		logs.Infof("Request body: %s", reqBodyString)
+		//logs.Infof("Request body: %s", reqBodyString)
 
 		reconstructionServerURL := r.Host
 
@@ -137,13 +133,13 @@ func main() {
 
 	// Endpoint for fetching current job list
 	r.Get("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		logs.Info("[GET] /jobs endpoint called")
-
-		debug, _ := httputil.DumpRequest(r, true)
-		logs.Debug(debug)
+		logs.Debug("[GET] /jobs endpoint called")
 
 		jobList := jobs.List()
-		logs.Info("Number of jobs to list: ", len(jobList), " type: ", reflect.TypeOf(jobList))
+		if jobList == nil {
+			jobList = []*job{}
+		}
+		logs.Debug("Number of jobs to list: ", len(jobList), " type: ", reflect.TypeOf(jobList))
 
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
@@ -154,7 +150,7 @@ func main() {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		logs.Info("Jobs list returned successfully")
+		logs.Debug("Jobs list returned successfully")
 	})
 	// start the server
 	logs.Info("Server running on ", *port)
