@@ -34,7 +34,7 @@ docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-no
 
 ```bash
 # Linux computer or deploy to Linux server
-docker buildx build --platform linux/amd64 -t {/your/docker/repo}:latest --load  .
+docker buildx build --platform linux/amd64 -t {/your/docker/repo}:latest --load -f docker/Dockerfile .
 
 # Jetson Device
 DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo}:latest -f Dockerfile.jetson .

@@ -17,5 +17,5 @@ This project builds upon the work of many excellent open-source projects, includ
 [OpenCV](https://opencv.org), [Open3D](https://www.open3d.org), and others.
 
 We thank their authors and contributors for making this work possible.  
-Please note that all third-party code and libraries are subject to their respective licenses, copyrights, and trademarks.  
+Please note that all third-party code and libraries are subject to their respective licenses, copyrights, and trademarks.
 We are not affiliated with, endorsed by, or sponsored by any of the projects or organizations mentioned above.
