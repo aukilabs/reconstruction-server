@@ -17,10 +17,6 @@ from utils.data_utils import (
     load_dataset_metadata,
     rectify_portal_pose
 )
-from utils.local_bundle_adjuster import dmt_ba_solve_bundle_adjustment, prepare_ba_options
-
-
-from hloc import triangulation
 
 class RefinementPaths(NamedTuple):
     """Container for all paths used in refinement."""
@@ -373,94 +369,3 @@ def refine_dataset(
             start_time
         )
         return None
-
-def tri_ba_iteration(
-    refined_rec, 
-    sorted_image_ids, 
-    detections_per_qr,
-    image_ids_per_qr,
-    timestamps_per_image,
-    arkit_precomputed,
-    ba_options,
-    sfm_dir,
-    images,
-    sfm_pairs,
-    features,
-    matches,
-    reproj_error_history,
-    skip_geometric_verification=True,
-    refinement_config={}
-):
-    # Avoid degeneracies in bundle adjustment
-    refined_rec.filter_observations_with_negative_depth()
-
-
-    # Configure bundle adjustment
-    ba_config = pycolmap.BundleAdjustmentConfig()
-
-    for image_id in sorted_image_ids:
-        ba_config.add_image(image_id)
-
-    # Fix 7-DOFs of the bundle adjustment problem
-    ba_config.set_constant_cam_pose(sorted_image_ids[0])
-    ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
-
-    print("Start Global Bundle Adjustment")
-    summary, loss_details = dmt_ba_solve_bundle_adjustment(
-        detections_per_qr,
-        image_ids_per_qr,
-        timestamps_per_image,
-        arkit_precomputed,
-        refined_rec,
-        ba_options,
-        ba_config,
-        refinement_config
-    )
-
-    ##print("\n".join(summary.BriefReport().split(",")))
-    print("\n".join(summary.FullReport().split(",")))
-
-    refined_rec.write(sfm_dir)
-
-    refined_rec = triangulation.main(
-        sfm_dir, 
-        sfm_dir, 
-        images, 
-        sfm_pairs, 
-        features, matches, 
-        skip_geometric_verification=skip_geometric_verification,
-        verbose=True
-    )
-
-
-    reproj_error_history.append(refined_rec.compute_mean_reprojection_error())
-    print(f"Mean reprojection error {len(reproj_error_history)} = {reproj_error_history[-1]}")
-
-    return refined_rec, loss_details, reproj_error_history
-
-
-def triangulator(
-        reconstruction, 
-        sfm_dir,
-        BA_iters=3,
-        max_reprojection_err=4.0, 
-        min_triangulation_angle=2.0
-):
-
-    mapper = pycolmap.IncrementalMapper(pycolmap.DatabaseCache())
-    mapper.begin_reconstruction(reconstruction)
-
-    for BA_iter in range(BA_iters):
-        # Initial BA
-        ba_options = prepare_ba_options()
-        pycolmap.bundle_adjustment(reconstruction, ba_options)
-
-        # Filter reconstrucion
-        mapper.observation_manager.filter_all_points3D(max_reprojection_err, min_triangulation_angle)
-
-    mapper.end_reconstruction(False)
-
-    reconstruction.write(sfm_dir)
-
-    return reconstruction
-    
