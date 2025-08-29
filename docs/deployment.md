@@ -25,6 +25,11 @@ docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-no
 
 💡 **Note 2:** if your system has an older CPU or less RAM and you notice any issues, you may try to reduce the `-cpu-workers` to 1, or even 0 (to run only on the main thread).
 
+### Verification ✅
+After deploying, please make sure the server is reachable on a public IP or URL.
+To verify, open your browser and navigate to your URL/IP (and port) + /jobs, e.g. `https://my_amazing_node.ngrok.com/jobs` or `http://162.88.88.88:8080/jobs` \
+This should show a list of reconstruction jobs, initially just `[]` (an empty list).
+
 
 ## Option 2 — Build Docker image from source
 
