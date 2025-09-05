@@ -9,7 +9,6 @@ from occlusion_box import main as occlusion_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
-
 def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
     """Run occlusion box extraction on the given point cloud.
     
@@ -146,6 +145,17 @@ def global_main_wrapper(args, logger):
 
     topology_main(topology_args, logger)
 
+def topology_test():
+    job_root = Path("/app/jobs/079479ef-59a5-4431-8d3a-dab0572977ac/job_a6b61d4e-43bd-4590-b2e7-6d011346b036")
+    global_refined = job_root / "refined" / "global"
+    topology_args = argparse.Namespace(
+        input_path=global_refined / "RefinedPointCloud.ply",
+        output_dir=global_refined / "topology",
+        floor_height=0.0,
+        floor_height_threshold=0.2,
+        voxel_size=0.05
+    )
+    topology_main(topology_args)
 
 def local_and_global_main_wrapper(args, logger):
     """Run both local and global refinement processes.
@@ -253,5 +263,6 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    #args = parse_args()
+    #main(args)
+    topology_test()

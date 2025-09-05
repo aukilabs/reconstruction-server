@@ -7,10 +7,11 @@ import numpy as np
 import time
 import logging
 import sys
-from sklearn.cluster import DBSCAN
-import shutil
 from colorsys import hsv_to_rgb
-
+from contextlib import contextmanager
+import alphashape
+from shapely.geometry import Polygon, GeometryCollection
+import matplotlib.pyplot as plt
 
 # Convention in this file:
 # Right-handed coordinates (x,y,z) with positive y as global up
@@ -26,7 +27,147 @@ def segment_floor_points(pcd, floor_height, floor_height_threshold):
 
     return floor, above_floor, below_floor
 
-from contextlib import contextmanager
+def extrude_outline_to_mesh(outline, min_y, max_y, color, logger):
+    vertices = np.empty((len(outline) * 2, 3))
+    for i in range(len(outline)):
+        vertices[i * 2] = np.array([outline[i][0], min_y, outline[i][1]])
+        vertices[i * 2 + 1] = np.array([outline[i][0], max_y, outline[i][1]])
+    
+    triangles = np.empty((len(outline) * 2, 3))
+    for i in range(len(outline)):
+        triangles[i * 2] = np.array([i * 2, i * 2 + 1, (i + 1) * 2])
+        triangles[i * 2 + 1] = np.array([i * 2 + 1, (i + 1) * 2 + 1, (i + 1) * 2])
+
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(triangles)
+    mesh.paint_uniform_color(color)
+
+    return mesh
+
+def fit_cluster_mesh_3D(cluster_pcd, cluster_points, color, logger):
+    # Three step approach for a tight fit without holes, around a noisy sparse point cloud
+    # 1. Create low poly alpha mesh first to avoid holes and get good outward-facing normals
+    # 2. Subdivide to more polygons
+    # 3. "shrink wrap": snap each vertex onto the point cloud nearby.
+    lowpoly = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster_pcd, alpha=0.8)
+    lowpoly = lowpoly.filter_smooth_simple(number_of_iterations=1)
+    lowpoly.compute_vertex_normals()
+    
+    highpoly = lowpoly.subdivide_midpoint(number_of_iterations=2)
+
+    pointcloud_search_tree = o3d.geometry.KDTreeFlann(cluster_pcd) # For fast querying of nearby points many times
+    snapped_count = 0
+    snapped_distance_sum = 0.0
+    not_snapped_count = 0
+    for i in range(len(highpoly.vertices)):
+        vertex = highpoly.vertices[i]
+
+        # Snap the vertex onto point cloud (basically 'shink-wrapping' the alpha shape tigher to the point cloud without introducing holes)
+        # IMPORTANT: Snap to the average of several nearby points to ignore outlier points better.
+        _, neighbor_indices, _ = pointcloud_search_tree.search_hybrid_vector_3d(vertex, 0.3, 7)
+        if len(neighbor_indices) < 5:
+            # Try again with bigger radius
+            _, neighbor_indices, _ = pointcloud_search_tree.search_hybrid_vector_3d(vertex, 0.5, 10)
+            if len(neighbor_indices) == 0:
+                not_snapped_count += 1
+                continue
+
+        neighbor_points = cluster_points[neighbor_indices]
+        middle_point = np.mean(neighbor_points, axis=0)
+        
+        snapped_distance_sum += np.linalg.norm(vertex - middle_point) # Just for stats logging
+        highpoly.vertices[i] = middle_point
+        snapped_count += 1
+
+    logger.info(f"Snapped {snapped_count} vertices onto point cloud. Average distance: {snapped_distance_sum / snapped_count:.4f}. {not_snapped_count} vertices not snapped.")
+
+    cluster_mesh = highpoly
+    cluster_mesh = cluster_mesh.filter_smooth_simple(number_of_iterations=2)
+    cluster_mesh = cluster_mesh.simplify_quadric_decimation(target_number_of_triangles=len(cluster_mesh.triangles) // 4)
+    cluster_mesh.compute_vertex_normals()
+    cluster_mesh.paint_uniform_color(color)
+
+    return cluster_mesh
+
+def fit_cluster_outline(cluster_pcd, cluster_points, color, logger, debug=False):
+    
+    logger.info(f"Fitting top-down cluster outline to {len(cluster_points)} points")
+    if len(cluster_points) < 100:
+        logger.warning(f"Skip outline for cluster with few points (point count: {len(cluster_points)})")
+        return None
+
+    points2D = cluster_points[:, [0,2]] # Ignore Y which is up axis, to get a "topdown" outline, like a floor plan
+    heights = cluster_points[:, 1]
+    lower_cutoff = np.percentile(heights, 10)
+    upper_cutoff = np.percentile(heights, 90)
+
+    print(f"Skipping points lower than {lower_cutoff} and higher than {upper_cutoff}")
+    old_count = len(points2D)
+    too_low_indicies = heights < lower_cutoff
+    too_high_indicies = heights > upper_cutoff
+    points2D = points2D[~too_low_indicies & ~too_high_indicies]
+    print(f"Ignoring {old_count - len(points2D)} points. ({len(points2D)} remaining)")
+
+    if debug:
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.scatter(points2D[:,0], points2D[:,1], marker='.', s=0.2)
+        ax.set_aspect('equal')
+        plt.savefig("cluster_points.png")
+        plt.close()
+        plt.show()
+    
+    alpha_shape = None
+    try:
+        alpha_shape = alphashape.alphashape(points2D, 2.0)
+    except Exception as e:
+        logger.warning(f"failed to extract alpha shape: {e}")
+        return None
+
+    # Check if the result is a Polygon, MultiPolygon, or GeometryCollection
+    if isinstance(alpha_shape, Polygon):
+        # If it's a single Polygon, extract the exterior
+        envelop = alpha_shape.oriented_envelope
+        intersection_area = alpha_shape.intersection(envelop).area
+        if (intersection_area / envelop.area < 0.95):
+            logger.debug("simplifying alpha shape")
+            shape = alpha_shape.simplify(0.3, preserve_topology=True)
+        else:
+            logger.debug("rectangle fit is very close, using it")
+            shape = envelop
+
+        x, y = shape.exterior.xy
+        exterior_coords = np.column_stack([x, y])
+        x_raw, y_raw = alpha_shape.exterior.xy
+        raw_exterior_coords = np.column_stack([x_raw, y_raw])
+        
+    elif isinstance(alpha_shape, GeometryCollection):
+        logger.debug("Unsupported alpha shape type: " + type(alpha_shape))
+        for geom in alpha_shape.geoms:
+            logger.debug("- child type: " + type(geom))
+        return None
+    else:
+        logger.debug("Unsupported alpha shape type: " + type(alpha_shape))
+        return None
+
+    if debug:
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.scatter(points2D[:,0], points2D[:,1], marker='.', s=0.2)
+        ax.plot(exterior_coords[:,0], exterior_coords[:,1], marker='x')
+        ax.set_aspect('equal')
+        plt.savefig("cluster_outline.png")
+        plt.close()
+        plt.show()
+        
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.scatter(points2D[:,0], points2D[:,1], marker='.', s=0.2)
+        ax.plot(raw_exterior_coords[:,0], raw_exterior_coords[:,1], marker='x')
+        ax.set_aspect('equal')
+        plt.savefig("cluster_outline_raw.png")
+        plt.close()
+        plt.show()
+        
+    return exterior_coords, raw_exterior_coords, lower_cutoff, upper_cutoff
 
 @contextmanager
 def timed_section_scope(name, logger):
@@ -51,7 +192,7 @@ def parse_args():
 def main(args, logger=None):
     if logger is None:
         logger = logging.getLogger('topology')
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
         if not logger.hasHandlers():
             logger.addHandler(logging.StreamHandler(sys.stdout))
 
@@ -76,6 +217,7 @@ def main(args, logger=None):
     pcd.points = o3d.utility.Vector3dVector(above_floor)
 
     meshes = []
+    outlines = []
     with timed_section_scope("Clustering", logger):
         logger.info(f"Clustering 'above floor' points")
 
@@ -112,49 +254,26 @@ def main(args, logger=None):
                 continue
 
             color = hsv_to_rgb(((label * 3) % len(unique_labels)) / len(unique_labels), 0.75, 1.0)
-
-            # Three step approach for a tight fit without holes, around a noisy sparse point cloud
-            # 1. Create low poly alpha mesh first to avoid holes and get good outward-facing normals
-            # 2. Subdivide to more polygons
-            # 3. "shrink wrap": snap each vertex onto the point cloud nearby.
-            lowpoly = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster_pcd, alpha=0.8)
-            lowpoly = lowpoly.filter_smooth_simple(number_of_iterations=1)
-            lowpoly.compute_vertex_normals()
-            
-            highpoly = lowpoly.subdivide_midpoint(number_of_iterations=2)
-
-            pointcloud_search_tree = o3d.geometry.KDTreeFlann(cluster_pcd) # For fast querying of nearby points many times
-            snapped_count = 0
-            snapped_distance_sum = 0.0
-            not_snapped_count = 0
-            for i in range(len(highpoly.vertices)):
-                vertex = highpoly.vertices[i]
-
-                # Snap the vertex onto point cloud (basically 'shink-wrapping' the alpha shape tigher to the point cloud without introducing holes)
-                # IMPORTANT: Snap to the average of several nearby points to ignore outlier points better.
-                _, neighbor_indices, _ = pointcloud_search_tree.search_hybrid_vector_3d(vertex, 0.3, 7)
-                if len(neighbor_indices) < 5:
-                    # Try again with bigger radius
-                    _, neighbor_indices, _ = pointcloud_search_tree.search_hybrid_vector_3d(vertex, 0.5, 10)
-                    if len(neighbor_indices) == 0:
-                        not_snapped_count += 1
-                        continue
-
-                neighbor_points = cluster_points[neighbor_indices]
-                middle_point = np.mean(neighbor_points, axis=0)
-                
-                snapped_distance_sum += np.linalg.norm(vertex - middle_point) # Just for stats logging
-                highpoly.vertices[i] = middle_point
-                snapped_count += 1
-
-            logger.info(f"Snapped {snapped_count} vertices onto point cloud. Average distance: {snapped_distance_sum / snapped_count:.4f}. {not_snapped_count} vertices not snapped.")
-
-            cluster_mesh = highpoly
-            cluster_mesh = cluster_mesh.filter_smooth_simple(number_of_iterations=2)
-            cluster_mesh = cluster_mesh.simplify_quadric_decimation(target_number_of_triangles=len(cluster_mesh.triangles) // 4)
-            cluster_mesh.compute_vertex_normals()
-            cluster_mesh.paint_uniform_color(color)
+            cluster_mesh = fit_cluster_mesh_3D(cluster_pcd, cluster_points, color, logger)
             meshes.append(cluster_mesh)
+
+            cluster_outline = fit_cluster_outline(cluster_pcd, cluster_points, color, logger, debug=True)
+            if cluster_outline is not None:
+                cluster_outline, raw_cluster_outline, lower_cutoff, upper_cutoff = cluster_outline
+                #outline_mesh = extrude_outline_to_mesh(cluster_outline, bounding_box_min_y, bounding_box_max_y, color, logger)
+                #meshes.append(outline_mesh)
+                outlines.append(cluster_outline)
+
+            #break
+
+    if outlines:
+        fig, ax = plt.subplots(figsize=(10, 10))
+        for outline in outlines:
+            ax.plot(outline[:,0], outline[:,1], marker='x')
+        ax.set_aspect('equal')
+        plt.savefig("merged_outlines.png")
+        plt.close()
+        plt.show()
 
     if meshes:
         with timed_section_scope("Merging meshes", logger):
