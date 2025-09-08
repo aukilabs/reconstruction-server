@@ -18,7 +18,7 @@ nvidia-smi
 
 Start Docker and then run:
 ```shell
-docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-node:latest -cpu-workers 2 -port :8080 -api-key aukilabs123
+docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-node:stable -cpu-workers 2 -port :8080 -api-key aukilabs123
 ```
 
 💡 **Note 1:** For the -api-key leave as is, or any non-sensitive phrase. During  the community beta, you will need to provide this key to Auki Labs. This key is just an extra gate for incoming jobs, not used to access any user data.
