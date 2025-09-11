@@ -12,3 +12,4 @@ reconstruction
 /src/ply_export.cpython-38-x86_64-linux-gnu.so
 **/target/**
 server/rust/server-bin/jobs
+server/rust/data

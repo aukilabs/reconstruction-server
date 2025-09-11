@@ -1,10 +1,14 @@
 use axum::serve;
 use clap::Parser;
 use parking_lot::Mutex;
-use server_adapters::{http, storage::HttpDomainClient};
+use server_adapters::{
+    dds::{http as dds_http, persist::NODE_SECRET_PATH, register},
+    http,
+    storage::HttpDomainClient,
+};
 use server_core::{JobList, Services};
-use std::{net::SocketAddr, sync::Arc};
-use tracing::info;
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod cli;
@@ -151,12 +155,58 @@ async fn main() -> anyhow::Result<()> {
         services: Arc::new(services),
         cpu_workers: cli.cpu_workers,
     };
-    let app = server_adapters::http::router(state);
+    // Build DDS router state and merge routers to include /health and callback endpoint
+    let dds_state = dds_http::DdsState {
+        secret_path: PathBuf::from(NODE_SECRET_PATH),
+    };
+    let app = server_adapters::http::router_with_dds(state, dds_state);
+
+    // If all DDS config present, prepare registration client and spawn background loop
+    if let (
+        Some(dds_base_url),
+        Some(node_url),
+        Some(node_version),
+        Some(reg_secret),
+        Some(privhex),
+    ) = (
+        cli.dds_base_url.clone(),
+        cli.node_url.clone(),
+        cli.node_version.clone(),
+        cli.reg_secret.clone(),
+        cli.secp256k1_privhex.clone(),
+    ) {
+        // Build reqwest client with timeout
+        let timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
+        let client = reqwest::Client::builder().timeout(timeout).build()?;
+        // Log derived pubkey prefix for visibility
+        if let Ok(sk) = server_adapters::dds::crypto::load_secp256k1_privhex(&privhex) {
+            let pk_hex = server_adapters::dds::crypto::secp256k1_pubkey_uncompressed_hex(&sk);
+            let pk_short = pk_hex.get(0..16).unwrap_or(&pk_hex);
+            info!(public_key_prefix = pk_short, "Derived secp256k1 public key");
+        } else {
+            warn!("Invalid SECP256K1_PRIVHEX; DDS registration disabled");
+        }
+        // Spawn registration loop
+        tokio::spawn(register::run_registration_loop(
+            dds_base_url,
+            node_url,
+            node_version,
+            reg_secret,
+            privhex,
+            client,
+            cli.register_interval_secs,
+            cli.register_max_retry,
+        ));
+    } else {
+        warn!("DDS config incomplete; skipping registration loop");
+    }
 
     let addr: SocketAddr = normalize_port(&cli.port).parse()?;
     info!("Server running on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    serve(listener, app.into_make_service()).await?;
+    serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
 }
 
@@ -165,5 +215,30 @@ fn normalize_port(port: &str) -> String {
         format!("0.0.0.0:{}", rest)
     } else {
         port.to_string()
+    }
+}
+
+async fn shutdown_signal() {
+    // Wait for CTRL+C
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        sigterm.recv().await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }

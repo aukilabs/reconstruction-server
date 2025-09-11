@@ -37,6 +37,11 @@ zip = "2"
 walkdir = "2.5"
 regex = "1.10"
 base64 = "0.22"
+hex = "0.4"
+secp256k1 = { version = "0.28", features = ["recovery"] }
+sha2 = "0.10"
+rand = "0.8"
+sha3 = "0.10"
 
 [workspace.lints.rust]
 warnings = "deny"

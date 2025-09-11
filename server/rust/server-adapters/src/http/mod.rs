@@ -27,6 +27,17 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Returns the combined router containing existing job endpoints and DDS endpoints.
+/// Keeps existing /jobs endpoints untouched and merges DDS router under `/internal/...` and `/health`.
+pub fn router_with_dds(state: AppState, dds_state: crate::dds::http::DdsState) -> Router {
+    // Note: axum requires the same state type to merge routers. Since these
+    // routers use different state types, we build two routers and merge them.
+    // This is allowed in axum 0.7 as each sub-router carries its own state.
+    // If compilation errors arise about differing state types, we can instead
+    // expose the merge to the caller (server-bin) as indicated in TODO.
+    self::router(state).merge(crate::dds::http::router_dds(dds_state))
+}
+
 async fn post_jobs(State(state): State<AppState>, req: Request) -> Response {
     let headers = req.headers().clone();
     if let Some(expected) = &state.api_key {
