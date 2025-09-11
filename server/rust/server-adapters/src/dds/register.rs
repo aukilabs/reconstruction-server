@@ -364,6 +364,7 @@ mod tests {
         )
         .unwrap();
         let client = reqwest::Client::builder()
+            .no_proxy()
             .timeout(Duration::from_millis(200))
             .build()
             .unwrap();

@@ -53,10 +53,11 @@ pub struct JobRequestData {
     pub domain_id: String,
     pub access_token: String,
     pub processing_type: String,
-    pub domain_server_url: String,
-    pub skip_manifest_upload: bool,
-    pub override_job_name: String,
-    pub override_manifest_id: String,
+    // Optional fields in POST /jobs
+    pub domain_server_url: Option<String>,
+    pub skip_manifest_upload: Option<bool>,
+    pub override_job_name: Option<String>,
+    pub override_manifest_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

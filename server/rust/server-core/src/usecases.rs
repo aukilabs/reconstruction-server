@@ -64,9 +64,9 @@ pub fn create_job_metadata(
 
     let mut req = read_job_request_json(request_json)?;
     // Fallback domain_server_url from JWT `iss` if not set
-    if req.domain_server_url.is_empty() {
+    if req.domain_server_url.as_deref().unwrap_or("").is_empty() {
         if let Some(iss) = decode_jwt_iss(&req.access_token) {
-            req.domain_server_url = iss;
+            req.domain_server_url = Some(iss);
         }
     }
 
@@ -93,12 +93,12 @@ pub fn create_job_metadata(
             domain_id: req.domain_id.clone(),
             data_ids: data_ids.clone(),
             processing_type: req.processing_type.clone(),
-            domain_server_url: req.domain_server_url.clone(),
+            domain_server_url: req.domain_server_url.clone().unwrap_or_default(),
             reconstruction_server_url: reconstruction_server_url.to_string(),
             access_token: req.access_token.clone(),
-            skip_manifest_upload: req.skip_manifest_upload,
-            override_job_name: req.override_job_name.clone(),
-            override_manifest_id: req.override_manifest_id.clone(),
+            skip_manifest_upload: req.skip_manifest_upload.unwrap_or(false),
+            override_job_name: req.override_job_name.clone().unwrap_or_default(),
+            override_manifest_id: req.override_manifest_id.clone().unwrap_or_default(),
         };
         let meta_json = serde_json::to_vec(&meta)?;
         fs::write(job_path.join("job_metadata.json"), meta_json).map_err(DomainError::Io)?;
@@ -111,12 +111,12 @@ pub fn create_job_metadata(
         domain_id: req.domain_id.clone(),
         data_ids: data_ids.clone(),
         processing_type: req.processing_type.clone(),
-        domain_server_url: req.domain_server_url.clone(),
+        domain_server_url: req.domain_server_url.clone().unwrap_or_default(),
         reconstruction_server_url: reconstruction_server_url.to_string(),
         access_token: req.access_token.clone(),
-        skip_manifest_upload: req.skip_manifest_upload,
-        override_job_name: req.override_job_name.clone(),
-        override_manifest_id: req.override_manifest_id.clone(),
+        skip_manifest_upload: req.skip_manifest_upload.unwrap_or(false),
+        override_job_name: req.override_job_name.clone().unwrap_or_default(),
+        override_manifest_id: req.override_manifest_id.clone().unwrap_or_default(),
     };
 
     let job = Job {
