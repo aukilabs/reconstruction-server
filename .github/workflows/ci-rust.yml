@@ -57,6 +57,6 @@ jobs:
         run: |
           IMAGE="${{ secrets.DOCKER_USERNAME }}/reconstruction-server:${{ github.sha }}"
           echo "Building $IMAGE"
-          docker build -t "$IMAGE" -f docker/Dockerfile_RUST .
+          docker build -t "$IMAGE" -f docker/Dockerfile .
           echo "Pushing $IMAGE"
           docker push "$IMAGE"
