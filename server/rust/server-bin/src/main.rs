@@ -135,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
             String::new()
         };
         let mut job = server_core::create_job_metadata(
-            &std::path::PathBuf::from("jobs"),
+            &cli.data_dir,
             &req_bytes,
             "localhost",
             (!retrigger_id.is_empty()).then_some(retrigger_id.as_str()),
@@ -146,7 +146,13 @@ async fn main() -> anyhow::Result<()> {
         } else {
             Box::leak(Box::new(PythonRunner))
         };
-        let services = Services { domain, runner };
+        let services = Services {
+            domain,
+            runner,
+            manifest_interval: std::time::Duration::from_millis(
+                cli.job_manifest_interval_ms.max(10),
+            ),
+        };
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -168,13 +174,18 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Box::leak(Box::new(PythonRunner))
     };
-    let services = Services { domain, runner };
+    let services = Services {
+        domain,
+        runner,
+        manifest_interval: std::time::Duration::from_millis(cli.job_manifest_interval_ms.max(10)),
+    };
     let state = http::AppState {
         api_key: cli.api_key.clone(),
         jobs: Arc::new(Mutex::new(JobList::default())),
         job_in_progress: Arc::new(Mutex::new(false)),
         services: Arc::new(services),
         cpu_workers: cli.cpu_workers,
+        data_dir: cli.data_dir.clone(),
     };
     // Build DDS router state and merge routers to include /health and callback endpoint
     let dds_state = dds_http::DdsState {

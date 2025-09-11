@@ -15,9 +15,10 @@ tokio = { workspace = true, features = ["macros","rt","time"] }
 base64 = "0.22"
 zip = "2"
 walkdir = "2.5"
+rand = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros","rt","rt-multi-thread","time"] }
+tokio = { workspace = true, features = ["macros","rt","rt-multi-thread","time","test-util"] }
 tempfile = "3"
 
 [features]

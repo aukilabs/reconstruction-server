@@ -51,13 +51,18 @@ impl server_core::JobRunner for SlowRunner {
 fn app_with(api_key: Option<&str>) -> axum::Router {
     let domain = Box::leak(Box::new(NoopDomain));
     let runner = Box::leak(Box::new(SlowRunner));
-    let services = Services { domain, runner };
+    let services = Services {
+        domain,
+        runner,
+        manifest_interval: std::time::Duration::from_millis(50),
+    };
     let state = http::AppState {
         api_key: api_key.map(|s| s.to_string()),
         jobs: Arc::new(Mutex::new(JobList::default())),
         job_in_progress: Arc::new(Mutex::new(false)),
         services: Arc::new(services),
         cpu_workers: 1,
+        data_dir: std::path::PathBuf::from("jobs"),
     };
     http::router(state)
 }
@@ -225,13 +230,18 @@ impl server_core::JobRunner for TestRunner {
 async fn post_jobs_happy_path_and_artifacts() {
     let domain = Box::leak(Box::new(TestDomain));
     let runner = Box::leak(Box::new(TestRunner));
-    let services = Services { domain, runner };
+    let services = Services {
+        domain,
+        runner,
+        manifest_interval: std::time::Duration::from_millis(50),
+    };
     let state = http::AppState {
         api_key: Some("secret".into()),
         jobs: Arc::new(Mutex::new(JobList::default())),
         job_in_progress: Arc::new(Mutex::new(false)),
         services: Arc::new(services),
         cpu_workers: 1,
+        data_dir: std::path::PathBuf::from("jobs"),
     };
     let app = http::router(state);
 

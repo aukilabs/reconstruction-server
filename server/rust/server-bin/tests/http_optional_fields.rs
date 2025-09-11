@@ -48,13 +48,18 @@ impl server_core::JobRunner for SlowRunner {
 fn app_with_api_key() -> axum::Router {
     let domain = Box::leak(Box::new(NoopDomain));
     let runner = Box::leak(Box::new(SlowRunner));
-    let services = Services { domain, runner };
+    let services = Services {
+        domain,
+        runner,
+        manifest_interval: std::time::Duration::from_millis(50),
+    };
     let state = http::AppState {
         api_key: Some("secret".into()),
         jobs: Arc::new(Mutex::new(JobList::default())),
         job_in_progress: Arc::new(Mutex::new(false)),
         services: Arc::new(services),
         cpu_workers: 1,
+        data_dir: std::path::PathBuf::from("jobs"),
     };
     http::router(state)
 }

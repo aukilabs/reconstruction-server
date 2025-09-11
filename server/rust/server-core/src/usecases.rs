@@ -3,7 +3,7 @@ use base64::Engine;
 use chrono::Utc;
 use std::{collections::HashMap, fs, path::PathBuf};
 use tokio::time::{sleep, Duration};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[async_trait::async_trait]
@@ -47,6 +47,8 @@ pub trait JobRunner: Send + Sync {
 pub struct Services {
     pub domain: &'static dyn DomainPort,
     pub runner: &'static dyn JobRunner,
+    /// Interval for periodic manifest writer
+    pub manifest_interval: std::time::Duration,
 }
 
 pub fn read_job_request_json(s: &str) -> Result<JobRequestData> {
@@ -172,12 +174,22 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
             write_scan_data_summary(&datasets_root, &job.job_path.join("scan_data_summary.json"));
     }
 
+    // Start periodic manifest writer (atomic, configurable interval)
+    let writer = crate::manifest::PeriodicManifestWriter::spawn(
+        job.clone(),
+        job.job_path.join("job_manifest.json"),
+        svcs.manifest_interval,
+        Some(svcs.domain),
+    );
+
     let progressing = monitor_and_upload_locals(job.clone(), svcs.domain).await;
 
     let run_res = svcs.runner.run_python(job, cpu_workers).await;
     if let Some(done_tx) = progressing {
         let _ = done_tx.send(true);
     }
+    // Stop manifest writer cleanly
+    writer.stop().await;
     if let Err(e) = run_res {
         write_failed_manifest(job, "Reconstruction job script failed")?;
         if !job.meta.skip_manifest_upload {
@@ -304,7 +316,7 @@ fn write_failed_manifest(job: &Job, msg: &str) -> Result<()> {
     Ok(())
 }
 
-async fn monitor_and_upload_locals(
+pub(crate) async fn monitor_and_upload_locals(
     mut job: Job,
     domain: &'static dyn DomainPort,
 ) -> Option<tokio::sync::watch::Sender<bool>> {
@@ -316,14 +328,14 @@ async fn monitor_and_upload_locals(
     let (tx, rx) = tokio::sync::watch::channel(false);
     let datasets_root = job.job_path.join("datasets");
     let refined_root = job.job_path.join("refined").join("local");
-    let manifest_path = job.job_path.join("job_manifest.json");
+    let _manifest_path = job.job_path.join("job_manifest.json");
 
     tokio::spawn(async move {
         loop {
             if *rx.borrow() {
                 break;
             }
-            let total = std::fs::read_dir(&datasets_root)
+            let _total = std::fs::read_dir(&datasets_root)
                 .ok()
                 .map(|it| {
                     it.filter_map(|e| e.ok())
@@ -331,7 +343,7 @@ async fn monitor_and_upload_locals(
                         .count()
                 })
                 .unwrap_or(0) as i32;
-            let mut refined = 0i32;
+            let mut _refined = 0i32;
 
             if let Ok(entries) = std::fs::read_dir(&datasets_root) {
                 for e in entries.flatten() {
@@ -341,7 +353,7 @@ async fn monitor_and_upload_locals(
                     let scan_id = e.file_name().to_string_lossy().to_string();
                     let sfm = refined_root.join(&scan_id).join("sfm");
                     if sfm.exists() && required_local_outputs_exist(&sfm) {
-                        refined += 1;
+                        _refined += 1;
                         if !job.completed_scans.get(&scan_id).cloned().unwrap_or(false) {
                             if let Err(err) =
                                 zip_and_upload_scan(&job, &scan_id, &sfm, domain).await
@@ -355,34 +367,52 @@ async fn monitor_and_upload_locals(
                 }
             }
 
-            let refined_adj = (refined - 1).max(0);
-            let progress = if total > 0 {
-                (refined_adj as f64 / total as f64 * 100.0).round() as i32
-            } else {
-                0
-            };
-            let status_text = format!("Processed {} of {} scans", refined_adj, total);
-
-            let manifest = serde_json::json!({
-                "jobStatus": "processing",
-                "jobProgress": progress,
-                "jobStatusDetails": status_text,
-            });
-            if let Err(e) = fs::write(
-                &manifest_path,
-                serde_json::to_vec_pretty(&manifest).unwrap(),
-            ) {
-                warn!("failed to write manifest: {}", e);
-            }
-            if !job.meta.skip_manifest_upload {
-                let _ = domain.upload_manifest(&job, &manifest_path).await;
-            }
+            // Compute progress to drive logs; manifest writing handled by PeriodicManifestWriter
+            let (progress, status_text) = compute_progress_status(&job);
+            debug!(job_id = %job.meta.id, %progress, %status_text, "progress tick");
 
             sleep(Duration::from_secs(30)).await;
         }
     });
 
     Some(tx)
+}
+
+/// Compute current job progress and status text based on folders on disk.
+/// Mirrors the Go checkProgress logic, including the "-1" refined adjustment.
+pub(crate) fn compute_progress_status(job: &Job) -> (i32, String) {
+    let datasets_root = job.job_path.join("datasets");
+    let refined_root = job.job_path.join("refined").join("local");
+
+    let total = std::fs::read_dir(&datasets_root)
+        .ok()
+        .map(|it| {
+            it.filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .count()
+        })
+        .unwrap_or(0) as i32;
+    let mut refined = 0i32;
+    if let Ok(entries) = std::fs::read_dir(&datasets_root) {
+        for e in entries.flatten() {
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let scan_id = e.file_name().to_string_lossy().to_string();
+            let sfm = refined_root.join(&scan_id).join("sfm");
+            if sfm.exists() && required_local_outputs_exist(&sfm) {
+                refined += 1;
+            }
+        }
+    }
+    let refined_adj = (refined - 1).max(0);
+    let progress = if total > 0 {
+        (refined_adj as f64 / total as f64 * 100.0).round() as i32
+    } else {
+        0
+    };
+    let status_text = format!("Processed {} of {} scans", refined_adj, total);
+    (progress, status_text)
 }
 
 async fn sweep_and_upload_locals(mut job: Job, domain: &'static dyn DomainPort) {
@@ -631,7 +661,11 @@ mod tests {
         .unwrap();
         let domain = Box::leak(Box::new(NoopDomain));
         let runner = Box::leak(Box::new(NoopRunner));
-        let svcs = Services { domain, runner };
+        let svcs = Services {
+            domain,
+            runner,
+            manifest_interval: std::time::Duration::from_millis(50),
+        };
         execute_job(&svcs, &mut job, 2).await.unwrap();
         assert_eq!(job.status, "succeeded");
     }

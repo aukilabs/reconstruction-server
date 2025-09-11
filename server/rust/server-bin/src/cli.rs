@@ -17,6 +17,9 @@ pub struct Cli {
     pub log_level: String,
     #[arg(long = "cpu-workers", default_value_t = 2)]
     pub cpu_workers: usize,
+    // Base directory for job data (domain_id/job_xxx). Reads from DATA_DIR.
+    #[arg(long = "data-dir", env = "DATA_DIR", default_value = "jobs")]
+    pub data_dir: std::path::PathBuf,
     #[arg(long = "job-request")]
     pub job_request: Option<std::path::PathBuf>,
     #[arg(long = "retrigger", default_value_t = false)]
@@ -24,6 +27,14 @@ pub struct Cli {
     // json|text; reads from LOG_FORMAT if present
     #[arg(long = "log-format", env = "LOG_FORMAT", default_value = "json")] // json|text
     pub log_format: String,
+
+    // Periodic manifest writer interval (milliseconds). Reads from JOB_MANIFEST_INTERVAL_MS.
+    #[arg(
+        long = "job-manifest-interval-ms",
+        env = "JOB_MANIFEST_INTERVAL_MS",
+        default_value_t = 2000
+    )]
+    pub job_manifest_interval_ms: u64,
 
     // --- DDS registration and node config ---
     // All of these can be set via env vars and overridden via CLI flags.

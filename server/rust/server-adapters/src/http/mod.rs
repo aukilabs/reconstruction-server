@@ -18,6 +18,7 @@ pub struct AppState {
     pub job_in_progress: Arc<Mutex<bool>>,
     pub services: Arc<Services>,
     pub cpu_workers: usize,
+    pub data_dir: PathBuf,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -80,7 +81,7 @@ async fn post_jobs(State(state): State<AppState>, req: Request) -> Response {
         }
     };
 
-    let job = match create_job_metadata(&PathBuf::from("jobs"), &req_str, &host, None) {
+    let job = match create_job_metadata(&state.data_dir, &req_str, &host, None) {
         Ok(j) => j,
         Err(e) => {
             reset_busy(&state);
