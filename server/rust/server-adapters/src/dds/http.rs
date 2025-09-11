@@ -61,11 +61,21 @@ async fn health(State(_state): State<DdsState>, headers: HeaderMap) -> impl Into
         .unwrap_or("");
     if ua.starts_with("DDS v") {
         match touch_healthcheck_now() {
-            Ok(()) => debug!(event = "healthcheck.touch", user_agent = ua, "last_healthcheck updated via /health"),
-            Err(e) => warn!(event = "healthcheck.touch.error", user_agent = ua, error = %e, "failed to update last_healthcheck"),
+            Ok(()) => debug!(
+                event = "healthcheck.touch",
+                user_agent = ua,
+                "last_healthcheck updated via /health"
+            ),
+            Err(e) => {
+                warn!(event = "healthcheck.touch.error", user_agent = ua, error = %e, "failed to update last_healthcheck")
+            }
         }
     } else {
-        debug!(event = "healthcheck.skip", user_agent = ua, "health check not from DDS; not updating last_healthcheck");
+        debug!(
+            event = "healthcheck.skip",
+            user_agent = ua,
+            "health check not from DDS; not updating last_healthcheck"
+        );
     }
     StatusCode::OK
 }

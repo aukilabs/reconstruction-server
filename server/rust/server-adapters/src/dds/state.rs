@@ -22,7 +22,10 @@ pub struct RegistrationState {
 
 impl Default for RegistrationState {
     fn default() -> Self {
-        Self { status: STATUS_DISCONNECTED.to_string(), last_healthcheck: None }
+        Self {
+            status: STATUS_DISCONNECTED.to_string(),
+            last_healthcheck: None,
+        }
     }
 }
 
@@ -42,8 +45,8 @@ fn tmp_path_for(path: &Path) -> PathBuf {
 pub fn read_state_from_path(path: &Path) -> Result<RegistrationState> {
     match fs::read_to_string(path) {
         Ok(s) => {
-            let st: RegistrationState = serde_json::from_str(&s)
-                .with_context(|| format!("decode {}", path.display()))?;
+            let st: RegistrationState =
+                serde_json::from_str(&s).with_context(|| format!("decode {}", path.display()))?;
             Ok(st)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RegistrationState::default()),
@@ -115,12 +118,19 @@ impl LockGuard {
         }
 
         // Attempt to create the lock file exclusively
-        match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
             Ok(mut f) => {
                 // Write a timestamp to aid diagnostics and staleness checks
                 let now = chrono::Utc::now().to_rfc3339();
                 let _ = writeln!(f, "created_at={}, pid={}", now, std::process::id());
-                Ok(Some(Self { path: path.to_path_buf(), _file: f }))
+                Ok(Some(Self {
+                    path: path.to_path_buf(),
+                    _file: f,
+                }))
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // Check age for staleness
@@ -131,10 +141,22 @@ impl LockGuard {
                                 // Try to remove stale lock and acquire again
                                 let _ = fs::remove_file(path);
                                 // Second attempt
-                                if let Ok(mut f2) = fs::OpenOptions::new().write(true).create_new(true).open(path) {
+                                if let Ok(mut f2) = fs::OpenOptions::new()
+                                    .write(true)
+                                    .create_new(true)
+                                    .open(path)
+                                {
                                     let now = chrono::Utc::now().to_rfc3339();
-                                    let _ = writeln!(f2, "created_at={}, pid={}", now, std::process::id());
-                                    return Ok(Some(Self { path: path.to_path_buf(), _file: f2 }));
+                                    let _ = writeln!(
+                                        f2,
+                                        "created_at={}, pid={}",
+                                        now,
+                                        std::process::id()
+                                    );
+                                    return Ok(Some(Self {
+                                        path: path.to_path_buf(),
+                                        _file: f2,
+                                    }));
                                 }
                             }
                         }

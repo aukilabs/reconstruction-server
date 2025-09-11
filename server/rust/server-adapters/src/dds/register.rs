@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::state::{
-    read_state, set_status, touch_healthcheck_now, LockGuard, RegistrationState, STATUS_DISCONNECTED,
-    STATUS_REGISTERED, STATUS_REGISTERING,
+    read_state, set_status, touch_healthcheck_now, LockGuard, RegistrationState,
+    STATUS_DISCONNECTED, STATUS_REGISTERED, STATUS_REGISTERING,
 };
 
 // Capabilities advertised to DDS
@@ -140,7 +140,13 @@ pub async fn run_registration_loop(
         let base = healthcheck_ttl.saturating_mul(2);
         let min = Duration::from_secs(30);
         let max = Duration::from_secs(600);
-        if base < min { min } else if base > max { max } else { base }
+        if base < min {
+            min
+        } else if base > max {
+            max
+        } else {
+            base
+        }
     };
 
     // Helper: exponential backoff like Go's timerInterval, capped at 60s
@@ -168,8 +174,13 @@ pub async fn run_registration_loop(
 
     loop {
         tokio::time::sleep(next_sleep).await;
-        let RegistrationState { status, last_healthcheck } =
-            match read_state() { Ok(s) => s, Err(_) => RegistrationState::default() };
+        let RegistrationState {
+            status,
+            last_healthcheck,
+        } = match read_state() {
+            Ok(s) => s,
+            Err(_) => RegistrationState::default(),
+        };
 
         match status.as_str() {
             STATUS_DISCONNECTED | STATUS_REGISTERING => {
@@ -196,7 +207,12 @@ pub async fn run_registration_loop(
                     if let Err(e) = set_status(STATUS_REGISTERING) {
                         warn!(event = "status.transition.error", error = %e);
                     } else {
-                        info!(event = "status.transition", from = STATUS_DISCONNECTED, to = STATUS_REGISTERING, "moved to registering");
+                        info!(
+                            event = "status.transition",
+                            from = STATUS_DISCONNECTED,
+                            to = STATUS_REGISTERING,
+                            "moved to registering"
+                        );
                     }
                 }
 
@@ -251,7 +267,8 @@ pub async fn run_registration_loop(
                         // Exponential backoff capped at 60s with jitter ±20%
                         let base = Duration::from_secs(timer_interval_secs(attempt));
                         let jitter_factor: f64 = rand::thread_rng().gen_range(0.8..=1.2);
-                        next_sleep = Duration::from_secs_f64(base.as_secs_f64() * jitter_factor.max(0.1));
+                        next_sleep =
+                            Duration::from_secs_f64(base.as_secs_f64() * jitter_factor.max(0.1));
                         drop(lock_guard);
                     }
                 }
@@ -275,7 +292,11 @@ pub async fn run_registration_loop(
                 }
             }
             other => {
-                warn!(event = "status.unknown", status = other, "unknown status; resetting to disconnected");
+                warn!(
+                    event = "status.unknown",
+                    status = other,
+                    "unknown status; resetting to disconnected"
+                );
                 let _ = set_status(STATUS_DISCONNECTED);
                 next_sleep = Duration::from_secs(1);
             }
