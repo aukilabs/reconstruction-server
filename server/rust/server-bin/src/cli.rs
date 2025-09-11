@@ -57,4 +57,10 @@ pub struct Cli {
         default_value_t = 10
     )]
     pub request_timeout_secs: u64,
+
+    // --- Testing / development helpers ---
+    // If true, do not invoke the heavy Python pipeline; use a noop runner instead.
+    // Can be toggled via env var MOCK_PYTHON=true.
+    #[arg(long = "mock-python", env = "MOCK_PYTHON", default_value_t = false)]
+    pub mock_python: bool,
 }

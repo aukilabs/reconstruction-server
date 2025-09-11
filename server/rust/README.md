@@ -55,6 +55,11 @@ Run
 - `cargo run -p server-bin --bin server-bin -- --api-key secret --port :8080`
 - Single job: `cargo run -p server-bin --bin server-bin -- --job-request path/to/request.json --retrigger`
 
+Lightweight mock mode (skip Python)
+
+- Set `MOCK_PYTHON=true` (or pass `--mock-python`) to bypass invoking the heavy Python pipeline. Useful for exercising HTTP paths and orchestration without computation.
+- Example: `MOCK_PYTHON=true cargo run -p server-bin --bin server-bin -- --api-key secret --port :8080`
+
 Test
 
 - `make test`, or

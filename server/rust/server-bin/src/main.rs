@@ -15,6 +15,7 @@ mod cli;
 use crate::cli::Cli;
 
 struct PythonRunner;
+struct NoopRunner;
 #[async_trait::async_trait]
 impl server_core::JobRunner for PythonRunner {
     async fn run_python(
@@ -89,6 +90,18 @@ impl server_core::JobRunner for PythonRunner {
     }
 }
 
+#[async_trait::async_trait]
+impl server_core::JobRunner for NoopRunner {
+    async fn run_python(
+        &self,
+        _job: &server_core::Job,
+        _cpu_workers: usize,
+    ) -> server_core::Result<()> {
+        // Intentionally do nothing; used for lightweight testing via MOCK_PYTHON=true
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -128,7 +141,11 @@ async fn main() -> anyhow::Result<()> {
             (!retrigger_id.is_empty()).then_some(retrigger_id.as_str()),
         )?;
         let domain = Box::leak(Box::new(HttpDomainClient::default()));
-        let runner = Box::leak(Box::new(PythonRunner));
+        let runner: &'static dyn server_core::JobRunner = if cli.mock_python {
+            Box::leak(Box::new(NoopRunner))
+        } else {
+            Box::leak(Box::new(PythonRunner))
+        };
         let services = Services { domain, runner };
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -146,7 +163,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let domain = Box::leak(Box::new(HttpDomainClient::default()));
-    let runner = Box::leak(Box::new(PythonRunner));
+    let runner: &'static dyn server_core::JobRunner = if cli.mock_python {
+        Box::leak(Box::new(NoopRunner))
+    } else {
+        Box::leak(Box::new(PythonRunner))
+    };
     let services = Services { domain, runner };
     let state = http::AppState {
         api_key: cli.api_key.clone(),
