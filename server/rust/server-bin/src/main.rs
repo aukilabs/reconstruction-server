@@ -188,14 +188,16 @@ async fn main() -> anyhow::Result<()> {
         }
         // Spawn registration loop
         tokio::spawn(register::run_registration_loop(
-            dds_base_url,
-            node_url,
-            node_version,
-            reg_secret,
-            privhex,
-            client,
-            cli.register_interval_secs,
-            cli.register_max_retry,
+            register::RegistrationConfig {
+                dds_base_url,
+                node_url,
+                node_version,
+                reg_secret,
+                secp256k1_privhex: privhex,
+                client,
+                register_interval_secs: cli.register_interval_secs,
+                max_retry: cli.register_max_retry,
+            },
         ));
     } else {
         warn!("DDS config incomplete; skipping registration loop");

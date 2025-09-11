@@ -115,16 +115,29 @@ pub async fn register_once(
     }
 }
 
-pub async fn run_registration_loop(
-    dds_base_url: String,
-    node_url: String,
-    node_version: String,
-    reg_secret: String,
-    secp256k1_privhex: String,
-    client: Client,
-    register_interval_secs: u64,
-    max_retry: i32, // -1 means infinite retry
-) {
+#[derive(Debug)]
+pub struct RegistrationConfig {
+    pub dds_base_url: String,
+    pub node_url: String,
+    pub node_version: String,
+    pub reg_secret: String,
+    pub secp256k1_privhex: String,
+    pub client: Client,
+    pub register_interval_secs: u64,
+    pub max_retry: i32, // -1 means infinite retry
+}
+
+pub async fn run_registration_loop(cfg: RegistrationConfig) {
+    let RegistrationConfig {
+        dds_base_url,
+        node_url,
+        node_version,
+        reg_secret,
+        secp256k1_privhex,
+        client,
+        register_interval_secs,
+        max_retry,
+    } = cfg;
     let sk = match load_secp256k1_privhex(&secp256k1_privhex) {
         Ok(k) => k,
         Err(e) => {
@@ -177,10 +190,7 @@ pub async fn run_registration_loop(
         let RegistrationState {
             status,
             last_healthcheck,
-        } = match read_state() {
-            Ok(s) => s,
-            Err(_) => RegistrationState::default(),
-        };
+        } = read_state().unwrap_or_default();
 
         match status.as_str() {
             STATUS_DISCONNECTED | STATUS_REGISTERING => {
