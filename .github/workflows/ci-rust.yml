@@ -1,0 +1,74 @@
+name: Rust Test and Docker Build
+
+on:
+  push:
+    branches:
+      - "main"
+      - "feature/**"
+      - "bug/**"
+      - "chore/**"
+      - "hotfix/**"
+
+jobs:
+  rust-ci:
+    name: Test, Lint, and Build Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server/rust
+
+      - name: Rust fmt check
+        working-directory: server/rust
+        run: cargo fmt --all --check
+
+      - name: Rust clippy (deny warnings)
+        working-directory: server/rust
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        working-directory: server/rust
+        run: cargo test --workspace --all-features --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.GLOBAL_COMMON_AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.GLOBAL_COMMON_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.GLOBAL_COMMON_AWS_REGION }}
+
+      - name: Log in to AWS ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+
+      - name: Docker build and push (commit tag)
+        if: github.ref != 'refs/heads/main'
+        run: |
+          docker build \
+            -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:${IMAGE_TAG}" \
+            --push \
+            -f docker/Dockerfile \
+            .
+
+      - name: Tag and push 'latest' and commit on main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker build \
+            -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:latest" \
+            -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:${IMAGE_TAG}" \
+            --push \
+            -f docker/Dockerfile \
+            .
