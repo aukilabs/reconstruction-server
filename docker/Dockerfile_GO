@@ -4,7 +4,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
 RUN mkdir -p /app
 WORKDIR /app
-ADD server /app
+ADD server/go /app
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION

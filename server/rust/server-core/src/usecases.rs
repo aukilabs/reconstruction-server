@@ -1,0 +1,638 @@
+use crate::{errors::*, types::*};
+use base64::Engine;
+use chrono::Utc;
+use std::{collections::HashMap, fs, path::PathBuf};
+use tokio::time::{sleep, Duration};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+#[async_trait::async_trait]
+pub trait DomainPort: Send + Sync {
+    async fn upload_manifest(&self, job: &Job, manifest_path: &std::path::Path) -> Result<()>;
+    async fn upload_output(&self, job: &Job, output: &ExpectedOutput) -> Result<()>;
+    async fn upload_outputs(&self, job: &Job, outputs: &[ExpectedOutput]) -> Result<()> {
+        let mut first_err: Option<DomainError> = None;
+        for out in outputs {
+            if let Err(e) = self.upload_output(job, out).await {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        if let Some(e) = first_err {
+            Err(e)
+        } else {
+            Ok(())
+        }
+    }
+    async fn download_data_batch(
+        &self,
+        job: &Job,
+        ids: &[String],
+        datasets_root: &std::path::Path,
+    ) -> Result<()>;
+    async fn upload_refined_scan_zip(
+        &self,
+        job: &Job,
+        scan_id: &str,
+        zip_bytes: Vec<u8>,
+    ) -> Result<()>;
+}
+
+#[async_trait::async_trait]
+pub trait JobRunner: Send + Sync {
+    async fn run_python(&self, job: &Job, cpu_workers: usize) -> Result<()>;
+}
+
+pub struct Services {
+    pub domain: &'static dyn DomainPort,
+    pub runner: &'static dyn JobRunner,
+}
+
+pub fn read_job_request_json(s: &str) -> Result<JobRequestData> {
+    let req: JobRequestData = serde_json::from_str(s)?;
+    Ok(req)
+}
+
+pub fn create_job_metadata(
+    dir_path: &PathBuf,
+    request_json: &str,
+    reconstruction_server_url: &str,
+    retrigger_job_id: Option<&str>,
+) -> Result<Job> {
+    fs::create_dir_all(dir_path).map_err(DomainError::Io)?;
+
+    let mut req = read_job_request_json(request_json)?;
+    // Fallback domain_server_url from JWT `iss` if not set
+    if req.domain_server_url.is_empty() {
+        if let Some(iss) = decode_jwt_iss(&req.access_token) {
+            req.domain_server_url = iss;
+        }
+    }
+
+    let start_time = Utc::now();
+    let job_id = retrigger_job_id
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let job_name = format!("job_{}", job_id);
+
+    let data_ids = if retrigger_job_id.is_some() {
+        vec![job_id.clone()]
+    } else {
+        req.data_ids.clone()
+    };
+
+    let job_path = dir_path.join(&req.domain_id).join(&job_name);
+    if retrigger_job_id.is_none() {
+        fs::create_dir_all(&job_path).map_err(DomainError::Io)?;
+        fs::write(job_path.join("job_request.json"), request_json).map_err(DomainError::Io)?;
+        let meta = JobMetadata {
+            created_at: start_time,
+            id: job_id.clone(),
+            name: job_name.clone(),
+            domain_id: req.domain_id.clone(),
+            data_ids: data_ids.clone(),
+            processing_type: req.processing_type.clone(),
+            domain_server_url: req.domain_server_url.clone(),
+            reconstruction_server_url: reconstruction_server_url.to_string(),
+            access_token: req.access_token.clone(),
+            skip_manifest_upload: req.skip_manifest_upload,
+            override_job_name: req.override_job_name.clone(),
+            override_manifest_id: req.override_manifest_id.clone(),
+        };
+        let meta_json = serde_json::to_vec(&meta)?;
+        fs::write(job_path.join("job_metadata.json"), meta_json).map_err(DomainError::Io)?;
+    }
+
+    let meta = JobMetadata {
+        created_at: start_time,
+        id: job_id.clone(),
+        name: job_name.clone(),
+        domain_id: req.domain_id.clone(),
+        data_ids: data_ids.clone(),
+        processing_type: req.processing_type.clone(),
+        domain_server_url: req.domain_server_url.clone(),
+        reconstruction_server_url: reconstruction_server_url.to_string(),
+        access_token: req.access_token.clone(),
+        skip_manifest_upload: req.skip_manifest_upload,
+        override_job_name: req.override_job_name.clone(),
+        override_manifest_id: req.override_manifest_id.clone(),
+    };
+
+    let job = Job {
+        meta,
+        job_path,
+        status: "started".to_string(),
+        uploaded_data_ids: HashMap::new(),
+        completed_scans: HashMap::new(),
+    };
+
+    Ok(job)
+}
+
+pub fn write_job_manifest_processing(job: &Job) -> Result<PathBuf> {
+    let manifest = serde_json::json!({
+        "jobStatus": "processing",
+        "jobProgress": 0,
+        "jobStatusDetails": "Request received by reconstruction server",
+    });
+    let path = job.job_path.join("job_manifest.json");
+    fs::write(&path, serde_json::to_vec_pretty(&manifest)?).map_err(DomainError::Io)?;
+    Ok(path)
+}
+
+pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> Result<()> {
+    if !job.meta.override_job_name.is_empty() && !job.meta.override_manifest_id.is_empty() {
+        let key = format!(
+            "{}.{}",
+            REFINED_MANIFEST_DATA_NAME, REFINED_MANIFEST_DATA_TYPE
+        );
+        job.uploaded_data_ids
+            .insert(key, job.meta.override_manifest_id.clone());
+    }
+
+    let manifest_path = write_job_manifest_processing(job)?;
+    if !job.meta.skip_manifest_upload {
+        let _ = svcs.domain.upload_manifest(job, &manifest_path).await;
+    }
+
+    let datasets_root = job.job_path.join("datasets");
+    fs::create_dir_all(&datasets_root).map_err(DomainError::Io)?;
+    const BATCH: usize = 20;
+    for chunk in job.meta.data_ids.chunks(BATCH) {
+        svcs.domain
+            .download_data_batch(job, chunk, &datasets_root)
+            .await?;
+    }
+
+    if job.meta.processing_type == "local_and_global_refinement"
+        || job.meta.processing_type == "local_refinement"
+    {
+        let _ =
+            write_scan_data_summary(&datasets_root, &job.job_path.join("scan_data_summary.json"));
+    }
+
+    let progressing = monitor_and_upload_locals(job.clone(), svcs.domain).await;
+
+    let run_res = svcs.runner.run_python(job, cpu_workers).await;
+    if let Some(done_tx) = progressing {
+        let _ = done_tx.send(true);
+    }
+    if let Err(e) = run_res {
+        write_failed_manifest(job, "Reconstruction job script failed")?;
+        if !job.meta.skip_manifest_upload {
+            let _ = svcs
+                .domain
+                .upload_manifest(job, &job.job_path.join("job_manifest.json"))
+                .await;
+        }
+        job.status = "failed".into();
+        return Err(e);
+    }
+
+    sweep_and_upload_locals(job.clone(), svcs.domain).await;
+
+    if job.meta.processing_type != "local_refinement" {
+        let refined_output = job.job_path.join("refined").join("global");
+        let outputs = vec![
+            ExpectedOutput {
+                file_path: refined_output.join("refined_manifest.json"),
+                name: REFINED_MANIFEST_DATA_NAME.into(),
+                data_type: REFINED_MANIFEST_DATA_TYPE.into(),
+                optional: false,
+            },
+            ExpectedOutput {
+                file_path: refined_output.join("RefinedPointCloudReduced.ply"),
+                name: "refined_pointcloud".into(),
+                data_type: "refined_pointcloud_ply".into(),
+                optional: false,
+            },
+            ExpectedOutput {
+                file_path: refined_output.join("RefinedPointCloud.ply.drc"),
+                name: "refined_pointcloud_full_draco".into(),
+                data_type: "refined_pointcloud_ply_draco".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output
+                    .join("topology")
+                    .join("topology_downsampled_0.111.obj"),
+                name: "topologymesh_v1_lowpoly_obj".into(),
+                data_type: "obj".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output
+                    .join("topology")
+                    .join("topology_downsampled_0.111.glb"),
+                name: "topologymesh_v1_lowpoly_glb".into(),
+                data_type: "glb".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output
+                    .join("topology")
+                    .join("topology_downsampled_0.333.obj"),
+                name: "topologymesh_v1_midpoly_obj".into(),
+                data_type: "obj".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output
+                    .join("topology")
+                    .join("topology_downsampled_0.333.glb"),
+                name: "topologymesh_v1_midpoly_glb".into(),
+                data_type: "glb".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output.join("topology").join("topology.obj"),
+                name: "topologymesh_v1_highpoly_obj".into(),
+                data_type: "obj".into(),
+                optional: true,
+            },
+            ExpectedOutput {
+                file_path: refined_output.join("topology").join("topology.glb"),
+                name: "topologymesh_v1_highpoly_glb".into(),
+                data_type: "glb".into(),
+                optional: true,
+            },
+        ];
+
+        if !job.meta.skip_manifest_upload {
+            let _ = svcs.domain.upload_output(job, &outputs[0]).await;
+        }
+        let _ = svcs.domain.upload_outputs(job, &outputs[1..]).await;
+    }
+
+    info!(job_id = %job.meta.id, domain_id = %job.meta.domain_id, "job succeeded");
+    job.status = "succeeded".into();
+    Ok(())
+}
+
+// --- helpers ---
+
+fn decode_jwt_iss(token: &str) -> Option<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let payload_b64 = parts[1];
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    v.get("iss").and_then(|s| s.as_str()).map(|s| s.to_string())
+}
+
+fn required_local_outputs_exist(sfm_path: &std::path::Path) -> bool {
+    let required = ["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
+    required.iter().all(|f| sfm_path.join(f).exists())
+}
+
+fn write_failed_manifest(job: &Job, msg: &str) -> Result<()> {
+    let manifest = serde_json::json!({
+        "jobStatus": "failed",
+        "jobProgress": 0,
+        "jobStatusDetails": msg,
+    });
+    fs::write(
+        job.job_path.join("job_manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .map_err(DomainError::Io)?;
+    Ok(())
+}
+
+async fn monitor_and_upload_locals(
+    mut job: Job,
+    domain: &'static dyn DomainPort,
+) -> Option<tokio::sync::watch::Sender<bool>> {
+    if job.meta.processing_type != "local_refinement"
+        && job.meta.processing_type != "local_and_global_refinement"
+    {
+        return None;
+    }
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let datasets_root = job.job_path.join("datasets");
+    let refined_root = job.job_path.join("refined").join("local");
+    let manifest_path = job.job_path.join("job_manifest.json");
+
+    tokio::spawn(async move {
+        loop {
+            if *rx.borrow() {
+                break;
+            }
+            let total = std::fs::read_dir(&datasets_root)
+                .ok()
+                .map(|it| {
+                    it.filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                        .count()
+                })
+                .unwrap_or(0) as i32;
+            let mut refined = 0i32;
+
+            if let Ok(entries) = std::fs::read_dir(&datasets_root) {
+                for e in entries.flatten() {
+                    if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let scan_id = e.file_name().to_string_lossy().to_string();
+                    let sfm = refined_root.join(&scan_id).join("sfm");
+                    if sfm.exists() && required_local_outputs_exist(&sfm) {
+                        refined += 1;
+                        if !job.completed_scans.get(&scan_id).cloned().unwrap_or(false) {
+                            if let Err(err) =
+                                zip_and_upload_scan(&job, &scan_id, &sfm, domain).await
+                            {
+                                warn!("failed to upload scan zip {}: {}", scan_id, err);
+                            } else {
+                                job.completed_scans.insert(scan_id.clone(), true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let refined_adj = (refined - 1).max(0);
+            let progress = if total > 0 {
+                (refined_adj as f64 / total as f64 * 100.0).round() as i32
+            } else {
+                0
+            };
+            let status_text = format!("Processed {} of {} scans", refined_adj, total);
+
+            let manifest = serde_json::json!({
+                "jobStatus": "processing",
+                "jobProgress": progress,
+                "jobStatusDetails": status_text,
+            });
+            if let Err(e) = fs::write(
+                &manifest_path,
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            ) {
+                warn!("failed to write manifest: {}", e);
+            }
+            if !job.meta.skip_manifest_upload {
+                let _ = domain.upload_manifest(&job, &manifest_path).await;
+            }
+
+            sleep(Duration::from_secs(30)).await;
+        }
+    });
+
+    Some(tx)
+}
+
+async fn sweep_and_upload_locals(mut job: Job, domain: &'static dyn DomainPort) {
+    let datasets_root = job.job_path.join("datasets");
+    let refined_root = job.job_path.join("refined").join("local");
+    if let Ok(entries) = std::fs::read_dir(&datasets_root) {
+        for e in entries.flatten() {
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let scan_id = e.file_name().to_string_lossy().to_string();
+            if job.completed_scans.get(&scan_id).cloned().unwrap_or(false) {
+                continue;
+            }
+            let sfm = refined_root.join(&scan_id).join("sfm");
+            if sfm.exists() && required_local_outputs_exist(&sfm) {
+                let _ = zip_and_upload_scan(&job, &scan_id, &sfm, domain).await;
+                job.completed_scans.insert(scan_id.clone(), true);
+            }
+        }
+    }
+}
+
+async fn zip_and_upload_scan(
+    job: &Job,
+    scan_id: &str,
+    sfm: &std::path::Path,
+    domain: &'static dyn DomainPort,
+) -> Result<()> {
+    use std::io::Write as _;
+    let mut buffer = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for entry in walkdir::WalkDir::new(sfm)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            if let Some(ext) = entry.path().extension().and_then(|s| s.to_str()) {
+                if ext.eq_ignore_ascii_case("txt")
+                    || ext.eq_ignore_ascii_case("bin")
+                    || ext.eq_ignore_ascii_case("csv")
+                {
+                    let rel = entry.path().strip_prefix(sfm).unwrap_or(entry.path());
+                    let rel_str = rel.to_string_lossy();
+                    zip.start_file(rel_str, options)
+                        .map_err(|e| DomainError::Internal(e.to_string()))?;
+                    let bytes = std::fs::read(entry.path()).map_err(DomainError::Io)?;
+                    zip.write_all(&bytes)
+                        .map_err(|e| DomainError::Internal(e.to_string()))?;
+                }
+            }
+        }
+        zip.finish()
+            .map_err(|e| DomainError::Internal(e.to_string()))?;
+    }
+
+    domain.upload_refined_scan_zip(job, scan_id, buffer).await?;
+    Ok(())
+}
+
+fn write_scan_data_summary(datasets_root: &PathBuf, out_path: &PathBuf) -> Result<()> {
+    use serde_json::Value as V;
+    let mut scan_count = 0i32;
+    let mut total_frame_count = 0i32;
+    let mut total_scan_duration = 0.0f64;
+    let mut scan_durations: Vec<f64> = Vec::new();
+    let mut portal_ids: Vec<String> = Vec::new();
+    let mut portal_sizes: Vec<f64> = Vec::new();
+    let mut devices_used: Vec<String> = Vec::new();
+    let mut app_versions_used: Vec<String> = Vec::new();
+
+    let entries = match fs::read_dir(datasets_root) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for e in entries.flatten() {
+        if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let manifest_path = e.path().join("Manifest.json");
+        if !manifest_path.exists() {
+            continue;
+        }
+        let bytes = match fs::read(&manifest_path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let v: V = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        scan_count += 1;
+
+        let frame_count = v.get("frameCount").and_then(|x| x.as_f64()).unwrap_or(0.0) as i32;
+        let duration = v.get("duration").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        total_frame_count += frame_count;
+        total_scan_duration += duration;
+        scan_durations.push(duration);
+
+        if let Some(portals) = v.get("portals").and_then(|x| x.as_array()) {
+            for p in portals {
+                if let (Some(id), Some(size)) = (
+                    p.get("shortId").and_then(|x| x.as_str()),
+                    p.get("physicalSize").and_then(|x| x.as_f64()),
+                ) {
+                    if !portal_ids.iter().any(|s| s == id) {
+                        portal_ids.push(id.to_string());
+                        portal_sizes.push(size);
+                    }
+                }
+            }
+        }
+
+        let device = format!(
+            "{} {} {} {}",
+            v.get("brand").and_then(|x| x.as_str()).unwrap_or(""),
+            v.get("model").and_then(|x| x.as_str()).unwrap_or(""),
+            v.get("systemName").and_then(|x| x.as_str()).unwrap_or(""),
+            v.get("systemVersion")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+        )
+        .trim()
+        .to_string();
+        let device = if device.is_empty() {
+            "unknown".to_string()
+        } else {
+            device
+        };
+        if !devices_used.iter().any(|d| d == &device) {
+            devices_used.push(device);
+        }
+
+        let app_version = match (
+            v.get("appVersion").and_then(|x| x.as_str()),
+            v.get("buildId").and_then(|x| x.as_str()),
+        ) {
+            (Some(av), Some(b)) => format!("{} (build {})", av, b),
+            _ => "unknown".to_string(),
+        };
+        if !app_versions_used.iter().any(|d| d == &app_version) {
+            app_versions_used.push(app_version);
+        }
+    }
+
+    if scan_durations.is_empty() {
+        return Ok(());
+    }
+    scan_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let shortest = *scan_durations.first().unwrap();
+    let longest = *scan_durations.last().unwrap();
+    let median = scan_durations[scan_durations.len() / 2];
+    let avg_duration = total_scan_duration / (scan_durations.len() as f64);
+    let avg_frame_count = (total_frame_count as f64) / (scan_durations.len() as f64);
+    let avg_fps = if total_scan_duration > 0.0 {
+        (total_frame_count as f64) / total_scan_duration
+    } else {
+        0.0
+    };
+
+    let summary = serde_json::json!({
+        "scanCount": scan_count,
+        "totalFrameCount": total_frame_count,
+        "totalScanDuration": total_scan_duration,
+        "averageScanDuration": avg_duration,
+        "averageScanFrameCount": avg_frame_count,
+        "averageFrameRate": avg_fps,
+        "shortestScanDuration": shortest,
+        "longestScanDuration": longest,
+        "medianScanDuration": median,
+        "portalCount": portal_ids.len(),
+        "portalIDs": portal_ids,
+        "portalSizes": portal_sizes,
+        "deviceVersionsUsed": devices_used,
+        "appVersionsUsed": app_versions_used,
+    });
+    fs::write(out_path, serde_json::to_vec_pretty(&summary)?).map_err(DomainError::Io)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct NoopDomain;
+    #[async_trait::async_trait]
+    impl DomainPort for NoopDomain {
+        async fn upload_manifest(
+            &self,
+            _job: &Job,
+            _manifest_path: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> Result<()> {
+            Ok(())
+        }
+        async fn download_data_batch(
+            &self,
+            _job: &Job,
+            _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn upload_refined_scan_zip(
+            &self,
+            _job: &Job,
+            _scan_id: &str,
+            _zip_bytes: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+    struct NoopRunner;
+    #[async_trait::async_trait]
+    impl JobRunner for NoopRunner {
+        async fn run_python(&self, _job: &Job, _cpu_workers: usize) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn create_job_and_execute_smoke() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": ["a","b"],
+            "domain_id": "dom1",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+        let mut job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+        let domain = Box::leak(Box::new(NoopDomain));
+        let runner = Box::leak(Box::new(NoopRunner));
+        let svcs = Services { domain, runner };
+        execute_job(&svcs, &mut job, 2).await.unwrap();
+        assert_eq!(job.status, "succeeded");
+    }
+}

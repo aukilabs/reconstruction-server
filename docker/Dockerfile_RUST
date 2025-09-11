@@ -1,0 +1,8 @@
+##
+## Rust build for server
+##
+FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
+WORKDIR /app
+ADD server/rust /app
+# Build release binary for the server-bin crate
+RUN cargo build --release -p server-bin
