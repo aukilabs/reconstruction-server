@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 #[async_trait::async_trait]
 pub trait DomainPort: Send + Sync {
-    async fn upload_manifest(&self, job: &Job, manifest_path: &std::path::Path) -> Result<()>;
+    async fn upload_manifest(&self, job: &mut Job, manifest_path: &std::path::Path) -> Result<()>;
     async fn upload_output(&self, job: &Job, output: &ExpectedOutput) -> Result<()>;
     async fn upload_outputs(&self, job: &Job, outputs: &[ExpectedOutput]) -> Result<()> {
         let mut first_err: Option<DomainError> = None;
@@ -133,13 +133,20 @@ pub fn create_job_metadata(
 }
 
 pub fn write_job_manifest_processing(job: &Job) -> Result<PathBuf> {
-    let manifest = serde_json::json!({
-        "jobStatus": "processing",
-        "jobProgress": 0,
-        "jobStatusDetails": "Request received by reconstruction server",
-    });
     let path = job.job_path.join("job_manifest.json");
-    fs::write(&path, serde_json::to_vec_pretty(&manifest)?).map_err(DomainError::Io)?;
+    if let Err(_e) = crate::manifest::try_write_python_processing_manifest(
+        job,
+        &path,
+        0,
+        "Request received by reconstruction server",
+    ) {
+        let manifest = serde_json::json!({
+            "jobStatus": "processing",
+            "jobProgress": 0,
+            "jobStatusDetails": "Request received by reconstruction server",
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&manifest)?).map_err(DomainError::Io)?;
+    }
     Ok(path)
 }
 
@@ -174,12 +181,18 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
             write_scan_data_summary(&datasets_root, &job.job_path.join("scan_data_summary.json"));
     }
 
-    // Start periodic manifest writer (atomic, configurable interval)
+    // Start periodic manifest writer (atomic, configurable interval; local file only)
     let writer = crate::manifest::PeriodicManifestWriter::spawn(
         job.clone(),
         job.job_path.join("job_manifest.json"),
         svcs.manifest_interval,
-        Some(svcs.domain),
+    );
+
+    let uploader = crate::manifest::PeriodicManifestUploader::spawn(
+        job.clone(),
+        job.job_path.join("job_manifest.json"),
+        Duration::from_secs(30),
+        svcs.domain,
     );
 
     let progressing = monitor_and_upload_locals(job.clone(), svcs.domain).await;
@@ -188,8 +201,15 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
     if let Some(done_tx) = progressing {
         let _ = done_tx.send(true);
     }
-    // Stop manifest writer cleanly
+    // Stop manifest writer/uploader cleanly
     writer.stop().await;
+    uploader.stop().await;
+    if !job.meta.skip_manifest_upload {
+        let _ = svcs
+            .domain
+            .upload_manifest(job, &job.job_path.join("job_manifest.json"))
+            .await;
+    }
     if let Err(e) = run_res {
         write_failed_manifest(job, "Reconstruction job script failed")?;
         if !job.meta.skip_manifest_upload {
@@ -303,16 +323,15 @@ fn required_local_outputs_exist(sfm_path: &std::path::Path) -> bool {
 }
 
 fn write_failed_manifest(job: &Job, msg: &str) -> Result<()> {
-    let manifest = serde_json::json!({
-        "jobStatus": "failed",
-        "jobProgress": 0,
-        "jobStatusDetails": msg,
-    });
-    fs::write(
-        job.job_path.join("job_manifest.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )
-    .map_err(DomainError::Io)?;
+    let path = job.job_path.join("job_manifest.json");
+    if let Err(_e) = crate::manifest::try_write_python_failed_manifest(job, &path, msg) {
+        let manifest = serde_json::json!({
+            "jobStatus": "failed",
+            "jobProgress": 0,
+            "jobStatusDetails": msg,
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&manifest)?).map_err(DomainError::Io)?;
+    }
     Ok(())
 }
 
@@ -606,7 +625,7 @@ mod tests {
     impl DomainPort for NoopDomain {
         async fn upload_manifest(
             &self,
-            _job: &Job,
+            _job: &mut Job,
             _manifest_path: &std::path::Path,
         ) -> Result<()> {
             Ok(())

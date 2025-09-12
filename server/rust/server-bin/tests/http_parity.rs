@@ -13,7 +13,7 @@ struct NoopDomain;
 impl server_core::DomainPort for NoopDomain {
     async fn upload_manifest(
         &self,
-        _job: &Job,
+        _job: &mut Job,
         _manifest_path: &std::path::Path,
     ) -> server_core::Result<()> {
         Ok(())
@@ -162,7 +162,7 @@ struct TestDomain;
 impl server_core::DomainPort for TestDomain {
     async fn upload_manifest(
         &self,
-        _job: &Job,
+        _job: &mut Job,
         _manifest_path: &std::path::Path,
     ) -> server_core::Result<()> {
         Ok(())

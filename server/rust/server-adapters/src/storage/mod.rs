@@ -62,24 +62,40 @@ impl HttpDomainClient {
 
 #[async_trait::async_trait]
 impl DomainPort for HttpDomainClient {
-    async fn upload_manifest(&self, job: &Job, manifest_path: &std::path::Path) -> Result<()> {
+    async fn upload_manifest(&self, job: &mut Job, manifest_path: &std::path::Path) -> Result<()> {
+        use tracing::{debug, info, warn};
         let url = format!(
             "{}/api/v1/domains/{}/data",
             job.meta.domain_server_url, job.meta.domain_id
         );
         let bytes = fs::read(manifest_path).map_err(DomainError::Io)?;
-        let name_suffix = job.meta.created_at.format("%Y-%m-%d_%H-%M-%S").to_string();
+        let name_suffix = if job.meta.override_job_name.is_empty() {
+            job.meta.created_at.format("%Y-%m-%d_%H-%M-%S").to_string()
+        } else {
+            job.meta.override_job_name.clone()
+        };
         let name = format!("{}_{}", REFINED_MANIFEST_DATA_NAME, name_suffix);
+        // Use stored ID if present to drive PUT updates
+        let key = format!(
+            "{}.{}",
+            REFINED_MANIFEST_DATA_NAME, REFINED_MANIFEST_DATA_TYPE
+        );
+        let existing_id = job.uploaded_data_ids.get(&key).cloned();
         let (body, ctype) = self.build_multipart(
             &name,
             REFINED_MANIFEST_DATA_TYPE,
             &job.meta.domain_id,
-            None,
+            existing_id.as_deref(),
             &bytes,
         );
+        let method = if existing_id.is_some() {
+            reqwest::Method::PUT
+        } else {
+            reqwest::Method::POST
+        };
         let resp = self
             .client
-            .post(&url)
+            .request(method, &url)
             .header("Authorization", self.auth(job))
             .header("Content-Type", ctype)
             .body(body)
@@ -88,9 +104,21 @@ impl DomainPort for HttpDomainClient {
             .map_err(|e| DomainError::Http(e.to_string()))?;
         if !resp.status().is_success() {
             if resp.status().as_u16() == 409 {
+                warn!("manifest upload conflict (409); assuming already exists");
                 return Ok(());
             }
             return Err(DomainError::Http(format!("status {}", resp.status())));
+        }
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| DomainError::Http(e.to_string()))?;
+        if let Ok(parsed) = serde_json::from_str::<server_core::PostDomainDataResponse>(&text) {
+            if let Some(first) = parsed.data.first() {
+                debug!("Uploaded manifest, received ID: {}", first.id);
+                job.uploaded_data_ids.insert(key, first.id.clone());
+                info!(job_id = %job.meta.id, domain_id = %job.meta.domain_id, data_id = %first.id, "Uploaded/updated job manifest in domain");
+            }
         }
         Ok(())
     }
