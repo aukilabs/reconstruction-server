@@ -418,8 +418,8 @@ pub(crate) fn compute_progress_status(job: &Job) -> (i32, String) {
                 continue;
             }
             let scan_id = e.file_name().to_string_lossy().to_string();
-            let sfm = refined_root.join(&scan_id).join("sfm");
-            if sfm.exists() && required_local_outputs_exist(&sfm) {
+            let refined_scan_path = refined_root.join(&scan_id);
+            if refined_scan_path.exists() {
                 refined += 1;
             }
         }
@@ -687,5 +687,125 @@ mod tests {
         };
         execute_job(&svcs, &mut job, 2).await.unwrap();
         assert_eq!(job.status, "succeeded");
+    }
+
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingDomain(Arc<AtomicUsize>);
+    #[async_trait::async_trait]
+    impl DomainPort for CountingDomain {
+        async fn upload_manifest(
+            &self,
+            _job: &mut Job,
+            _manifest_path: &std::path::Path,
+        ) -> Result<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> Result<()> {
+            Ok(())
+        }
+        async fn download_data_batch(
+            &self,
+            _job: &Job,
+            _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn upload_refined_scan_zip(
+            &self,
+            _job: &Job,
+            _scan_id: &str,
+            _zip_bytes: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+    struct InstantRunner;
+    #[async_trait::async_trait]
+    impl JobRunner for InstantRunner {
+        async fn run_python(&self, _job: &Job, _cpu_workers: usize) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_job_calls_manifest_initial_and_final() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": [],
+            "domain_id": "domx",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+        let mut job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let domain = Box::leak(Box::new(CountingDomain(counter.clone())));
+        let runner = Box::leak(Box::new(InstantRunner));
+        let svcs = Services {
+            domain,
+            runner,
+            manifest_interval: std::time::Duration::from_millis(50),
+        };
+        execute_job(&svcs, &mut job, 1).await.unwrap();
+        // At least 2 calls: initial POST and final PUT after stop
+        assert!(
+            counter.load(Ordering::SeqCst) >= 2,
+            "expected at least 2 manifest uploads"
+        );
+    }
+
+    #[test]
+    fn progress_matches_go_logic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let job_root = tmp.path().join("jobs").join("dom").join("job_1");
+        std::fs::create_dir_all(job_root.join("datasets").join("scanA")).unwrap();
+        // refined/local/scanA exists, but no sfm files
+        std::fs::create_dir_all(job_root.join("refined/local/scanA")).unwrap();
+        let job = Job {
+            meta: JobMetadata {
+                id: "1".into(),
+                name: "job_1".into(),
+                domain_id: "dom".into(),
+                processing_type: "local_and_global_refinement".into(),
+                created_at: chrono::Utc::now(),
+                domain_server_url: "http://example".into(),
+                reconstruction_server_url: "localhost".into(),
+                access_token: "token".into(),
+                data_ids: vec![],
+                skip_manifest_upload: true,
+                override_job_name: String::new(),
+                override_manifest_id: String::new(),
+            },
+            job_path: job_root.clone(),
+            status: "started".into(),
+            uploaded_data_ids: Default::default(),
+            completed_scans: Default::default(),
+        };
+        let (p, s) = compute_progress_status(&job);
+        assert_eq!(p, 0);
+        assert_eq!(s, "Processed 0 of 1 scans");
+
+        // Add another dataset and refined dir; refined_adj = (2-1)=1 of total 2 => 50%
+        std::fs::create_dir_all(job_root.join("datasets").join("scanB")).unwrap();
+        std::fs::create_dir_all(job_root.join("refined/local/scanB")).unwrap();
+        let (p2, s2) = compute_progress_status(&job);
+        assert_eq!(p2, 50);
+        assert_eq!(s2, "Processed 1 of 2 scans");
     }
 }

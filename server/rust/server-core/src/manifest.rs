@@ -110,6 +110,22 @@ impl PeriodicManifestWriter {
                     }
                 }
 
+                // If Python wrote a final manifest (succeeded/failed), do not overwrite.
+                let should_skip = match std::fs::read(&manifest_path) {
+                    Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        Ok(v) => matches!(
+                            v.get("jobStatus").and_then(|s| s.as_str()),
+                            Some("succeeded") | Some("failed")
+                        ),
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                };
+                if should_skip {
+                    debug!(path = %manifest_path.display(), "final manifest present; skipping writer tick");
+                    continue;
+                }
+
                 let (progress, status_text) = compute_progress_status(&job);
                 // Prefer Go-level manifest via Python; fallback to minimal JSON
                 let py_res = try_write_python_processing_manifest(
@@ -274,5 +290,62 @@ mod tests {
         advance(Duration::from_secs(1)).await;
         let after = fs::metadata(&manifest_path).unwrap().modified().unwrap();
         assert_eq!(before, after);
+    }
+
+    #[tokio::test]
+    async fn writer_skips_when_final_manifest_present() {
+        pause();
+        let tmp = tempfile::tempdir().unwrap();
+        let job_root = tmp.path().join("jobs").join("dom").join("job_1");
+        fs::create_dir_all(job_root.join("datasets")).unwrap();
+        fs::create_dir_all(job_root.join("refined/local")).unwrap();
+
+        let job = Job {
+            meta: crate::types::JobMetadata {
+                id: "1".into(),
+                name: "job_1".into(),
+                domain_id: "dom".into(),
+                processing_type: "local_and_global_refinement".into(),
+                created_at: chrono::Utc::now(),
+                domain_server_url: "http://example".into(),
+                reconstruction_server_url: "localhost".into(),
+                access_token: "token".into(),
+                data_ids: vec![],
+                skip_manifest_upload: true,
+                override_job_name: String::new(),
+                override_manifest_id: String::new(),
+            },
+            job_path: job_root.clone(),
+            status: "started".into(),
+            uploaded_data_ids: Default::default(),
+            completed_scans: Default::default(),
+        };
+
+        let manifest_path = job_root.join("job_manifest.json");
+        // Write a final manifest
+        let final_manifest = serde_json::json!({
+            "jobStatus": "succeeded",
+            "jobProgress": 100,
+            "jobStatusDetails": "done"
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&final_manifest).unwrap(),
+        )
+        .unwrap();
+        let before = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+
+        let writer = PeriodicManifestWriter::spawn(
+            job.clone(),
+            manifest_path.clone(),
+            Duration::from_millis(100),
+        );
+        for _ in 0..5 {
+            advance(Duration::from_millis(100)).await;
+        }
+        writer.stop().await;
+
+        let after = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+        assert_eq!(before, after, "writer should not overwrite final manifest");
     }
 }
