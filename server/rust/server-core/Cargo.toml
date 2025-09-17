@@ -10,16 +10,13 @@ thiserror = { workspace = true }
 uuid = { workspace = true, features = ["v4","serde"] }
 chrono = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
-async-trait = "0.1"
+async-trait.workspace = true
 tokio = { workspace = true, features = ["macros","rt","time"] }
-base64 = "0.22"
-zip = "2"
-walkdir = "2.5"
+base64.workspace = true
+zip.workspace = true
+walkdir.workspace = true
 rand = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros","rt","rt-multi-thread","time","test-util"] }
 tempfile = "3"
-
-[features]
-compat = []

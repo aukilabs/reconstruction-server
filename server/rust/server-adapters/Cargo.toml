@@ -11,12 +11,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter","fmt","json"] }
-bytes = { workspace = true }
 reqwest = { workspace = true }
-mime = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true, features = ["v4","serde"] }
-async-trait = "0.1"
+async-trait.workspace = true
 zip = { workspace = true }
 regex = { workspace = true }
 base64 = { workspace = true }
@@ -32,7 +30,6 @@ rand = { workspace = true }
 grpc = []
 ws = []
 metrics = []
-compat = ["server-core/compat"]
 openapi = []
 
 [dev-dependencies]

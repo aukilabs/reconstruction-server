@@ -17,9 +17,8 @@ serde_json = { workspace = true }
 dotenvy = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
-axum = { workspace = true }
