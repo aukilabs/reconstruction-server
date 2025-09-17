@@ -2,8 +2,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use server_adapters::dds::http::{router_dds, DdsState};
-use std::fs;
+use server_adapters::dds::{
+    http::{router_dds, DdsState},
+    persist::read_node_secret_from_path,
+};
+use std::path::PathBuf;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -43,10 +46,7 @@ async fn callback_persists_and_redacts_secret() {
     let _guard = subscriber::set_default(subscriber);
 
     // Prepare router with temp secret path
-    let base = std::env::temp_dir().join(format!("dds_http_test_{}", uuid::Uuid::new_v4()));
-    let _ = fs::remove_dir_all(&base);
-    fs::create_dir_all(&base).unwrap();
-    let secret_path = base.join("node_secret");
+    let secret_path = PathBuf::from(format!("dds_http_test/{}", uuid::Uuid::new_v4()));
     let app = router_dds(DdsState {
         secret_path: secret_path.clone(),
     });
@@ -73,10 +73,9 @@ async fn callback_persists_and_redacts_secret() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Secret persisted without tmp remnants
-    let got = fs::read_to_string(&secret_path).unwrap();
-    assert_eq!(got, secret);
-    assert!(!secret_path.with_extension("tmp").exists());
+    // Secret stored in memory and retrievable via persist API
+    let got = read_node_secret_from_path(&secret_path).unwrap();
+    assert_eq!(got.as_deref(), Some(secret));
 
     // Check logs do not include the secret
     let captured = String::from_utf8(buf.lock().clone()).unwrap_or_default();
@@ -86,16 +85,11 @@ async fn callback_persists_and_redacts_secret() {
         "logs leaked secret: {}",
         captured
     );
-
-    let _ = fs::remove_dir_all(&base);
 }
 
 #[tokio::test]
 async fn health_ok() {
-    let base = std::env::temp_dir().join(format!("dds_http_test_{}", uuid::Uuid::new_v4()));
-    let _ = fs::remove_dir_all(&base);
-    fs::create_dir_all(&base).unwrap();
-    let secret_path = base.join("node_secret");
+    let secret_path = PathBuf::from(format!("dds_http_test/{}", uuid::Uuid::new_v4()));
     let app = router_dds(DdsState { secret_path });
 
     let req = Request::builder()
@@ -105,6 +99,4 @@ async fn health_ok() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-
-    let _ = fs::remove_dir_all(&base);
 }
