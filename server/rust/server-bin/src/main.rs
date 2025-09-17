@@ -11,6 +11,11 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+const DDS_CAPABILITIES: &[&str] = &[
+    "/reconstruction/global-refinement/v1",
+    "/reconstruction/local-refinement/v1",
+];
+
 mod cli;
 use crate::cli::Cli;
 
@@ -229,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 register_interval_secs: cli.register_interval_secs,
                 max_retry: cli.register_max_retry,
+                capabilities: DDS_CAPABILITIES.iter().map(|cap| cap.to_string()).collect(),
             },
         ));
     } else {

@@ -16,21 +16,15 @@ use super::state::{
     STATUS_DISCONNECTED, STATUS_REGISTERED, STATUS_REGISTERING,
 };
 
-// Capabilities advertised to DDS
-pub const CAPABILITIES: [&str; 2] = [
-    "/reconstruction/global-refinement/v1",
-    "/reconstruction/local-refinement/v1",
-];
-
 #[derive(Debug, Serialize)]
-pub struct NodeRegistrationRequest<'a> {
-    pub url: &'a str,
-    pub version: &'a str,
+pub struct NodeRegistrationRequest {
+    pub url: String,
+    pub version: String,
     pub registration_credentials: String,
     pub signature: String,
     pub timestamp: String,
     pub public_key: String,
-    pub capabilities: Vec<&'a str>,
+    pub capabilities: Vec<String>,
 }
 
 fn registration_endpoint(dds_base_url: &str) -> String {
@@ -38,12 +32,13 @@ fn registration_endpoint(dds_base_url: &str) -> String {
     format!("{}/internal/v1/nodes/register", base)
 }
 
-fn build_registration_request<'a>(
-    node_url: &'a str,
-    node_version: &'a str,
+fn build_registration_request(
+    node_url: &str,
+    node_version: &str,
     reg_secret: &str,
     sk: &SecretKey,
-) -> NodeRegistrationRequest<'a> {
+    capabilities: &[String],
+) -> NodeRegistrationRequest {
     let ts = format_timestamp_nanos(Utc::now());
     // The server verifies the signature over the exact byte concatenation of url + timestamp
     // (no delimiter). Align our signing to match that contract.
@@ -52,13 +47,13 @@ fn build_registration_request<'a>(
     let public_key = secp256k1_pubkey_uncompressed_hex(sk);
     let registration_credentials = registration_credentials_b64(reg_secret);
     NodeRegistrationRequest {
-        url: node_url,
-        version: node_version,
+        url: node_url.to_owned(),
+        version: node_version.to_owned(),
         registration_credentials,
         signature,
         timestamp: ts,
         public_key,
-        capabilities: CAPABILITIES.to_vec(),
+        capabilities: capabilities.to_vec(),
     }
 }
 
@@ -69,8 +64,9 @@ pub async fn register_once(
     reg_secret: &str,
     sk: &SecretKey,
     client: &Client,
+    capabilities: &[String],
 ) -> Result<()> {
-    let req = build_registration_request(node_url, node_version, reg_secret, sk);
+    let req = build_registration_request(node_url, node_version, reg_secret, sk, capabilities);
     let endpoint = registration_endpoint(dds_base_url);
 
     // Redact sensitive details in logs
@@ -125,6 +121,7 @@ pub struct RegistrationConfig {
     pub client: Client,
     pub register_interval_secs: u64,
     pub max_retry: i32, // -1 means infinite retry
+    pub capabilities: Vec<String>,
 }
 
 pub async fn run_registration_loop(cfg: RegistrationConfig) {
@@ -137,6 +134,7 @@ pub async fn run_registration_loop(cfg: RegistrationConfig) {
         client,
         register_interval_secs,
         max_retry,
+        capabilities,
     } = cfg;
     let sk = match load_secp256k1_privhex(&secp256k1_privhex) {
         Ok(k) => k,
@@ -236,6 +234,7 @@ pub async fn run_registration_loop(cfg: RegistrationConfig) {
                     &reg_secret,
                     &sk,
                     &client,
+                    &capabilities,
                 )
                 .await;
                 let elapsed_ms = start.elapsed().as_millis();
@@ -368,9 +367,13 @@ mod tests {
             .timeout(Duration::from_millis(200))
             .build()
             .unwrap();
+        let capabilities = vec![
+            "/reconstruction/global-refinement/v1".to_string(),
+            "/reconstruction/local-refinement/v1".to_string(),
+        ];
 
         // Invoke once (will error due to unreachable endpoint), but it logs before send
-        let _ = register_once(dds, url, version, secret, &sk, &client).await;
+        let _ = register_once(dds, url, version, secret, &sk, &client, &capabilities).await;
 
         let captured = String::from_utf8(buf.lock().clone()).unwrap_or_default();
         assert!(captured.contains("Registering node with DDS"));
