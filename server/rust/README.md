@@ -51,7 +51,7 @@ Format
 
 Run
 
-- `mak run`m or
+- `make run` or
 - `cargo run -p server-bin --bin server-bin -- --api-key secret --port :8080`
 - Single job: `cargo run -p server-bin --bin server-bin -- --job-request path/to/request.json --retrigger`
 
