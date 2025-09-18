@@ -1429,6 +1429,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "posemesh-node-registration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64",
+ "chrono",
+ "hex",
+ "rand 0.8.5",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1886,22 +1907,16 @@ dependencies = [
 name = "server-adapters"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
- "base64",
  "chrono",
- "hex",
  "parking_lot",
- "rand 0.8.5",
+ "posemesh-node-registration",
  "regex",
  "reqwest",
- "secp256k1",
  "serde",
  "serde_json",
  "server-core",
- "sha2",
- "sha3",
  "tokio",
  "tower 0.4.13",
  "tracing",
