@@ -2,12 +2,12 @@ use axum::serve;
 use clap::Parser;
 use parking_lot::Mutex;
 use server_adapters::{
-    dds::{http as dds_http, persist::NODE_SECRET_PATH, register},
+    dds::{http as dds_http, register},
     http,
     storage::HttpDomainClient,
 };
 use server_core::{JobList, Services};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -193,9 +193,7 @@ async fn main() -> anyhow::Result<()> {
         data_dir: cli.data_dir.clone(),
     };
     // Build DDS router state and merge routers to include /health and callback endpoint
-    let dds_state = dds_http::DdsState {
-        secret_path: PathBuf::from(NODE_SECRET_PATH),
-    };
+    let dds_state = dds_http::DdsState;
     let app = server_adapters::http::router_with_dds(state, dds_state);
 
     // If all DDS config present, prepare registration client and spawn background loop

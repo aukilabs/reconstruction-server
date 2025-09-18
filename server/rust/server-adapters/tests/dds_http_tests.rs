@@ -4,9 +4,8 @@ use axum::{
 };
 use server_adapters::dds::{
     http::{router_dds, DdsState},
-    persist::read_node_secret_from_path,
+    persist,
 };
-use std::path::PathBuf;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -45,11 +44,9 @@ async fn callback_persists_and_redacts_secret() {
     let subscriber = tracing_subscriber::registry().with(layer);
     let _guard = subscriber::set_default(subscriber);
 
-    // Prepare router with temp secret path
-    let secret_path = PathBuf::from(format!("dds_http_test/{}", uuid::Uuid::new_v4()));
-    let app = router_dds(DdsState {
-        secret_path: secret_path.clone(),
-    });
+    // Prepare router with clean in-memory secret store
+    persist::clear_node_secret().unwrap();
+    let app = router_dds(DdsState);
 
     // Build request
     let secret = "my-very-secret";
@@ -74,7 +71,7 @@ async fn callback_persists_and_redacts_secret() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Secret stored in memory and retrievable via persist API
-    let got = read_node_secret_from_path(&secret_path).unwrap();
+    let got = persist::read_node_secret().unwrap();
     assert_eq!(got.as_deref(), Some(secret));
 
     // Check logs do not include the secret
@@ -89,8 +86,8 @@ async fn callback_persists_and_redacts_secret() {
 
 #[tokio::test]
 async fn health_ok() {
-    let secret_path = PathBuf::from(format!("dds_http_test/{}", uuid::Uuid::new_v4()));
-    let app = router_dds(DdsState { secret_path });
+    persist::clear_node_secret().unwrap();
+    let app = router_dds(DdsState);
 
     let req = Request::builder()
         .method("GET")

@@ -1430,11 +1430,12 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "posemesh-node-registration"
-version = "0.1.0"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4c7f5f5726b215780e730074e22797dd06c053721ba3266c129153eaacce25"
 dependencies = [
  "anyhow",
  "axum",
- "base64",
  "chrono",
  "hex",
  "rand 0.8.5",

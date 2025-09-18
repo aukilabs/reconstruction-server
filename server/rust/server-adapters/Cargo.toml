@@ -18,7 +18,7 @@ async-trait.workspace = true
 zip = { workspace = true }
 regex = { workspace = true }
 chrono = { workspace = true }
-posemesh-node-registration = "0.1.0"
+posemesh-node-registration = "0.1.2"
 
 [features]
 grpc = []
