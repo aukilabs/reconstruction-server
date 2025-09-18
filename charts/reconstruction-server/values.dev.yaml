@@ -4,5 +4,3 @@ k8s-service:
       value: "https://dds.dev.aukiverse.com"
     - name: NODE_URL
       value: "https://reconstruction-dev.dev.aukiverse.com"
-    - name: NODE_VERSION
-      value: "1.0.0"

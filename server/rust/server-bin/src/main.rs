@@ -199,19 +199,13 @@ async fn main() -> anyhow::Result<()> {
     let app = server_adapters::http::router_with_dds(state, dds_state);
 
     // If all DDS config present, prepare registration client and spawn background loop
-    if let (
-        Some(dds_base_url),
-        Some(node_url),
-        Some(node_version),
-        Some(reg_secret),
-        Some(privhex),
-    ) = (
+    if let (Some(dds_base_url), Some(node_url), Some(reg_secret), Some(privhex)) = (
         cli.dds_base_url.clone(),
         cli.node_url.clone(),
-        cli.node_version.clone(),
         cli.reg_secret.clone(),
         cli.secp256k1_privhex.clone(),
     ) {
+        let node_version = cli.node_version.clone();
         // Build reqwest client with timeout
         let timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
         let client = reqwest::Client::builder().timeout(timeout).build()?;

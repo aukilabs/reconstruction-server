@@ -42,8 +42,8 @@ pub struct Cli {
     pub dds_base_url: Option<String>,
     #[arg(long = "node-url", env = "NODE_URL")]
     pub node_url: Option<String>,
-    #[arg(long = "node-version", env = "NODE_VERSION")]
-    pub node_version: Option<String>,
+    #[arg(long = "node-version", default_value = env!("CARGO_PKG_VERSION"))]
+    pub node_version: String,
     #[arg(long = "reg-secret", env = "REG_SECRET")]
     pub reg_secret: Option<String>,
     #[arg(long = "secp256k1-privhex", env = "SECP256K1_PRIVHEX")]
