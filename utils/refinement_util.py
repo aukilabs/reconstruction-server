@@ -7,14 +7,14 @@ from typing import NamedTuple
 
 from utils.triangulation import process_features_and_matching, triangulate_model
 from utils.data_utils import (
-    convert_pose_opengl_to_colmap, 
+    convert_pose_opengl_to_colmap,
+    load_scan, 
     precompute_arkit_offsets,
     get_world_space_qr_codes,
     mean_pose,
     setup_logger,
     save_portal_csv, 
     process_frames,
-    load_dataset_metadata,
     rectify_portal_pose
 )
 
@@ -64,66 +64,72 @@ def setup_refinement_paths(scan_folder_path, output_path):
     return paths
 
 
-def initialize_reconstruction(references, metadata):
-    """
-    Initialize reconstruction with camera intrinsics and poses.
-    
-    Returns:
-        Tuple of (reconstruction, arkit_transforms)
-    """
+def initialize_reconstruction(image_references, scan_data):
     rec = pycolmap.Reconstruction()
-    arkit_cam_from_world_transforms = {}
-    camera_id = image_id = 1
 
-    for ref in references:
+    cam_from_world_transforms = {}
+
+    for i, ref in enumerate(image_references):
         image_filename = Path(ref).name
-        timestampNs = metadata.timestamps_per_image[image_filename]
+        timestampNs = scan_data.timestamps_per_image[image_filename]
         
         # Add camera
-        intrinsics = metadata.intrinsics_per_timestamp[timestampNs]
+        intrinsics = scan_data.intrinsics_per_timestamp[timestampNs]
         fx, fy, cx, cy, w, h = intrinsics
         
         if fx == fy:
             model, params = 'SIMPLE_PINHOLE', [fx, cx, cy]
         else:
             model, params = 'PINHOLE', [fx, fy, cx, cy]
-            
+        
+        id = i + 1
+
         cam = pycolmap.Camera(
             model=model,
             width=w,
             height=h,
             params=params,
-            camera_id=camera_id
+            camera_id=id
         )
         rec.add_camera(cam)
+
+        rig = pycolmap.Rig()
+        rig.rig_id = id
+
+        sensor = pycolmap.sensor_t(type=pycolmap.SensorType.CAMERA, id=id)
+        rig.add_ref_sensor(sensor)
+        rec.add_rig(rig)
         
         # Add image
-        ar_pose = metadata.ar_poses_per_timestamp[timestampNs]
+        ar_pose = scan_data.ar_poses_per_timestamp[timestampNs]
         position, rotation = convert_pose_opengl_to_colmap(ar_pose[0:3], ar_pose[3:7])
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
         cam_from_world = cam_to_world.inverse()
-        arkit_cam_from_world_transforms[image_id] = cam_from_world
-        
-        img = pycolmap.Image(
-            image_filename,
-            pycolmap.ListPoint2D([]),
-            cam_from_world,
-            camera_id,
-            image_id
-        )
-        rec.add_image(img)
-        rec.register_image(image_id)
-        
-        camera_id += 1
-        image_id += 1
+        cam_from_world_transforms[id] = cam_from_world
 
-    return rec, arkit_cam_from_world_transforms
+        frame = pycolmap.Frame(
+            rig_id = id,
+            rig_from_world = cam_from_world,
+            frame_id = id
+        )
+        frame.add_data_id(pycolmap.data_t(
+            sensor_id=sensor,
+            id=id
+        ))
+        rec.add_frame(frame)
+
+        img = pycolmap.Image(image_filename, pycolmap.Point2DList([]), id, id)
+        img.frame_id = id
+        rec.add_image(img)
+        rec.register_frame(id)
+
+    return rec, cam_from_world_transforms
 
 
 def prepare_data_for_loop_closure(
     refined_rec, 
     arkit_cam_from_world_transforms,
-    metadata,
+    scan_data,
     logger
 ):
     # SORT images (since order may be wrong in captured dataset)
@@ -139,7 +145,7 @@ def prepare_data_for_loop_closure(
     # PRE-LOAD QR DATA FOR LOOP CLOSURE
     image_per_timestamp = {}
     for img in refined_rec.images.values():
-        timestamp = metadata.timestamps_per_image[img.name]
+        timestamp = scan_data.timestamps_per_image[img.name]
         image_per_timestamp[timestamp] = img
 
     valid_timestamps = image_per_timestamp.keys()
@@ -148,8 +154,8 @@ def prepare_data_for_loop_closure(
     image_ids_per_qr = {}  # Only store the ID here. Still gotta use the latest image from the reconstruction at each iteration with the latest pose
     corners_per_qr = {}
     logger.info(f"valid timestamps: {len(valid_timestamps)}")
-    logger.info(f"count of qr detections: {len(metadata.qr_detections_per_timestamp)}")
-    for timestamp, detection in metadata.qr_detections_per_timestamp.items():
+    logger.info(f"count of qr detections: {len(scan_data.qr_detections_per_timestamp)}")
+    for timestamp, detection in scan_data.qr_detections_per_timestamp.items():
         if timestamp not in valid_timestamps:
             continue
         id = detection["short_id"]
@@ -166,7 +172,7 @@ def prepare_data_for_loop_closure(
         else:
             continue
         nearest_image = image_per_timestamp[nearest_image_timestamp]
-        cam_space_qr_pose = nearest_image.cam_from_world * detection["pose"] #T_RC = T_WC*T_RW
+        cam_space_qr_pose = nearest_image.cam_from_world() * detection["pose"] #T_RC = T_WC*T_RW
 
         logger.info(f"QR code {id} @ {timestamp} ns, nearest image: {nearest_image}, cam space pos: {cam_space_qr_pose}")
 
@@ -182,7 +188,7 @@ def process_QR(
     detections_per_qr, 
     image_ids_per_qr, 
     paths, 
-    metadata, 
+    scan_data, 
     corners_per_qr, 
     logger
 ):
@@ -207,14 +213,14 @@ def process_QR(
         stitched_qr_detections, 
         stitched_qr_csv_path, 
         image_ids_per_qr, 
-        metadata.portal_sizes, 
+        scan_data.portal_sizes, 
         corners_per_qr
     )
 
 def refine_dataset_part_two(
     paths,
     arkit_cam_from_world_transforms,
-    metadata,
+    scan_data,
     logger,
     colmap_rec_path,
     remove_outputs,
@@ -226,7 +232,7 @@ def refine_dataset_part_two(
     arkit_precomputed, detections_per_qr, image_ids_per_qr, corners_per_qr = prepare_data_for_loop_closure(
         refined_rec, 
         arkit_cam_from_world_transforms,
-        metadata,
+        scan_data,
         logger
     )
 
@@ -241,7 +247,7 @@ def refine_dataset_part_two(
         paths.matches,
         skip_geometric_verification=True,
         verbose=True,
-        timestamp_per_image=metadata.timestamps_per_image,
+        timestamp_per_image=scan_data.timestamps_per_image,
         arkit_precomputed=arkit_precomputed,
         detections_per_qr=detections_per_qr,
         image_ids_per_qr=image_ids_per_qr
@@ -257,7 +263,7 @@ def refine_dataset_part_two(
         detections_per_qr, 
         image_ids_per_qr, 
         paths, 
-        metadata, 
+        scan_data, 
         corners_per_qr, 
         logger
     )
@@ -321,8 +327,8 @@ def refine_dataset(
         paths, every_nth_image, logger
     )
 
-    # Load dataset metadata
-    metadata = load_dataset_metadata(
+    # Load scan from folder
+    scan_data = load_scan(
         paths,  
         use_frames_from_video, 
         original_image_count, 
@@ -330,8 +336,7 @@ def refine_dataset(
     )
 
     # Initialize reconstruction
-    rec, arkit_cam_from_world_transforms = initialize_reconstruction(references, metadata)
-
+    rec, cam_from_world_transforms = initialize_reconstruction(references, scan_data)
     # Save initial reconstruction
     colmap_rec_path = paths.output / 'colmap_rec'
     colmap_rec_path.mkdir(parents=True, exist_ok=True)
@@ -350,8 +355,8 @@ def refine_dataset(
         future = pool_executor.submit(
             refine_dataset_part_two,
             paths,
-            arkit_cam_from_world_transforms,
-            metadata,
+            cam_from_world_transforms,
+            scan_data,
             logger,
             colmap_rec_path,
             remove_outputs,
@@ -361,8 +366,8 @@ def refine_dataset(
     else:
         refine_dataset_part_two(
             paths,
-            arkit_cam_from_world_transforms,
-            metadata,
+            cam_from_world_transforms,
+            scan_data,
             logger,
             colmap_rec_path,
             remove_outputs,

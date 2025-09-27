@@ -3,135 +3,8 @@ from typing import Dict, List
 import numpy as np
 import pycolmap
 import pyceres
-from pathlib import Path
-
-from utils.data_utils import get_world_space_qr_codes
-from utils.bundle_adjuster import PyBundleAdjuster
 
 from src.cost_functions import RelativeTransformationSim3CostFunction
-
-
-def dmt_global_stitching(detections_per_qr,
-                         image_ids_per_qr,
-                         timestamp_per_image,
-                         arkit_precomputed,
-                         reconstruction,
-                         ba_options,
-                         ba_config):
-
-    refinement_config = {
-        'add_rel_constraints': True,
-        'use_arkit_relposes': False,
-        'use_arkit_centerdist': False
-    }
-
-    bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config)
-    bundle_adjuster.set_up_problem(
-        reconstruction,
-        ba_options.create_loss_function(),
-        timestamp_per_image,
-        detections_per_qr,
-        image_ids_per_qr,
-        arkit_precomputed,
-        verbose=False
-    )
-
-    solver_options = bundle_adjuster.set_up_solver_options(
-        bundle_adjuster.problem, ba_options.solver_options
-    )
-    solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
-    solver_options.minimizer_progress_to_stdout = False
-    solver_options.logging_type = pyceres.LoggingType.SILENT
-
-    initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
-    print("------------")
-    print("INITIAL LOSS BREAKDOWN:")
-    print("\n".join(f"{category}: {loss}" for category, loss in initial_loss_breakdown.items()))
-    print("------------")
-
-    summary = pyceres.SolverSummary()
-    pyceres.solve(solver_options, bundle_adjuster.problem, summary)
-    final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
-
-    print("------------")
-    print("INITIAL LOSS BREAKDOWN:")
-    print("\n".join(f"{category}: {loss}" for category, loss in initial_loss_breakdown.items()))
-    print("------------")
-    print("FINAL LOSS BREAKDOWN:")
-    print("\n".join(f"{category}: {loss}" for category, loss in final_loss_breakdown.items()))
-    print("------------")
-
-    if not summary.IsSolutionUsable():
-        print("\n".join(summary.FullReport().split(",")))
-        print("Solution not usable!")
-        raise Exception("Solver failed! No usable solution found.")
-
-    print("Solved")
-    loss_details = (
-        initial_loss_breakdown,
-        initial_loss_breakdown_per_image_id,
-        final_loss_breakdown,
-        final_loss_breakdown_per_image_id
-    )
-
-    return (summary, loss_details)
-
-
-def run_stitching(detections_per_qr,
-                  image_ids_per_qr,
-                  timestamp_per_image,
-                  arkit_precomputed,
-                  combined_rec,
-                  sorted_image_ids,
-                  global_ba=True):
-
-    if global_ba:
-        # Run bundle adjustment
-        ba_options = pycolmap.BundleAdjustmentOptions()
-        ba_options.refine_focal_length = False
-        ba_options.refine_extra_params = False
-        ba_options.refine_principal_point = False
-        ba_options.solver_options.max_num_iterations = 1000
-
-        # Configure bundle adjustment
-        ba_config = pycolmap.BundleAdjustmentConfig()
-
-        for image_id in sorted_image_ids:
-            ba_config.add_image(image_id)
-
-        for point_id in combined_rec.point3D_ids():
-            ba_config.add_variable_point(point_id)
-
-        # Fix 7-DOFs of the bundle adjustment problem
-        # ba_config.set_constant_cam_pose(sorted_image_ids[0])
-        # ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
-
-        for image_id in combined_rec.images:
-            if image_id not in arkit_precomputed:
-                ba_config.set_constant_cam_pose(image_id)
-
-        print("Start Global Bundle Adjustment")
-        summary, loss_details = dmt_global_stitching(detections_per_qr,
-                                                     image_ids_per_qr,
-                                                     timestamp_per_image,
-                                                     arkit_precomputed,
-                                                     combined_rec,
-                                                     ba_options,
-                                                     ba_config)
-
-        if summary is not None:
-            print("\n".join(summary.FullReport().split(",")))
-
-    combined_out_dir = Path("/tmp/stitched_rec")
-    combined_out_dir.mkdir(exist_ok=True, parents=True)
-    combined_rec.write(combined_out_dir)
-
-    combined_detections = get_world_space_qr_codes(combined_rec, detections_per_qr, image_ids_per_qr)
-    #save_qr_poses_csv(combined_detections, combined_out_dir / "refined_portal_poses.csv")
-    
-    print("\n-------------\n")
-
-    return combined_rec, combined_detections
 
 
 def filter_reconstruction(reconstruction, normalize_points=False):
@@ -141,6 +14,7 @@ def filter_reconstruction(reconstruction, normalize_points=False):
         reconstruction.normalize(5.0, 0.1, 0.9, True)
     return reconstruction
 
+# TODO: Move to C++. Low prio since the global refinement is pretty fast anyway.
 class QuaternionNormalizationCostFunction(pyceres.CostFunction):
     def __init__(self, weight=1.0):
         super().__init__()
@@ -201,8 +75,8 @@ def align_reconstruction_chunks(
             if chunk_id_ref == chunk_id_tgt:
                 continue
 
-            t_refworld_qr = reconstruction.image(image_id_ref).cam_from_world.inverse() * t_refcam_qr
-            t_tgtworld_qr = reconstruction.image(image_id_tgt).cam_from_world.inverse() * t_tgtcam_qr
+            t_refworld_qr = reconstruction.image(image_id_ref).cam_from_world().inverse() * t_refcam_qr
+            t_tgtworld_qr = reconstruction.image(image_id_tgt).cam_from_world().inverse() * t_tgtcam_qr
 
             cov = np.eye(6)
             cov[3:, 3:] *= 0.01
@@ -250,6 +124,10 @@ def align_reconstruction_chunks(
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                         problem.set_manifold(quat, pyceres.QuaternionManifold())
             else:
+                # When refining scale, the quaternion magnitude represents scale.
+                # Don't put QuaternionManifold (which would hard-pin magnitude to 1)
+                # Instead add a soft constraint keeping scale close to 1 but allow some change.
+                # Higher weight to stay closer to 1 (trust initial scale more)
                 weight = 5000.0
                 scale_cost = QuaternionNormalizationCostFunction(weight=weight)
                 params = [t_local_chunk_quat[chunk_idx]]
@@ -282,7 +160,10 @@ def align_reconstruction_chunks(
 
     for image_id in reconstruction.images.keys():
         chunk_id = image_id_to_chunk_id[image_id]
-        reconstruction.images[image_id].cam_from_world = pycolmap.Sim3d.transform_camera_world(t_local_chunks[chunk_id], reconstruction.images[image_id].cam_from_world)
+        reconstruction.images[image_id].frame.rig_from_world = pycolmap.Sim3d.transform_camera_world(
+            t_local_chunks[chunk_id],
+            reconstruction.images[image_id].frame.rig_from_world
+        )
 
     for point3D_id, point3D in reconstruction.points3D.items():
         if len(point3D.track.elements) == 0:

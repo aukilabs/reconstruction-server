@@ -11,7 +11,7 @@ ARG VERSION
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu20.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -96,7 +96,7 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && mkdir build \
     && cd build \
     && cmake .. -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
-    && make -j4 \
+    && make -j$(nproc) \
     && make install
 
 # pyCeres
@@ -112,7 +112,7 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && mkdir build \
     && cd build \
     && cmake -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89" .. \
-    && make -j 4 \
+    && make -j$(nproc) \
     && make install \
     && cd ../pycolmap \
     && python3 -m pip install -e .
