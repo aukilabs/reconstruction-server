@@ -8,5 +8,7 @@ reconstruction
 .venv
 /venv
 /.idea
-/src/cost_functions.cpython-38-x86_64-linux-gnu.so
-/src/ply_export.cpython-38-x86_64-linux-gnu.so
+/src/cost_functions.cpython-310-x86_64-linux-gnu.so
+/src/ply_export.cpython-310-x86_64-linux-gnu.so
+/cluster_outlines
+log.txt

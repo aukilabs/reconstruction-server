@@ -38,6 +38,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-tk
 
+RUN apt-get install -y libmkl-full-dev
+
 RUN apt-get install -y --no-install-recommends \
     ssh \
     netcat-openbsd \
@@ -76,13 +78,17 @@ RUN git clone https://github.com/NVIDIA/libglvnd && \
     make -j$(nproc) && \
     make install
 
+# Workaround for runtime error when loading Intel MKL libraries
+# See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
+RUN export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
+
 # Ceres
 RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && cd ceres-solver \
     && git checkout tags/2.2.0 \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Intel10_64lp \
     && ninja -j$(nproc) \
     && ninja install
 
@@ -93,12 +99,13 @@ RUN git clone https://github.com/cvg/pyceres.git \
     && python3 -m pip install .
 
 # COLMAP
+#cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"
 RUN git clone https://github.com/colmap/colmap.git && \
     cd colmap \
     && git checkout 20b2777186654f20745f6c57974924d145bbbd6f \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
+    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
     && ninja -j$(nproc) \
     && ninja install \
     && cd .. \

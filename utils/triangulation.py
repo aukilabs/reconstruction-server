@@ -126,12 +126,12 @@ def run_triangulation(
         ba_options.refine_extra_params = False
         ba_options.refine_sensor_from_rig = False
         ba_options.refine_rig_from_world = True
-        ba_options.solver_options.max_num_iterations = 150
+        ba_options.solver_options.max_num_iterations = 100
         ba_options.solver_options.gradient_tolerance = 1.0
         ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
         ba_options.solver_options.minimizer_progress_to_stdout = True
 
-        num_ba_iterations_total = 5
+        num_ba_iterations_total = 4
 
         sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
