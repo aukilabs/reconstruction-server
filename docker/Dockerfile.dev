@@ -99,7 +99,6 @@ RUN git clone https://github.com/cvg/pyceres.git \
     && python3 -m pip install .
 
 # COLMAP
-#cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"
 RUN git clone https://github.com/colmap/colmap.git && \
     cd colmap \
     && git checkout 20b2777186654f20745f6c57974924d145bbbd6f \
@@ -119,12 +118,6 @@ RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization 
 
 # ONLY NEEDED FOR VISUALIZATION TOOLS (OPTIONAL)
 # RUN python3 -m pip install --upgrade plotly
-
-# Hloc installs latest opencv-python as dependency,
-# but the latest opencv 4.11.0.86 introduced a bug
-# causing unpacked mp4 frames to be rotated wrong.
-# For now we need to downgrade opencv (after hloc).
-#RUN python3 -m pip install opencv-python==4.10.0.84
 
 RUN python3 -m pip install enlighten
 
