@@ -1,0 +1,123 @@
+use serde_json::json;
+use server_adapters::dms::{
+    client::{DmsClient, LeaseState},
+    models::{LeaseRequest, TaskSummary},
+};
+use wiremock::matchers::{body_json, header, method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .no_proxy()
+        .build()
+        .expect("reqwest client")
+}
+
+#[tokio::test]
+async fn lease_heartbeat_complete_smoke() {
+    let server = MockServer::start().await;
+    let identity = "siwe:00000000-0000-0000-0000-000000000042";
+    let client = DmsClient::new(server.uri(), identity.to_string(), http_client()).unwrap();
+
+    let task_meta = json!({
+        "data_ids": ["scan-1"],
+        "domain_id": "domain-1",
+        "access_token": "token-from-request",
+        "processing_type": "local_and_global_refinement",
+        "domain_server_url": "https://domain.example",
+        "skip_manifest_upload": false,
+        "override_job_name": "",
+        "override_manifest_id": "",
+    });
+
+    let lease_body = json!({
+        "task": {
+            "id": "task-123",
+            "capability": "cap/refinement",
+            "meta": task_meta,
+        },
+        "access_token": "lease-token-abc",
+        "access_token_expires_at": "2025-01-01T00:01:00Z",
+        "lease_expires_at": "2025-01-01T00:02:00Z"
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/tasks"))
+        .and(query_param("capability", "cap/refinement"))
+        .and(header("authorization", format!("Bearer {}", identity)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(lease_body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let lease = client
+        .lease_task(&LeaseRequest {
+            capability: "cap/refinement".into(),
+            job_id: None,
+            domain_id: None,
+        })
+        .await
+        .expect("lease");
+    assert_eq!(
+        lease.task.as_ref().map(|t| &t.id),
+        Some(&"task-123".to_string())
+    );
+    assert_eq!(client.access_token().await, Some("lease-token-abc".into()));
+
+    client
+        .store_session(LeaseState {
+            task_id: "task-123".into(),
+            access_token: client.access_token().await,
+            access_token_expires_at: lease.access_token_expires_at.clone(),
+        })
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/tasks/task-123/heartbeat"))
+        .and(header("authorization", format!("Bearer {}", identity)))
+        .and(body_json(json!({ "progress": { "message": "loading" } })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task": TaskSummary {
+                id: "task-123".into(),
+                capability: "cap/refinement".into(),
+                meta: json!({}),
+            },
+            "lease_expires_at": "2025-01-01T00:03:00Z",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let heartbeat = client
+        .send_heartbeat("task-123", Some(&json!({"message": "loading"})))
+        .await
+        .expect("heartbeat");
+    assert_eq!(
+        heartbeat.lease_expires_at.as_deref(),
+        Some("2025-01-01T00:03:00Z")
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/tasks/task-123/complete"))
+        .and(header("authorization", format!("Bearer {}", identity)))
+        .and(body_json(json!({
+            "output_cids": ["cid-1"],
+            "meta": {"upload": true}
+        })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client
+        .complete_task(
+            "task-123",
+            &["cid-1".into()],
+            Some(&json!({"upload": true})),
+        )
+        .await
+        .expect("complete");
+
+    assert!(client.access_token().await.is_none());
+}

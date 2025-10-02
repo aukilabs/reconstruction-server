@@ -1,7 +1,7 @@
 use crate::{errors::*, types::*};
 use base64::Engine;
 use chrono::Utc;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -41,12 +41,12 @@ pub trait DomainPort: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait JobRunner: Send + Sync {
-    async fn run_python(&self, job: &Job, cpu_workers: usize) -> Result<()>;
+    async fn run_python(&self, job: &Job, capability: &str, cpu_workers: usize) -> Result<()>;
 }
 
 pub struct Services {
-    pub domain: &'static dyn DomainPort,
-    pub runner: &'static dyn JobRunner,
+    pub domain: Arc<dyn DomainPort + Send + Sync>,
+    pub runner: Arc<dyn JobRunner + Send + Sync>,
     /// Interval for periodic manifest writer
     pub manifest_interval: std::time::Duration,
 }
@@ -150,7 +150,12 @@ pub fn write_job_manifest_processing(job: &Job) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> Result<()> {
+pub async fn execute_job(
+    svcs: &Services,
+    job: &mut Job,
+    capability: &str,
+    cpu_workers: usize,
+) -> Result<Vec<String>> {
     if !job.meta.override_job_name.is_empty() && !job.meta.override_manifest_id.is_empty() {
         let key = format!(
             "{}.{}",
@@ -161,8 +166,9 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
     }
 
     let manifest_path = write_job_manifest_processing(job)?;
+    let mut uploaded_artifacts: Vec<String> = Vec::new();
     if !job.meta.skip_manifest_upload {
-        let _ = svcs.domain.upload_manifest(job, &manifest_path).await;
+        svcs.domain.upload_manifest(job, &manifest_path).await?;
     }
 
     let datasets_root = job.job_path.join("datasets");
@@ -192,12 +198,12 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
         job.clone(),
         job.job_path.join("job_manifest.json"),
         Duration::from_secs(30),
-        svcs.domain,
+        Arc::clone(&svcs.domain),
     );
 
-    let progressing = monitor_and_upload_locals(job.clone(), svcs.domain).await;
+    let progressing = monitor_and_upload_locals(job.clone(), Arc::clone(&svcs.domain)).await;
 
-    let run_res = svcs.runner.run_python(job, cpu_workers).await;
+    let run_res = svcs.runner.run_python(job, capability, cpu_workers).await;
     if let Some(done_tx) = progressing {
         let _ = done_tx.send(true);
     }
@@ -205,24 +211,22 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
     writer.stop().await;
     uploader.stop().await;
     if !job.meta.skip_manifest_upload {
-        let _ = svcs
-            .domain
+        svcs.domain
             .upload_manifest(job, &job.job_path.join("job_manifest.json"))
-            .await;
+            .await?;
     }
     if let Err(e) = run_res {
+        job.status = "failed".into();
         write_failed_manifest(job, "Reconstruction job script failed")?;
         if !job.meta.skip_manifest_upload {
-            let _ = svcs
-                .domain
+            svcs.domain
                 .upload_manifest(job, &job.job_path.join("job_manifest.json"))
-                .await;
+                .await?;
         }
-        job.status = "failed".into();
         return Err(e);
     }
 
-    sweep_and_upload_locals(job.clone(), svcs.domain).await;
+    sweep_and_upload_locals(job.clone(), Arc::clone(&svcs.domain)).await;
 
     if job.meta.processing_type != "local_refinement" {
         let refined_output = job.job_path.join("refined").join("global");
@@ -292,14 +296,36 @@ pub async fn execute_job(svcs: &Services, job: &mut Job, cpu_workers: usize) -> 
         ];
 
         if !job.meta.skip_manifest_upload {
-            let _ = svcs.domain.upload_output(job, &outputs[0]).await;
+            let manifest_output = &outputs[0];
+            if manifest_output.file_path.exists() || !manifest_output.optional {
+                svcs.domain.upload_output(job, manifest_output).await?;
+                let key = format!("{}.{}", manifest_output.name, manifest_output.data_type);
+                uploaded_artifacts.push(
+                    job.uploaded_data_ids
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| manifest_output.name.clone()),
+                );
+            }
         }
-        let _ = svcs.domain.upload_outputs(job, &outputs[1..]).await;
+        for output in outputs.iter().skip(1) {
+            if !output.file_path.exists() && output.optional {
+                continue;
+            }
+            svcs.domain.upload_output(job, output).await?;
+            let key = format!("{}.{}", output.name, output.data_type);
+            uploaded_artifacts.push(
+                job.uploaded_data_ids
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| output.name.clone()),
+            );
+        }
     }
 
     info!(job_id = %job.meta.id, domain_id = %job.meta.domain_id, "job succeeded");
     job.status = "succeeded".into();
-    Ok(())
+    Ok(uploaded_artifacts)
 }
 
 // --- helpers ---
@@ -337,7 +363,7 @@ fn write_failed_manifest(job: &Job, msg: &str) -> Result<()> {
 
 pub(crate) async fn monitor_and_upload_locals(
     mut job: Job,
-    domain: &'static dyn DomainPort,
+    domain: Arc<dyn DomainPort + Send + Sync>,
 ) -> Option<tokio::sync::watch::Sender<bool>> {
     if job.meta.processing_type != "local_refinement"
         && job.meta.processing_type != "local_and_global_refinement"
@@ -375,7 +401,7 @@ pub(crate) async fn monitor_and_upload_locals(
                         _refined += 1;
                         if !job.completed_scans.get(&scan_id).cloned().unwrap_or(false) {
                             if let Err(err) =
-                                zip_and_upload_scan(&job, &scan_id, &sfm, domain).await
+                                zip_and_upload_scan(&job, &scan_id, &sfm, Arc::clone(&domain)).await
                             {
                                 warn!("failed to upload scan zip {}: {}", scan_id, err);
                             } else {
@@ -434,7 +460,7 @@ pub(crate) fn compute_progress_status(job: &Job) -> (i32, String) {
     (progress, status_text)
 }
 
-async fn sweep_and_upload_locals(mut job: Job, domain: &'static dyn DomainPort) {
+async fn sweep_and_upload_locals(mut job: Job, domain: Arc<dyn DomainPort + Send + Sync>) {
     let datasets_root = job.job_path.join("datasets");
     let refined_root = job.job_path.join("refined").join("local");
     if let Ok(entries) = std::fs::read_dir(&datasets_root) {
@@ -448,7 +474,7 @@ async fn sweep_and_upload_locals(mut job: Job, domain: &'static dyn DomainPort) 
             }
             let sfm = refined_root.join(&scan_id).join("sfm");
             if sfm.exists() && required_local_outputs_exist(&sfm) {
-                let _ = zip_and_upload_scan(&job, &scan_id, &sfm, domain).await;
+                let _ = zip_and_upload_scan(&job, &scan_id, &sfm, Arc::clone(&domain)).await;
                 job.completed_scans.insert(scan_id.clone(), true);
             }
         }
@@ -459,7 +485,7 @@ async fn zip_and_upload_scan(
     job: &Job,
     scan_id: &str,
     sfm: &std::path::Path,
-    domain: &'static dyn DomainPort,
+    domain: Arc<dyn DomainPort + Send + Sync>,
 ) -> Result<()> {
     use std::io::Write as _;
     let mut buffer = Vec::new();
@@ -620,6 +646,20 @@ fn write_scan_data_summary(datasets_root: &PathBuf, out_path: &PathBuf) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn write_dummy_outputs(job: &Job) {
+        let global_dir = job.job_path.join("refined").join("global");
+        let topology_dir = global_dir.join("topology");
+        fs::create_dir_all(&topology_dir).unwrap();
+        fs::write(global_dir.join("refined_manifest.json"), b"{}\n").unwrap();
+        fs::write(global_dir.join("RefinedPointCloudReduced.ply"), b"ply").unwrap();
+    }
+
     struct NoopDomain;
     #[async_trait::async_trait]
     impl DomainPort for NoopDomain {
@@ -653,7 +693,13 @@ mod tests {
     struct NoopRunner;
     #[async_trait::async_trait]
     impl JobRunner for NoopRunner {
-        async fn run_python(&self, _job: &Job, _cpu_workers: usize) -> Result<()> {
+        async fn run_python(
+            &self,
+            _job: &Job,
+            _capability: &str,
+            _cpu_workers: usize,
+        ) -> Result<()> {
+            write_dummy_outputs(_job);
             Ok(())
         }
     }
@@ -678,21 +724,19 @@ mod tests {
             None,
         )
         .unwrap();
-        let domain = Box::leak(Box::new(NoopDomain));
-        let runner = Box::leak(Box::new(NoopRunner));
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
+        let runner: Arc<dyn JobRunner + Send + Sync> = Arc::new(NoopRunner);
         let svcs = Services {
             domain,
             runner,
             manifest_interval: std::time::Duration::from_millis(50),
         };
-        execute_job(&svcs, &mut job, 2).await.unwrap();
+        let outputs = execute_job(&svcs, &mut job, "capability/test", 2)
+            .await
+            .unwrap();
         assert_eq!(job.status, "succeeded");
+        assert!(!outputs.is_empty());
     }
-
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
 
     struct CountingDomain(Arc<AtomicUsize>);
     #[async_trait::async_trait]
@@ -728,7 +772,13 @@ mod tests {
     struct InstantRunner;
     #[async_trait::async_trait]
     impl JobRunner for InstantRunner {
-        async fn run_python(&self, _job: &Job, _cpu_workers: usize) -> Result<()> {
+        async fn run_python(
+            &self,
+            _job: &Job,
+            _capability: &str,
+            _cpu_workers: usize,
+        ) -> Result<()> {
+            write_dummy_outputs(_job);
             Ok(())
         }
     }
@@ -755,19 +805,164 @@ mod tests {
         .unwrap();
 
         let counter = Arc::new(AtomicUsize::new(0));
-        let domain = Box::leak(Box::new(CountingDomain(counter.clone())));
-        let runner = Box::leak(Box::new(InstantRunner));
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(CountingDomain(counter.clone()));
+        let runner: Arc<dyn JobRunner + Send + Sync> = Arc::new(InstantRunner);
         let svcs = Services {
             domain,
             runner,
             manifest_interval: std::time::Duration::from_millis(50),
         };
-        execute_job(&svcs, &mut job, 1).await.unwrap();
+        let outputs = execute_job(&svcs, &mut job, "capability/test", 1)
+            .await
+            .unwrap();
         // At least 2 calls: initial POST and final PUT after stop
         assert!(
             counter.load(Ordering::SeqCst) >= 2,
             "expected at least 2 manifest uploads"
         );
+        assert!(!outputs.is_empty());
+    }
+
+    struct FailingManifestDomain;
+    #[async_trait::async_trait]
+    impl DomainPort for FailingManifestDomain {
+        async fn upload_manifest(
+            &self,
+            _job: &mut Job,
+            _manifest_path: &std::path::Path,
+        ) -> Result<()> {
+            Err(DomainError::Internal("manifest boom".into()))
+        }
+
+        async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> Result<()> {
+            Ok(())
+        }
+
+        async fn download_data_batch(
+            &self,
+            _job: &Job,
+            _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn upload_refined_scan_zip(
+            &self,
+            _job: &Job,
+            _scan_id: &str,
+            _zip_bytes: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_job_propagates_manifest_upload_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": [],
+            "domain_id": "dom_fail",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+
+        let mut job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(FailingManifestDomain);
+        let runner: Arc<dyn JobRunner + Send + Sync> = Arc::new(NoopRunner);
+        let svcs = Services {
+            domain,
+            runner,
+            manifest_interval: std::time::Duration::from_millis(50),
+        };
+
+        let res = execute_job(&svcs, &mut job, "capability/test", 1).await;
+        match res {
+            Err(DomainError::Internal(msg)) => assert!(msg.contains("manifest boom")),
+            other => panic!("expected manifest failure, got {:?}", other),
+        }
+    }
+
+    struct OutputFailDomain;
+    #[async_trait::async_trait]
+    impl DomainPort for OutputFailDomain {
+        async fn upload_manifest(
+            &self,
+            _job: &mut Job,
+            _manifest_path: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> Result<()> {
+            Err(DomainError::Internal("output boom".into()))
+        }
+
+        async fn download_data_batch(
+            &self,
+            _job: &Job,
+            _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn upload_refined_scan_zip(
+            &self,
+            _job: &Job,
+            _scan_id: &str,
+            _zip_bytes: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_job_propagates_output_upload_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": [],
+            "domain_id": "dom_fail_output",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+
+        let mut job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(OutputFailDomain);
+        let runner: Arc<dyn JobRunner + Send + Sync> = Arc::new(InstantRunner);
+        let svcs = Services {
+            domain,
+            runner,
+            manifest_interval: std::time::Duration::from_millis(50),
+        };
+
+        let res = execute_job(&svcs, &mut job, "capability/test", 1).await;
+        match res {
+            Err(DomainError::Internal(msg)) => assert!(msg.contains("output boom")),
+            other => panic!("expected output failure, got {:?}", other),
+        }
     }
 
     #[test]
@@ -807,5 +1002,89 @@ mod tests {
         let (p2, s2) = compute_progress_status(&job);
         assert_eq!(p2, 50);
         assert_eq!(s2, "Processed 1 of 2 scans");
+    }
+
+    struct DropTrackingDomain(Arc<AtomicBool>);
+    impl Drop for DropTrackingDomain {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DomainPort for DropTrackingDomain {
+        async fn upload_manifest(
+            &self,
+            _job: &mut Job,
+            _manifest_path: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> Result<()> {
+            Ok(())
+        }
+
+        async fn download_data_batch(
+            &self,
+            _job: &Job,
+            _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn upload_refined_scan_zip(
+            &self,
+            _job: &Job,
+            _scan_id: &str,
+            _zip_bytes: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct DropTrackingRunner(Arc<AtomicBool>);
+
+    impl Drop for DropTrackingRunner {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl JobRunner for DropTrackingRunner {
+        async fn run_python(
+            &self,
+            _job: &Job,
+            _capability: &str,
+            _cpu_workers: usize,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn services_drop_non_static_dependencies() {
+        let domain_dropped = Arc::new(AtomicBool::new(false));
+        let runner_dropped = Arc::new(AtomicBool::new(false));
+
+        {
+            let domain: Arc<dyn DomainPort + Send + Sync> =
+                Arc::new(DropTrackingDomain(domain_dropped.clone()));
+            let runner: Arc<dyn JobRunner + Send + Sync> =
+                Arc::new(DropTrackingRunner(runner_dropped.clone()));
+            let services = Services {
+                domain,
+                runner,
+                manifest_interval: Duration::from_millis(10),
+            };
+            assert!(!domain_dropped.load(Ordering::SeqCst));
+            assert!(!runner_dropped.load(Ordering::SeqCst));
+            drop(services);
+        }
+
+        assert!(domain_dropped.load(Ordering::SeqCst));
+        assert!(runner_dropped.load(Ordering::SeqCst));
     }
 }

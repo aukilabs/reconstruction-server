@@ -1,5 +1,10 @@
+use multer::Multipart;
 use regex::Regex;
-use reqwest::Client;
+use reqwest::{
+    header::{HeaderMap, HeaderValue, CONTENT_DISPOSITION, CONTENT_TYPE},
+    multipart::{Form, Part},
+    Client,
+};
 use server_core::{
     DomainError, DomainPort, ExpectedOutput, Job, Result, REFINED_MANIFEST_DATA_NAME,
     REFINED_MANIFEST_DATA_TYPE,
@@ -16,9 +21,18 @@ pub struct HttpDomainClient {
 
 impl Default for HttpDomainClient {
     fn default() -> Self {
-        Self {
-            client: Client::builder().build().unwrap(),
-        }
+        let client = Client::builder()
+            .use_rustls_tls()
+            .no_proxy()
+            .build()
+            .expect("http client");
+        Self::new(client)
+    }
+}
+
+impl HttpDomainClient {
+    pub fn new(client: Client) -> Self {
+        Self { client }
     }
 }
 
@@ -26,37 +40,51 @@ impl HttpDomainClient {
     fn auth(&self, job: &Job) -> String {
         format!("Bearer {}", job.meta.access_token)
     }
-    fn build_multipart(
-        &self,
+    fn build_data_part(
         name: &str,
         data_type: &str,
         domain_id: &str,
         id: Option<&str>,
-        bytes: &[u8],
-    ) -> (Vec<u8>, String) {
-        let boundary = format!("------------------------{}", uuid::Uuid::new_v4().simple());
-        let mut body: Vec<u8> = Vec::new();
-        let disp = if let Some(id) = id {
-            format!(
-                "Content-Disposition: form-data; name=\"{}\"; data-type=\"{}\"; id=\"{}\"; domain-id=\"{}\"\r\n",
-                name, data_type, id, domain_id
-            )
-        } else {
-            format!(
-                "Content-Disposition: form-data; name=\"{}\"; data-type=\"{}\"; domain-id=\"{}\"\r\n",
-                name, data_type, domain_id
-            )
-        };
-        let header = format!(
-            "--{}\r\nContent-Type: application/octet-stream\r\n{}\r\n",
-            boundary, disp
+        bytes: Vec<u8>,
+    ) -> Result<Part> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_DISPOSITION,
+            Self::content_disposition_value(name, data_type, domain_id, id)?,
         );
-        body.extend_from_slice(header.as_bytes());
-        body.extend_from_slice(bytes);
-        body.extend_from_slice(b"\r\n");
-        body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
-        let ctype = format!("multipart/form-data; boundary={}", boundary);
-        (body, ctype)
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        Ok(Part::bytes(bytes).headers(headers))
+    }
+
+    fn build_multipart_form(
+        name: &str,
+        data_type: &str,
+        domain_id: &str,
+        id: Option<&str>,
+        bytes: Vec<u8>,
+    ) -> Result<Form> {
+        let part = Self::build_data_part(name, data_type, domain_id, id, bytes)?;
+        Ok(Form::new().part(name.to_string(), part))
+    }
+
+    fn content_disposition_value(
+        name: &str,
+        data_type: &str,
+        domain_id: &str,
+        id: Option<&str>,
+    ) -> Result<HeaderValue> {
+        let mut disposition = format!(
+            "form-data; name=\"{}\"; data-type=\"{}\"; domain-id=\"{}\"",
+            name, data_type, domain_id
+        );
+        if let Some(id) = id {
+            disposition.push_str(&format!("; id=\"{}\"", id));
+        }
+        HeaderValue::from_str(&disposition)
+            .map_err(|_| DomainError::Internal("invalid content disposition".into()))
     }
 }
 
@@ -81,13 +109,13 @@ impl DomainPort for HttpDomainClient {
             REFINED_MANIFEST_DATA_NAME, REFINED_MANIFEST_DATA_TYPE
         );
         let existing_id = job.uploaded_data_ids.get(&key).cloned();
-        let (body, ctype) = self.build_multipart(
+        let form = Self::build_multipart_form(
             &name,
             REFINED_MANIFEST_DATA_TYPE,
             &job.meta.domain_id,
             existing_id.as_deref(),
-            &bytes,
-        );
+            bytes,
+        )?;
         let method = if existing_id.is_some() {
             reqwest::Method::PUT
         } else {
@@ -97,8 +125,7 @@ impl DomainPort for HttpDomainClient {
             .client
             .request(method, &url)
             .header("Authorization", self.auth(job))
-            .header("Content-Type", ctype)
-            .body(body)
+            .multipart(form)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -148,13 +175,13 @@ impl DomainPort for HttpDomainClient {
             .uploaded_data_ids
             .get(&format!("{}.{}", output.name, output.data_type))
             .map(|s| s.as_str());
-        let (body, ctype) = self.build_multipart(
+        let form = Self::build_multipart_form(
             &name,
             &output.data_type,
             &job.meta.domain_id,
             existing,
-            &bytes,
-        );
+            bytes,
+        )?;
         let method = if existing.is_some() {
             reqwest::Method::PUT
         } else {
@@ -164,8 +191,7 @@ impl DomainPort for HttpDomainClient {
             .client
             .request(method, &url)
             .header("Authorization", self.auth(job))
-            .header("Content-Type", ctype)
-            .body(body)
+            .multipart(form)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -204,35 +230,41 @@ impl DomainPort for HttpDomainClient {
         if !resp.status().is_success() {
             return Err(DomainError::Http(format!("status {}", resp.status())));
         }
-        let ct = resp
+        let content_type = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let boundary = parse_boundary(&ct)
-            .ok_or_else(|| DomainError::Internal("missing multipart boundary".into()))?;
-        let bytes = resp
-            .bytes()
+            .ok_or_else(|| DomainError::Internal("missing content-type header".into()))?;
+        let boundary = multer::parse_boundary(content_type)
+            .map_err(|e| DomainError::Internal(e.to_string()))?;
+        let mut multipart = Multipart::new(resp.bytes_stream(), boundary);
+        while let Some(mut field) = multipart
+            .next_field()
             .await
-            .map_err(|e| DomainError::Http(e.to_string()))?
-            .to_vec();
-        let parts = parse_multipart_bytes(&bytes, &boundary)?;
-        for p in parts {
-            let disp = p
-                .headers
+            .map_err(|e| DomainError::Internal(e.to_string()))?
+        {
+            let disposition = field
+                .headers()
                 .get("content-disposition")
-                .cloned()
-                .unwrap_or_default();
-            let params = parse_disposition_params(&disp);
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let params = parse_disposition_params(disposition);
             let name = params.get("name").cloned().unwrap_or_default();
             let data_type = params.get("data-type").cloned().unwrap_or_default();
+            let mut body = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| DomainError::Internal(e.to_string()))?
+            {
+                body.extend_from_slice(&chunk);
+            }
             let scan_folder = extract_timestamp(&name).unwrap_or_else(|| name.clone());
             let file_name = map_filename(&data_type, &name);
             let scan_dir = datasets_root.join(&scan_folder);
             fs::create_dir_all(&scan_dir).map_err(DomainError::Io)?;
             let file_path = scan_dir.join(&file_name);
-            fs::write(&file_path, &p.body).map_err(DomainError::Io)?;
+            fs::write(&file_path, &body).map_err(DomainError::Io)?;
             if file_name == "RefinedScan.zip" {
                 let unzip_path = job
                     .job_path
@@ -241,7 +273,7 @@ impl DomainPort for HttpDomainClient {
                     .join(&scan_folder)
                     .join("sfm");
                 fs::create_dir_all(&unzip_path).map_err(DomainError::Io)?;
-                let mut ar = ZipArchive::new(Cursor::new(&p.body))
+                let mut ar = ZipArchive::new(Cursor::new(&body))
                     .map_err(|e| DomainError::Internal(e.to_string()))?;
                 for i in 0..ar.len() {
                     let mut f = ar
@@ -275,19 +307,18 @@ impl DomainPort for HttpDomainClient {
             job.meta.domain_server_url, job.meta.domain_id
         );
         let name = format!("refined_scan_{}", scan_id);
-        let (body, ctype) = self.build_multipart(
+        let form = Self::build_multipart_form(
             &name,
             "refined_scan_zip",
             &job.meta.domain_id,
             None,
-            &zip_bytes,
-        );
+            zip_bytes,
+        )?;
         let resp = self
             .client
             .post(&url)
             .header("Authorization", self.auth(job))
-            .header("Content-Type", ctype)
-            .body(body)
+            .multipart(form)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -296,86 +327,6 @@ impl DomainPort for HttpDomainClient {
         }
         Ok(())
     }
-}
-
-// ---- multipart helpers ----
-
-fn parse_boundary(ct: &str) -> Option<String> {
-    ct.split(';').find_map(|part| {
-        let p = part.trim();
-        p.strip_prefix("boundary=")
-            .map(|b| b.trim_matches('"').to_string())
-    })
-}
-
-struct PartData {
-    headers: std::collections::HashMap<String, String>,
-    body: Vec<u8>,
-}
-
-fn parse_multipart_bytes(body: &[u8], boundary: &str) -> Result<Vec<PartData>> {
-    let mut parts = Vec::new();
-    let marker = format!("--{}", boundary).into_bytes();
-    let mut pos = 0usize;
-    while pos + marker.len() <= body.len() && &body[pos..pos + marker.len()] != marker.as_slice() {
-        pos += 1
-    }
-    while pos + marker.len() <= body.len() {
-        if &body[pos..pos + marker.len()] != marker.as_slice() {
-            break;
-        }
-        pos += marker.len();
-        if body.get(pos..pos + 2) == Some(b"--") {
-            break;
-        }
-        if body.get(pos..pos + 2) == Some(b"\r\n") {
-            pos += 2;
-        }
-        let mut headers = std::collections::HashMap::new();
-        loop {
-            if body.get(pos..pos + 2) == Some(b"\r\n") {
-                pos += 2;
-                break;
-            }
-            let mut end = pos;
-            while end + 1 < body.len() && &body[end..end + 2] != b"\r\n" {
-                end += 1;
-            }
-            if end + 1 >= body.len() {
-                break;
-            }
-            let line = &body[pos..end];
-            if let Ok(line_str) = std::str::from_utf8(line) {
-                if let Some((k, v)) = line_str.split_once(":") {
-                    headers.insert(k.to_ascii_lowercase(), v.trim().to_string());
-                }
-            }
-            pos = end + 2;
-        }
-        let mut end = pos;
-        loop {
-            if end + marker.len() <= body.len()
-                && &body[end..end + marker.len()] == marker.as_slice()
-            {
-                break;
-            }
-            end += 1;
-            if end >= body.len() {
-                break;
-            }
-        }
-        let mut part_end = end;
-        if part_end >= 2 && &body[part_end - 2..part_end] == b"\r\n" {
-            part_end -= 2;
-        }
-        let part = body[pos..part_end].to_vec();
-        parts.push(PartData {
-            headers,
-            body: part,
-        });
-        pos = end;
-    }
-    Ok(parts)
 }
 
 fn parse_disposition_params(disp: &str) -> std::collections::HashMap<String, String> {
@@ -409,5 +360,55 @@ fn map_filename(data_type: &str, name: &str) -> String {
         "dmt_recording_mp4" => "Frames.mp4".into(),
         "refined_scan_zip" => "RefinedScan.zip".into(),
         _ => format!("{}.{}", name, data_type),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_disposition_without_id_matches_expected() {
+        let header = HttpDomainClient::content_disposition_value(
+            "manifest",
+            "dmt_manifest_json",
+            "domain-123",
+            None,
+        )
+        .expect("header");
+        assert_eq!(
+            header.to_str().unwrap(),
+            "form-data; name=\"manifest\"; data-type=\"dmt_manifest_json\"; domain-id=\"domain-123\""
+        );
+    }
+
+    #[test]
+    fn content_disposition_with_id_includes_identifier() {
+        let header = HttpDomainClient::content_disposition_value(
+            "refined_manifest",
+            "dmt_manifest_json",
+            "domain-456",
+            Some("item-789"),
+        )
+        .expect("header");
+        assert_eq!(
+            header.to_str().unwrap(),
+            "form-data; name=\"refined_manifest\"; data-type=\"dmt_manifest_json\"; domain-id=\"domain-456\"; id=\"item-789\""
+        );
+    }
+
+    #[test]
+    fn build_multipart_form_debug_contains_metadata() {
+        let form = HttpDomainClient::build_multipart_form(
+            "manifest",
+            "dmt_manifest_json",
+            "domain-123",
+            None,
+            b"payload".to_vec(),
+        )
+        .expect("form");
+        let debug_repr = format!("{:?}", form);
+        assert!(debug_repr.contains("manifest"));
+        assert!(debug_repr.contains("dmt_manifest_json"));
     }
 }

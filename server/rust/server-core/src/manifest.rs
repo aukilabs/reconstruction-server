@@ -3,6 +3,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{sync::watch, task::JoinHandle, time::interval};
@@ -183,7 +184,7 @@ impl PeriodicManifestUploader {
         mut job: Job,
         manifest_path: PathBuf,
         interval_dur: Duration,
-        domain: &'static dyn DomainPort,
+        domain: Arc<dyn DomainPort + Send + Sync>,
     ) -> Self {
         let (tx, mut rx) = watch::channel(false);
         let join = tokio::spawn(async move {

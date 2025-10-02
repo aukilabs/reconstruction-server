@@ -1,13 +1,19 @@
 use axum::serve;
 use clap::Parser;
-use parking_lot::Mutex;
+use rand::{rngs::StdRng, SeedableRng};
 use server_adapters::{
     dds::{http as dds_http, register},
-    http,
+    dms::{
+        client::DmsClient,
+        executor::{run_executor_loop, ExecutorConfig, TaskExecutor},
+        poller::{PollController, Poller},
+        session::{CapabilitySelector, HeartbeatPolicy, SessionManager},
+    },
     storage::HttpDomainClient,
 };
-use server_core::{JobList, Services};
+use server_core::Services;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::watch;
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -17,6 +23,7 @@ const DDS_CAPABILITIES: &[&str] = &[
 ];
 
 mod cli;
+mod config;
 use crate::cli::Cli;
 
 struct PythonRunner;
@@ -26,6 +33,7 @@ impl server_core::JobRunner for PythonRunner {
     async fn run_python(
         &self,
         job: &server_core::Job,
+        capability: &str,
         cpu_workers: usize,
     ) -> server_core::Result<()> {
         use std::io::{BufRead, BufReader, Write};
@@ -49,6 +57,8 @@ impl server_core::JobRunner for PythonRunner {
             job.meta.name.clone(),
             "--local_refinement_workers".into(),
             cpu_workers.to_string(),
+            "--capability".into(),
+            capability.to_string(),
             "--scans".into(),
         ];
         if let Ok(entries) = std::fs::read_dir(&datasets_root) {
@@ -100,6 +110,7 @@ impl server_core::JobRunner for NoopRunner {
     async fn run_python(
         &self,
         _job: &server_core::Job,
+        _capability: &str,
         _cpu_workers: usize,
     ) -> server_core::Result<()> {
         // Intentionally do nothing; used for lightweight testing via MOCK_PYTHON=true
@@ -112,20 +123,6 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
-
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cli.log_level.clone()));
-    if cli.log_format == "json" {
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt::layer().json())
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt::layer())
-            .init();
-    }
 
     if let Some(path) = &cli.job_request {
         let req_bytes = std::fs::read_to_string(path)?;
@@ -145,11 +142,12 @@ async fn main() -> anyhow::Result<()> {
             "localhost",
             (!retrigger_id.is_empty()).then_some(retrigger_id.as_str()),
         )?;
-        let domain = Box::leak(Box::new(HttpDomainClient::default()));
-        let runner: &'static dyn server_core::JobRunner = if cli.mock_python {
-            Box::leak(Box::new(NoopRunner))
+        let domain: Arc<dyn server_core::DomainPort + Send + Sync> =
+            Arc::new(HttpDomainClient::default());
+        let runner: Arc<dyn server_core::JobRunner + Send + Sync> = if cli.mock_python {
+            Arc::new(NoopRunner)
         } else {
-            Box::leak(Box::new(PythonRunner))
+            Arc::new(PythonRunner)
         };
         let services = Services {
             domain,
@@ -158,43 +156,87 @@ async fn main() -> anyhow::Result<()> {
                 cli.job_manifest_interval_ms.max(10),
             ),
         };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                server_core::execute_job(&services, &mut job, cli.cpu_workers).await
-            })?;
+        let capability = job.meta.processing_type.clone();
+        let _outputs =
+            server_core::execute_job(&services, &mut job, capability.as_str(), cli.cpu_workers)
+                .await?;
         return Ok(());
     }
 
-    if cli.api_key.as_deref().unwrap_or("").is_empty() {
-        eprintln!("API key is required");
-        std::process::exit(1);
+    let node_config = config::NodeConfig::from_env()?;
+
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cli.log_level.clone()));
+    if cli.log_format == "json" {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer().json())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer())
+            .init();
     }
 
-    let domain = Box::leak(Box::new(HttpDomainClient::default()));
-    let runner: &'static dyn server_core::JobRunner = if cli.mock_python {
-        Box::leak(Box::new(NoopRunner))
+    info!(
+        dms_base = %node_config.dms_base_url,
+        default_capability = %node_config.default_capability,
+        capabilities = ?node_config.node_capabilities,
+        "Loaded compute node configuration"
+    );
+    let domain: Arc<dyn server_core::DomainPort + Send + Sync> =
+        Arc::new(HttpDomainClient::default());
+    let runner: Arc<dyn server_core::JobRunner + Send + Sync> = if cli.mock_python {
+        Arc::new(NoopRunner)
     } else {
-        Box::leak(Box::new(PythonRunner))
+        Arc::new(PythonRunner)
     };
-    let services = Services {
+    let services = Arc::new(Services {
         domain,
         runner,
         manifest_interval: std::time::Duration::from_millis(cli.job_manifest_interval_ms.max(10)),
-    };
-    let state = http::AppState {
-        api_key: cli.api_key.clone(),
-        jobs: Arc::new(Mutex::new(JobList::default())),
-        job_in_progress: Arc::new(Mutex::new(false)),
-        services: Arc::new(services),
-        cpu_workers: cli.cpu_workers,
+    });
+
+    let request_timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
+    let session = SessionManager::new(CapabilitySelector::new(
+        node_config.node_capabilities.clone(),
+    ));
+    let rng = StdRng::from_entropy();
+    let controller = PollController::new(
+        node_config.poll_backoff.min,
+        node_config.poll_backoff.max,
+        rng,
+    );
+    let heartbeat_policy = HeartbeatPolicy::default_policy();
+    let dms_http = reqwest::Client::builder()
+        .timeout(request_timeout)
+        .build()?;
+    let dms_client = DmsClient::new(
+        node_config.dms_base_url.as_str(),
+        node_config.node_identity.clone(),
+        dms_http,
+    )?;
+    let poller = Poller::new(dms_client, session, controller, heartbeat_policy);
+    let reconstruction_url = cli
+        .node_url
+        .clone()
+        .unwrap_or_else(|| node_config.dms_base_url.to_string());
+    let executor_config = ExecutorConfig {
         data_dir: cli.data_dir.clone(),
+        reconstruction_url,
+        cpu_workers: cli.cpu_workers,
     };
-    // Build DDS router state and merge routers to include /health and callback endpoint
+    let task_executor = TaskExecutor::new(poller, Arc::clone(&services), executor_config);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let executor_handle = tokio::spawn(run_executor_loop(
+        task_executor,
+        node_config.poll_backoff.min,
+        shutdown_rx.clone(),
+    ));
+    // Build DDS router state to expose /health and registration callbacks
     let dds_state = dds_http::DdsState;
-    let app = server_adapters::http::router_with_dds(state, dds_state);
+    let app = dds_http::router_dds(dds_state);
 
     // If all DDS config present, prepare registration client and spawn background loop
     if let (Some(dds_base_url), Some(node_url), Some(reg_secret), Some(privhex)) = (
@@ -205,8 +247,9 @@ async fn main() -> anyhow::Result<()> {
     ) {
         let node_version = cli.node_version.clone();
         // Build reqwest client with timeout
-        let timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
-        let client = reqwest::Client::builder().timeout(timeout).build()?;
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout)
+            .build()?;
         // Log derived pubkey prefix for visibility
         if let Ok(sk) = server_adapters::dds::crypto::load_secp256k1_privhex(&privhex) {
             let pk_hex = server_adapters::dds::crypto::secp256k1_pubkey_uncompressed_hex(&sk);
@@ -236,9 +279,33 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = normalize_port(&cli.port).parse()?;
     info!("Server running on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    serve(listener, app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+
+    let mut http_shutdown = shutdown_rx.clone();
+    let server_future =
+        serve(listener, app.into_make_service()).with_graceful_shutdown(async move {
+            let _ = http_shutdown.changed().await;
+        });
+
+    let shutdown_task = {
+        let shutdown_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            let _ = shutdown_tx.send(true);
+        })
+    };
+
+    let server_result = server_future.await;
+    let _ = shutdown_tx.send(true);
+
+    if let Err(join_err) = shutdown_task.await {
+        warn!(error = %join_err, "Shutdown listener task failed");
+    }
+
+    if let Err(join_err) = executor_handle.await {
+        warn!(error = %join_err, "Task executor task failed to join");
+    }
+
+    server_result?;
     Ok(())
 }
 

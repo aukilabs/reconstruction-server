@@ -7,8 +7,6 @@ use clap::Parser;
     about = "Rust rewrite of reconstruction server"
 )]
 pub struct Cli {
-    #[arg(long = "api-key")]
-    pub api_key: Option<String>,
     // Server bind address/port. Accepts values like ":8080" or "0.0.0.0:8080".
     // Also reads from env var PORT.
     #[arg(long = "port", env = "PORT", default_value = ":8080")]

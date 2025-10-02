@@ -47,6 +47,21 @@ pub struct Job {
     pub completed_scans: HashMap<String, bool>,
 }
 
+/// Consumers that prepare reconstruction jobs may need to refresh the short-lived
+/// bearer token issued with each DMS lease before invoking domain APIs.
+///
+/// The compute node should call `set_access_token` with the latest session token
+/// so downstream domain uploads and downloads observe the correct credential.
+pub trait AccessTokenSink {
+    fn set_access_token(&mut self, token: impl Into<String>);
+}
+
+impl AccessTokenSink for Job {
+    fn set_access_token(&mut self, token: impl Into<String>) {
+        self.meta.access_token = token.into();
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobRequestData {
     pub data_ids: Vec<String>,
@@ -85,9 +100,4 @@ pub struct ExpectedOutput {
     pub name: String,
     pub data_type: String,
     pub optional: bool,
-}
-
-#[derive(Default)]
-pub struct JobList {
-    pub list: HashMap<String, Job>,
 }
