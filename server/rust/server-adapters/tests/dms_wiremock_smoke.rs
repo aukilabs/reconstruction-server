@@ -21,14 +21,16 @@ async fn lease_heartbeat_complete_smoke() {
     let client = DmsClient::new(server.uri(), identity.to_string(), http_client()).unwrap();
 
     let task_meta = json!({
-        "data_ids": ["scan-1"],
-        "domain_id": "domain-1",
-        "access_token": "token-from-request",
-        "processing_type": "local_and_global_refinement",
-        "domain_server_url": "https://domain.example",
-        "skip_manifest_upload": false,
-        "override_job_name": "",
-        "override_manifest_id": "",
+        "legacy": {
+            "data_ids": ["scan-1"],
+            "domain_id": "domain-1",
+            "access_token": "token-from-request",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "https://domain.example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        }
     });
 
     let lease_body = json!({

@@ -79,7 +79,8 @@ where
 
     async fn handle_lease(&mut self, snapshot: SessionSnapshot) -> Result<(), TaskExecutorError> {
         let capability = snapshot.capability().to_string();
-        let request_json = serde_json::to_string(snapshot.meta())?;
+        // Unwrap legacy payload: task.meta.legacy becomes the job request body
+        let request_json = serde_json::to_string(&snapshot.meta()["legacy"])?;
         let mut job = match server_core::create_job_metadata(
             &self.config.data_dir,
             &request_json,
