@@ -270,7 +270,9 @@ async fn successful_job_triggers_completion() {
     let runner_calls = harness.runner_calls.lock().expect("runner guard");
     assert_eq!(runner_calls.len(), 1);
     assert_eq!(runner_calls[0].capability, "cap/refinement");
-    assert_eq!(runner_calls[0].access_token, "lease-token");
+    // For legacy payloads, executor should use the access token
+    // from the legacy request body, not the ephemeral lease token.
+    assert_eq!(runner_calls[0].access_token, "placeholder");
 
     assert!(harness
         .client
@@ -308,5 +310,7 @@ async fn failing_runner_reports_failure() {
 
     let runner_calls = harness.runner_calls.lock().expect("runner guard");
     assert_eq!(runner_calls.len(), 1);
-    assert_eq!(runner_calls[0].access_token, "lease-token");
+    // For legacy payloads, executor should use the access token
+    // from the legacy request body, not the ephemeral lease token.
+    assert_eq!(runner_calls[0].access_token, "placeholder");
 }
