@@ -1,10 +1,8 @@
 use multer::Multipart;
 use regex::Regex;
-use reqwest::{
-    header::{HeaderMap, HeaderValue, CONTENT_DISPOSITION, CONTENT_TYPE},
-    multipart::{Form, Part},
-    Client,
-};
+#[cfg(test)]
+use reqwest::header::HeaderValue;
+use reqwest::Client;
 use server_core::{
     DomainError, DomainPort, ExpectedOutput, Job, Result, REFINED_MANIFEST_DATA_NAME,
     REFINED_MANIFEST_DATA_TYPE,
@@ -73,36 +71,39 @@ impl HttpDomainClient {
     fn auth(&self, job: &Job) -> String {
         format!("Bearer {}", job.meta.access_token)
     }
-    fn build_data_part(
+    fn build_multipart(
         name: &str,
         data_type: &str,
         domain_id: &str,
         id: Option<&str>,
-        bytes: Vec<u8>,
-    ) -> Result<Part> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            CONTENT_DISPOSITION,
-            Self::content_disposition_value(name, data_type, domain_id, id)?,
+        bytes: &[u8],
+    ) -> (Vec<u8>, String) {
+        let boundary = format!("------------------------{}", uuid::Uuid::new_v4().simple());
+        let mut body: Vec<u8> = Vec::new();
+        let disp = if let Some(id) = id {
+            format!(
+                "Content-Disposition: form-data; name=\"{}\"; data-type=\"{}\"; id=\"{}\"; domain-id=\"{}\"\r\n",
+                name, data_type, id, domain_id
+            )
+        } else {
+            format!(
+                "Content-Disposition: form-data; name=\"{}\"; data-type=\"{}\"; domain-id=\"{}\"\r\n",
+                name, data_type, domain_id
+            )
+        };
+        let header = format!(
+            "--{}\r\nContent-Type: application/octet-stream\r\n{}\r\n",
+            boundary, disp
         );
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-        Ok(Part::bytes(bytes).headers(headers))
+        body.extend_from_slice(header.as_bytes());
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+        let ctype = format!("multipart/form-data; boundary={}", boundary);
+        (body, ctype)
     }
 
-    fn build_multipart_form(
-        name: &str,
-        data_type: &str,
-        domain_id: &str,
-        id: Option<&str>,
-        bytes: Vec<u8>,
-    ) -> Result<Form> {
-        let part = Self::build_data_part(name, data_type, domain_id, id, bytes)?;
-        Ok(Form::new().part(name.to_string(), part))
-    }
-
+    #[cfg(test)]
     fn content_disposition_value(
         name: &str,
         data_type: &str,
@@ -142,13 +143,13 @@ impl DomainPort for HttpDomainClient {
             REFINED_MANIFEST_DATA_NAME, REFINED_MANIFEST_DATA_TYPE
         );
         let existing_id = job.uploaded_data_ids.get(&key).cloned();
-        let form = Self::build_multipart_form(
+        let (body, ctype) = Self::build_multipart(
             &name,
             REFINED_MANIFEST_DATA_TYPE,
             &job.meta.domain_id,
             existing_id.as_deref(),
-            bytes,
-        )?;
+            &bytes,
+        );
         let method = if existing_id.is_some() {
             reqwest::Method::PUT
         } else {
@@ -158,7 +159,8 @@ impl DomainPort for HttpDomainClient {
             .client
             .request(method, &url)
             .header("Authorization", self.auth(job))
-            .multipart(form)
+            .header("Content-Type", ctype)
+            .body(body)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -209,13 +211,13 @@ impl DomainPort for HttpDomainClient {
             .uploaded_data_ids
             .get(&format!("{}.{}", output.name, output.data_type))
             .map(|s| s.as_str());
-        let form = Self::build_multipart_form(
+        let (body, ctype) = Self::build_multipart(
             &name,
             &output.data_type,
             &job.meta.domain_id,
             existing,
-            bytes,
-        )?;
+            &bytes,
+        );
         let method = if existing.is_some() {
             reqwest::Method::PUT
         } else {
@@ -233,7 +235,8 @@ impl DomainPort for HttpDomainClient {
             .client
             .request(method, &url)
             .header("Authorization", self.auth(job))
-            .multipart(form)
+            .header("Content-Type", ctype)
+            .body(body)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -356,19 +359,20 @@ impl DomainPort for HttpDomainClient {
             job.meta.domain_server_url, job.meta.domain_id
         );
         let name = format!("refined_scan_{}", scan_id);
-        let form = Self::build_multipart_form(
+        let (body, ctype) = Self::build_multipart(
             &name,
             "refined_scan_zip",
             &job.meta.domain_id,
             None,
-            zip_bytes,
-        )?;
+            &zip_bytes,
+        );
         debug!(url = %url, scan_id = %scan_id, "Uploading refined scan ZIP");
         let resp = self
             .client
             .post(&url)
             .header("Authorization", self.auth(job))
-            .multipart(form)
+            .header("Content-Type", ctype)
+            .body(body)
             .send()
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
@@ -453,16 +457,15 @@ mod tests {
 
     #[test]
     fn build_multipart_form_debug_contains_metadata() {
-        let form = HttpDomainClient::build_multipart_form(
+        let header = HttpDomainClient::content_disposition_value(
             "manifest",
             "dmt_manifest_json",
             "domain-123",
             None,
-            b"payload".to_vec(),
         )
-        .expect("form");
-        let debug_repr = format!("{:?}", form);
-        assert!(debug_repr.contains("manifest"));
-        assert!(debug_repr.contains("dmt_manifest_json"));
+        .expect("header");
+        let s = header.to_str().unwrap();
+        assert!(s.contains("manifest"));
+        assert!(s.contains("dmt_manifest_json"));
     }
 }
