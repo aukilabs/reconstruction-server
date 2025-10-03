@@ -127,13 +127,73 @@ where
         #[cfg(feature = "metrics")]
         metrics::gauge!("dms.active_task").set(1.0);
 
-        let run_result = server_core::execute_job(
-            self.services.as_ref(),
-            &mut job,
-            &capability,
-            self.config.cpu_workers,
-        )
-        .await;
+        // Drive heartbeats while the Python pipeline runs to keep the lease alive
+        let run_result = {
+            let run_future = server_core::execute_job(
+                self.services.as_ref(),
+                &mut job,
+                &capability,
+                self.config.cpu_workers,
+            );
+            tokio::pin!(run_future);
+
+            loop {
+                // Determine when the next heartbeat is due
+                let sleep_duration = if let Some(snap) = self.poller.session_snapshot().await {
+                    if let Some(due) = snap.next_heartbeat_due() {
+                        let now = Instant::now();
+                        if due > now {
+                            due.duration_since(now)
+                        } else {
+                            Duration::from_millis(0)
+                        }
+                    } else {
+                        Duration::from_millis(250)
+                    }
+                } else {
+                    // No active session; pause briefly and re-check while waiting for job
+                    Duration::from_millis(250)
+                };
+
+                let maybe_result = tokio::select! {
+                    res = &mut run_future => { Some(res) },
+                    _ = tokio::time::sleep(sleep_duration) => {
+                        if let Some(snap) = self.poller.session_snapshot().await {
+                            match self
+                                .poller
+                                .send_heartbeat(snap.task_id(), None, Instant::now())
+                                .await
+                            {
+                                Ok(HeartbeatResult::Scheduled(_)) => { /* schedule updated */ }
+                                Ok(HeartbeatResult::Canceled) => {
+                                    warn!(
+                                        task_id = snap.task_id(),
+                                        capability = %snap.capability(),
+                                        "Lease canceled during execution; stopping heartbeats"
+                                    );
+                                }
+                                Ok(HeartbeatResult::LostLease) => {
+                                    warn!(
+                                        task_id = snap.task_id(),
+                                        capability = %snap.capability(),
+                                        "Lease lost during execution; stopping heartbeats"
+                                    );
+                                }
+                                Err(HeartbeatError::NoActiveSession) => { /* ignore */ }
+                                Err(err) => {
+                                    warn!(error = %err, "Heartbeat attempt failed");
+                                }
+                            }
+                        }
+                        None
+                    }
+                };
+
+                if let Some(res) = maybe_result {
+                    break res;
+                }
+            }
+        };
 
         #[cfg(feature = "metrics")]
         metrics::gauge!("dms.active_task").set(0.0);
