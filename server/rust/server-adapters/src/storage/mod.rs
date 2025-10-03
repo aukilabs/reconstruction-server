@@ -37,6 +37,39 @@ impl HttpDomainClient {
 }
 
 impl HttpDomainClient {
+    async fn map_http_error(resp: reqwest::Response, context: &str) -> DomainError {
+        let status = resp.status();
+        let url = resp.url().to_string();
+        // Try to read body for diagnostics; cap length to avoid noisy logs
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<body read error: {}>", e));
+        let snippet = if body.len() > 500 {
+            &body[..500]
+        } else {
+            &body
+        };
+        // If JSON, prefer common keys
+        let detail = match serde_json::from_str::<serde_json::Value>(snippet) {
+            Ok(v) => v
+                .get("error")
+                .or_else(|| v.get("message"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| snippet.to_string()),
+            Err(_) => snippet.to_string(),
+        };
+        let msg = format!("{}: status {} url={} body={}", context, status, url, detail);
+        match status.as_u16() {
+            400 => DomainError::BadRequest(msg),
+            401 => DomainError::Unauthorized,
+            404 => DomainError::NotFound(msg),
+            409 => DomainError::Conflict(msg),
+            _ => DomainError::Http(msg),
+        }
+    }
+
     fn auth(&self, job: &Job) -> String {
         format!("Bearer {}", job.meta.access_token)
     }
@@ -134,7 +167,7 @@ impl DomainPort for HttpDomainClient {
                 warn!("manifest upload conflict (409); assuming already exists");
                 return Ok(());
             }
-            return Err(DomainError::Http(format!("status {}", resp.status())));
+            return Err(Self::map_http_error(resp, "upload_manifest").await);
         }
         let text = resp
             .text()
@@ -151,6 +184,7 @@ impl DomainPort for HttpDomainClient {
     }
 
     async fn upload_output(&self, job: &Job, output: &ExpectedOutput) -> Result<()> {
+        use tracing::debug;
         if !output.file_path.exists() {
             if output.optional {
                 return Ok(());
@@ -187,6 +221,14 @@ impl DomainPort for HttpDomainClient {
         } else {
             reqwest::Method::POST
         };
+        debug!(
+            url = %url,
+            method = %method,
+            name = %name,
+            data_type = %output.data_type,
+            has_existing_id = existing.is_some(),
+            "Uploading output"
+        );
         let resp = self
             .client
             .request(method, &url)
@@ -199,7 +241,7 @@ impl DomainPort for HttpDomainClient {
             if output.optional {
                 return Ok(());
             }
-            return Err(DomainError::Http(format!("status {}", resp.status())));
+            return Err(Self::map_http_error(resp, "upload_output").await);
         }
         Ok(())
     }
@@ -210,6 +252,7 @@ impl DomainPort for HttpDomainClient {
         ids: &[String],
         datasets_root: &std::path::Path,
     ) -> Result<()> {
+        use tracing::debug;
         fs::create_dir_all(datasets_root).map_err(DomainError::Io)?;
         if ids.is_empty() {
             return Ok(());
@@ -219,6 +262,7 @@ impl DomainPort for HttpDomainClient {
             "{}/api/v1/domains/{}/data?ids={}",
             job.meta.domain_server_url, job.meta.domain_id, ids_param
         );
+        debug!(url = %url, ids_count = ids.len(), "Downloading data batch");
         let resp = self
             .client
             .get(&url)
@@ -228,7 +272,11 @@ impl DomainPort for HttpDomainClient {
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(DomainError::Http(format!("status {}", resp.status())));
+            return Err(Self::map_http_error(
+                resp,
+                &format!("download_data_batch(ids_count={})", ids.len()),
+            )
+            .await);
         }
         let content_type = resp
             .headers()
@@ -302,6 +350,7 @@ impl DomainPort for HttpDomainClient {
         scan_id: &str,
         zip_bytes: Vec<u8>,
     ) -> Result<()> {
+        use tracing::debug;
         let url = format!(
             "{}/api/v1/domains/{}/data",
             job.meta.domain_server_url, job.meta.domain_id
@@ -314,6 +363,7 @@ impl DomainPort for HttpDomainClient {
             None,
             zip_bytes,
         )?;
+        debug!(url = %url, scan_id = %scan_id, "Uploading refined scan ZIP");
         let resp = self
             .client
             .post(&url)
@@ -323,7 +373,11 @@ impl DomainPort for HttpDomainClient {
             .await
             .map_err(|e| DomainError::Http(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(DomainError::Http(format!("status {}", resp.status())));
+            return Err(Self::map_http_error(
+                resp,
+                &format!("upload_refined_scan_zip(scan_id={})", scan_id),
+            )
+            .await);
         }
         Ok(())
     }

@@ -117,7 +117,13 @@ where
             capability = %capability
         );
         let _guard = span.enter();
-        info!("Starting Python pipeline");
+        info!(
+            domain_id = %job.meta.domain_id,
+            domain_url = %job.meta.domain_server_url,
+            data_ids = job.meta.data_ids.len(),
+            skip_manifest_upload = job.meta.skip_manifest_upload,
+            "Starting Python pipeline"
+        );
         #[cfg(feature = "metrics")]
         metrics::gauge!("dms.active_task").set(1.0);
 
