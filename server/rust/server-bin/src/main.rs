@@ -95,7 +95,14 @@ impl server_core::JobRunner for PythonRunner {
             });
         }
 
-        let status = child.wait().map_err(server_core::DomainError::Io)?;
+        // Important: Avoid blocking the async runtime while waiting for the
+        // Python process to finish. If we block here, the executor's
+        // heartbeat loop cannot make progress and the lease may expire.
+        // Offload the blocking wait to a dedicated thread.
+        let status = tokio::task::spawn_blocking(move || child.wait())
+            .await
+            .map_err(|e| server_core::DomainError::Internal(e.to_string()))?
+            .map_err(server_core::DomainError::Io)?;
         if !status.success() {
             return Err(server_core::DomainError::Internal("python failed".into()));
         }
