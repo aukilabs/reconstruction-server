@@ -33,7 +33,7 @@ impl server_core::JobRunner for PythonRunner {
     async fn run_python(
         &self,
         job: &server_core::Job,
-        capability: &str,
+        _capability: &str,
         cpu_workers: usize,
     ) -> server_core::Result<()> {
         use std::io::{BufRead, BufReader, Write};
@@ -49,7 +49,7 @@ impl server_core::JobRunner for PythonRunner {
             job.meta.processing_type.clone(),
             "--job_root_path".into(),
             job.job_path.to_string_lossy().into_owned(),
-            "--output".into(),
+            "--output_path".into(),
             output_path.to_string_lossy().into_owned(),
             "--domain_id".into(),
             job.meta.domain_id.clone(),
@@ -57,8 +57,6 @@ impl server_core::JobRunner for PythonRunner {
             job.meta.name.clone(),
             "--local_refinement_workers".into(),
             cpu_workers.to_string(),
-            "--capability".into(),
-            capability.to_string(),
             "--scans".into(),
         ];
         if let Ok(entries) = std::fs::read_dir(&datasets_root) {
