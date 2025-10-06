@@ -7,19 +7,26 @@ use tokio::sync::Mutex;
 use super::models::{
     CompletionRequest, FailRequest, HeartbeatRequest, LeaseRequest, LeaseResponse,
 };
+use crate::{
+    auth::token_manager::{TokenProvider, TokenProviderError},
+    dms::redact::RedactedOption,
+};
+use tracing::warn;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DmsClientError {
     #[error("invalid DMS base url `{raw}`: {details}")]
     InvalidBaseUrl { raw: String, details: String },
-    #[error("invalid Authorization header: {details}")]
-    InvalidIdentity { details: String },
+    #[error("invalid bearer token header: {details}")]
+    InvalidToken { details: String },
     #[error("failed to build request url `{path}`: {details}")]
     InvalidRequestUrl { path: String, details: String },
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
     #[error("unexpected status: {0}")]
     UnexpectedStatus(StatusCode),
+    #[error("token provider error: {0}")]
+    Token(#[from] TokenProviderError),
 }
 
 pub type Result<T> = std::result::Result<T, DmsClientError>;
@@ -34,8 +41,7 @@ pub struct LeaseState {
 #[derive(Clone)]
 pub struct DmsClient {
     base_url: Url,
-    node_identity: String,
-    auth_header: header::HeaderValue,
+    token_provider: Arc<dyn TokenProvider>,
     http: reqwest::Client,
     session: Arc<Mutex<Option<LeaseState>>>,
 }
@@ -43,7 +49,7 @@ pub struct DmsClient {
 impl DmsClient {
     pub fn new(
         base_url: impl AsRef<str>,
-        node_identity: String,
+        token_provider: Arc<dyn TokenProvider>,
         http: reqwest::Client,
     ) -> Result<Self> {
         let base_raw = base_url.as_ref();
@@ -51,26 +57,12 @@ impl DmsClient {
             raw: base_raw.to_string(),
             details: err.to_string(),
         })?;
-
-        let auth_value = format!("Bearer {}", node_identity);
-        let mut auth_header = header::HeaderValue::from_str(&auth_value).map_err(|err| {
-            DmsClientError::InvalidIdentity {
-                details: err.to_string(),
-            }
-        })?;
-        auth_header.set_sensitive(true);
-
         Ok(Self {
             base_url,
-            node_identity,
-            auth_header,
+            token_provider,
             http,
             session: Arc::new(Mutex::new(None)),
         })
-    }
-
-    pub fn node_identity(&self) -> &str {
-        &self.node_identity
     }
 
     pub async fn access_token(&self) -> Option<String> {
@@ -108,12 +100,13 @@ impl DmsClient {
             query.push(("domain_id", domain_id));
         }
 
+        let http = self.http.clone();
         let response = self
-            .http
-            .get(url)
-            .header(header::AUTHORIZATION, self.auth_header.clone())
-            .query(&query)
-            .send()
+            .send_with_retry({
+                let url = url.clone();
+                let query = query.clone();
+                move || http.get(url.clone()).query(&query)
+            })
             .await?;
 
         if response.status() == StatusCode::NO_CONTENT {
@@ -134,12 +127,12 @@ impl DmsClient {
         progress: Option<&Value>,
     ) -> Result<LeaseResponse> {
         let url = self.join_path(&format!("tasks/{}/heartbeat", task_id))?;
+        let http = self.http.clone();
         let response = self
-            .http
-            .post(url)
-            .header(header::AUTHORIZATION, self.auth_header.clone())
-            .json(&HeartbeatRequest { progress })
-            .send()
+            .send_with_retry({
+                let url = url.clone();
+                move || http.post(url.clone()).json(&HeartbeatRequest { progress })
+            })
             .await?;
 
         if !response.status().is_success() {
@@ -158,15 +151,20 @@ impl DmsClient {
         meta: Option<&Value>,
     ) -> Result<()> {
         let url = self.join_path(&format!("tasks/{}/complete", task_id))?;
+        let http = self.http.clone();
+        let outputs_owned: Vec<String> = outputs.to_vec();
+        let meta_owned = meta.cloned();
         let response = self
-            .http
-            .post(url)
-            .header(header::AUTHORIZATION, self.auth_header.clone())
-            .json(&CompletionRequest {
-                output_cids: outputs,
-                meta,
+            .send_with_retry({
+                let url = url.clone();
+                let client = http.clone();
+                move || {
+                    client.post(url.clone()).json(&CompletionRequest {
+                        output_cids: &outputs_owned,
+                        meta: meta_owned.as_ref(),
+                    })
+                }
             })
-            .send()
             .await?;
 
         if !response.status().is_success() {
@@ -184,12 +182,20 @@ impl DmsClient {
         details: Option<&Value>,
     ) -> Result<()> {
         let url = self.join_path(&format!("tasks/{}/fail", task_id))?;
+        let http = self.http.clone();
+        let reason_owned = reason.to_string();
+        let details_owned = details.cloned();
         let response = self
-            .http
-            .post(url)
-            .header(header::AUTHORIZATION, self.auth_header.clone())
-            .json(&FailRequest { reason, details })
-            .send()
+            .send_with_retry({
+                let url = url.clone();
+                let client = http.clone();
+                move || {
+                    client.post(url.clone()).json(&FailRequest {
+                        reason: &reason_owned,
+                        details: details_owned.as_ref(),
+                    })
+                }
+            })
             .await?;
 
         if !response.status().is_success() {
@@ -198,6 +204,46 @@ impl DmsClient {
 
         self.clear_session().await;
         Ok(())
+    }
+
+    async fn bearer_header(&self) -> Result<header::HeaderValue> {
+        let token = self.token_provider.bearer().await?;
+        let value = format!("Bearer {token}");
+        let mut header =
+            header::HeaderValue::from_str(&value).map_err(|err| DmsClientError::InvalidToken {
+                details: err.to_string(),
+            })?;
+        header.set_sensitive(true);
+        Ok(header)
+    }
+
+    async fn send_with_retry<F>(&self, mut make_request: F) -> Result<reqwest::Response>
+    where
+        F: FnMut() -> reqwest::RequestBuilder,
+    {
+        let mut retried = false;
+        loop {
+            let auth = self.bearer_header().await?;
+            let response = make_request()
+                .header(header::AUTHORIZATION, auth)
+                .send()
+                .await?;
+
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && !retried {
+                let current = self.access_token().await;
+                warn!(
+                    status = %status,
+                    access_token = %RedactedOption::new(current.as_deref()),
+                    "DMS request unauthorized; retrying once with new token"
+                );
+                retried = true;
+                self.token_provider.on_unauthorized().await;
+                continue;
+            }
+
+            return Ok(response);
+        }
     }
 
     fn join_path(&self, path: &str) -> Result<Url> {

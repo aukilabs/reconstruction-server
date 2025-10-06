@@ -1,10 +1,28 @@
 use serde_json::json;
-use server_adapters::dms::{
-    client::{DmsClient, LeaseState},
-    models::{LeaseRequest, TaskSummary},
+use server_adapters::{
+    auth::token_manager::{TokenProvider, TokenProviderError},
+    dms::{
+        client::{DmsClient, LeaseState},
+        models::{LeaseRequest, TaskSummary},
+    },
 };
+use std::sync::Arc;
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[derive(Clone)]
+struct StaticTokenProvider {
+    token: String,
+}
+
+#[async_trait::async_trait]
+impl TokenProvider for StaticTokenProvider {
+    async fn bearer(&self) -> Result<String, TokenProviderError> {
+        Ok(self.token.clone())
+    }
+
+    async fn on_unauthorized(&self) {}
+}
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -17,8 +35,16 @@ fn http_client() -> reqwest::Client {
 #[tokio::test]
 async fn lease_heartbeat_complete_smoke() {
     let server = MockServer::start().await;
-    let identity = "siwe:00000000-0000-0000-0000-000000000042";
-    let client = DmsClient::new(server.uri(), identity.to_string(), http_client()).unwrap();
+    let token = "token-smoke";
+    let provider = Arc::new(StaticTokenProvider {
+        token: token.to_string(),
+    });
+    let client = DmsClient::new(
+        server.uri(),
+        provider.clone() as Arc<dyn TokenProvider>,
+        http_client(),
+    )
+    .unwrap();
 
     let task_meta = json!({
         "legacy": {
@@ -47,7 +73,7 @@ async fn lease_heartbeat_complete_smoke() {
     Mock::given(method("GET"))
         .and(path("/tasks"))
         .and(query_param("capability", "cap/refinement"))
-        .and(header("authorization", format!("Bearer {}", identity)))
+        .and(header("authorization", format!("Bearer {}", token)))
         .respond_with(ResponseTemplate::new(200).set_body_json(lease_body))
         .expect(1)
         .mount(&server)
@@ -77,7 +103,7 @@ async fn lease_heartbeat_complete_smoke() {
 
     Mock::given(method("POST"))
         .and(path("/tasks/task-123/heartbeat"))
-        .and(header("authorization", format!("Bearer {}", identity)))
+        .and(header("authorization", format!("Bearer {}", token)))
         .and(body_json(json!({ "progress": { "message": "loading" } })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "task": TaskSummary {
@@ -102,7 +128,7 @@ async fn lease_heartbeat_complete_smoke() {
 
     Mock::given(method("POST"))
         .and(path("/tasks/task-123/complete"))
-        .and(header("authorization", format!("Bearer {}", identity)))
+        .and(header("authorization", format!("Bearer {}", token)))
         .and(body_json(json!({
             "output_cids": ["cid-1"],
             "meta": {"upload": true}

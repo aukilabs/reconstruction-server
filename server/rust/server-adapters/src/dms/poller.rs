@@ -2,13 +2,12 @@ use rand::distributions::{Distribution, Uniform};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use reqwest::StatusCode;
 use serde_json::Value;
-use std::fmt;
-use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 use super::{
     client::{DmsClient, DmsClientError, Result as ClientResult},
     models::{LeaseRequest, LeaseResponse},
+    redact::{Redacted, RedactedOption},
     session::{CapabilitySelector, HeartbeatPolicy, SessionError, SessionManager, SessionSnapshot},
 };
 
@@ -148,46 +147,6 @@ pub enum FailureError {
     },
     #[error(transparent)]
     Client(#[from] DmsClientError),
-}
-
-struct Redacted<'a, T>(PhantomData<&'a T>);
-
-impl<'a, T> Redacted<'a, T> {
-    fn new(_: &'a T) -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<'a, T> fmt::Debug for Redacted<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-struct RedactedOption<'a>(Option<&'a str>);
-
-impl<'a> RedactedOption<'a> {
-    fn new(value: Option<&'a str>) -> Self {
-        Self(value)
-    }
-}
-
-impl<'a> fmt::Debug for RedactedOption<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(_) => f.write_str("[REDACTED]"),
-            None => f.write_str("None"),
-        }
-    }
-}
-
-impl<'a> fmt::Display for RedactedOption<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(_) => f.write_str("[REDACTED]"),
-            None => f.write_str("None"),
-        }
-    }
 }
 
 #[async_trait::async_trait]

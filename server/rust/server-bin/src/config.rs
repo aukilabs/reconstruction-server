@@ -4,7 +4,7 @@ use reqwest::Url;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NodeConfig {
     pub dms_base_url: Url,
     pub node_identity: String,
@@ -12,6 +12,9 @@ pub struct NodeConfig {
     pub default_capability: String,
     pub heartbeat_jitter: Duration,
     pub poll_backoff: PollBackoff,
+    pub token_safety_ratio: f64,
+    pub token_reauth_max_retries: u32,
+    pub token_reauth_jitter: Duration,
     pub dds: DdsConfig,
 }
 
@@ -50,6 +53,13 @@ pub enum ConfigError {
         field: &'static str,
         source: std::num::ParseIntError,
     },
+    #[error("invalid decimal in {field}: {details}")]
+    InvalidDecimal {
+        field: &'static str,
+        details: String,
+    },
+    #[error("TOKEN_SAFETY_RATIO must be between 0.0 and 1.0, got {value}")]
+    InvalidTokenSafetyRatio { value: String },
     #[error("POLL_BACKOFF_MS_MIN ({min}) must be <= POLL_BACKOFF_MS_MAX ({max})")]
     InvalidBackoff { min: u64, max: u64 },
 }
@@ -58,6 +68,9 @@ impl NodeConfig {
     const HEARTBEAT_JITTER_DEFAULT_MS: u64 = 250;
     const POLL_BACKOFF_MIN_DEFAULT_MS: u64 = 1_000;
     const POLL_BACKOFF_MAX_DEFAULT_MS: u64 = 30_000;
+    const TOKEN_SAFETY_RATIO_DEFAULT: f64 = 0.75;
+    const TOKEN_REAUTH_MAX_RETRIES_DEFAULT: u32 = 3;
+    const TOKEN_REAUTH_JITTER_DEFAULT_MS: u64 = 500;
 
     pub fn from_env() -> Result<Self, ConfigError> {
         let dms_base_raw = get_required_env("DMS_BASE_URL")?;
@@ -83,6 +96,16 @@ impl NodeConfig {
             get_optional_u64("POLL_BACKOFF_MS_MIN", Self::POLL_BACKOFF_MIN_DEFAULT_MS)?;
         let poll_backoff_max_ms =
             get_optional_u64("POLL_BACKOFF_MS_MAX", Self::POLL_BACKOFF_MAX_DEFAULT_MS)?;
+        let token_safety_ratio =
+            get_optional_ratio("TOKEN_SAFETY_RATIO", Self::TOKEN_SAFETY_RATIO_DEFAULT)?;
+        let token_reauth_max_retries = get_optional_u32(
+            "TOKEN_REAUTH_MAX_RETRIES",
+            Self::TOKEN_REAUTH_MAX_RETRIES_DEFAULT,
+        )?;
+        let token_reauth_jitter_ms = get_optional_u64(
+            "TOKEN_REAUTH_JITTER_MS",
+            Self::TOKEN_REAUTH_JITTER_DEFAULT_MS,
+        )?;
 
         if poll_backoff_min_ms > poll_backoff_max_ms {
             return Err(ConfigError::InvalidBackoff {
@@ -111,6 +134,9 @@ impl NodeConfig {
                 min: Duration::from_millis(poll_backoff_min_ms),
                 max: Duration::from_millis(poll_backoff_max_ms),
             },
+            token_safety_ratio,
+            token_reauth_max_retries,
+            token_reauth_jitter: Duration::from_millis(token_reauth_jitter_ms),
             dds,
         })
     }
@@ -121,6 +147,16 @@ fn get_required_env(name: &'static str) -> Result<String, ConfigError> {
 }
 
 fn get_optional_u64(name: &'static str, default: u64) -> Result<u64, ConfigError> {
+    match env::var(name) {
+        Ok(value) => value.parse().map_err(|source| ConfigError::InvalidNumber {
+            field: name,
+            source,
+        }),
+        Err(_) => Ok(default),
+    }
+}
+
+fn get_optional_u32(name: &'static str, default: u32) -> Result<u32, ConfigError> {
     match env::var(name) {
         Ok(value) => value.parse().map_err(|source| ConfigError::InvalidNumber {
             field: name,
@@ -143,6 +179,26 @@ fn get_optional_u64_opt(name: &'static str) -> Result<Option<u64>, ConfigError> 
         }
         Ok(_) => Ok(None),
         Err(_) => Ok(None),
+    }
+}
+
+fn get_optional_ratio(name: &'static str, default: f64) -> Result<f64, ConfigError> {
+    match env::var(name) {
+        Ok(value) => {
+            let parsed = value
+                .parse::<f64>()
+                .map_err(|source| ConfigError::InvalidDecimal {
+                    field: name,
+                    details: source.to_string(),
+                })?;
+
+            if !(0.0..=1.0).contains(&parsed) {
+                Err(ConfigError::InvalidTokenSafetyRatio { value })
+            } else {
+                Ok(parsed)
+            }
+        }
+        Err(_) => Ok(default),
     }
 }
 
@@ -244,6 +300,9 @@ mod tests {
             .unset("HEARTBEAT_JITTER_MS")
             .unset("POLL_BACKOFF_MS_MIN")
             .unset("POLL_BACKOFF_MS_MAX")
+            .unset("TOKEN_SAFETY_RATIO")
+            .unset("TOKEN_REAUTH_MAX_RETRIES")
+            .unset("TOKEN_REAUTH_JITTER_MS")
             .unset("DDS_BASE_URL")
             .unset("NODE_URL")
             .unset("REG_SECRET")
@@ -270,6 +329,9 @@ mod tests {
         assert_eq!(cfg.heartbeat_jitter, Duration::from_millis(250));
         assert_eq!(cfg.poll_backoff.min, Duration::from_millis(1_000));
         assert_eq!(cfg.poll_backoff.max, Duration::from_millis(30_000));
+        assert!((cfg.token_safety_ratio - 0.75).abs() < f64::EPSILON);
+        assert_eq!(cfg.token_reauth_max_retries, 3);
+        assert_eq!(cfg.token_reauth_jitter, Duration::from_millis(500));
         assert_eq!(cfg.dds, DdsConfig::default());
     }
 
@@ -298,6 +360,9 @@ mod tests {
             .set("HEARTBEAT_JITTER_MS", "400")
             .set("POLL_BACKOFF_MS_MIN", "500")
             .set("POLL_BACKOFF_MS_MAX", "2000")
+            .set("TOKEN_SAFETY_RATIO", "0.6")
+            .set("TOKEN_REAUTH_MAX_RETRIES", "5")
+            .set("TOKEN_REAUTH_JITTER_MS", "1500")
             .set("DDS_BASE_URL", "https://dds.example.com")
             .set("NODE_URL", "https://node.example.com")
             .set("REG_SECRET", "supersecret")
@@ -311,6 +376,9 @@ mod tests {
         assert_eq!(cfg.heartbeat_jitter, Duration::from_millis(400));
         assert_eq!(cfg.poll_backoff.min, Duration::from_millis(500));
         assert_eq!(cfg.poll_backoff.max, Duration::from_millis(2_000));
+        assert!((cfg.token_safety_ratio - 0.6).abs() < f64::EPSILON);
+        assert_eq!(cfg.token_reauth_max_retries, 5);
+        assert_eq!(cfg.token_reauth_jitter, Duration::from_millis(1_500));
         assert_eq!(cfg.dds.base_url.as_deref(), Some("https://dds.example.com"));
         assert_eq!(
             cfg.dds.node_url.as_deref(),
@@ -338,5 +406,49 @@ mod tests {
                 max: 1_000
             }
         );
+    }
+
+    #[test]
+    fn errors_when_token_safety_ratio_not_a_number() {
+        let _guard = env_lock();
+        let _env = base_env().set("TOKEN_SAFETY_RATIO", "not-a-number");
+
+        let err = NodeConfig::from_env().unwrap_err();
+        assert_eq!(
+            err,
+            ConfigError::InvalidDecimal {
+                field: "TOKEN_SAFETY_RATIO",
+                details: "invalid float literal".into()
+            }
+        );
+    }
+
+    #[test]
+    fn errors_when_token_safety_ratio_out_of_range() {
+        let _guard = env_lock();
+        let _env = base_env().set("TOKEN_SAFETY_RATIO", "1.5");
+
+        let err = NodeConfig::from_env().unwrap_err();
+        assert_eq!(
+            err,
+            ConfigError::InvalidTokenSafetyRatio {
+                value: "1.5".into()
+            }
+        );
+    }
+
+    #[test]
+    fn errors_when_token_reauth_max_retries_invalid_number() {
+        let _guard = env_lock();
+        let _env = base_env().set("TOKEN_REAUTH_MAX_RETRIES", "nope");
+
+        let err = NodeConfig::from_env().unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidNumber {
+                field: "TOKEN_REAUTH_MAX_RETRIES",
+                ..
+            }
+        ));
     }
 }

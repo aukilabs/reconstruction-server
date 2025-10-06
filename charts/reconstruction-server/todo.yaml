@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reconstruction-server-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: reconstruction-server
+    env: dev
+spec:
+  project: default
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  source:
+    repoURL: https://github.com/aukilabs/reconstruction-server.git
+    targetRevision: feature/dds-registration
+    path: charts/reconstruction-server
+    helm:
+      releaseName: reconstruction-server-dev
+      valueFiles:
+        - values.yaml
+      parameters:
+        - name: reconstruction-server.image.repository
+          value: aukibot/reconstruction-server
+        - name: reconstruction-server.image.tag
+          value: 4e3b9d1fb2847730be0fe6e9777af7bdd2f3ad61
+        - name: reconstruction-server.ingress.hosts[0]
+          value: reconstruction-dev.dev.aukiverse.com
+        - name: reconstruction-server.ingress.tls[0].hosts[0]
+          value: reconstruction-dev.dev.aukiverse.com
+
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

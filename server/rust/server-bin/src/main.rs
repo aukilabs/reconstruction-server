@@ -2,6 +2,11 @@ use axum::serve;
 use clap::Parser;
 use rand::{rngs::StdRng, SeedableRng};
 use server_adapters::{
+    auth::siwe as siwe_auth,
+    auth::token_manager::{
+        AccessAuthenticator, SystemClock, TokenManager, TokenManagerConfig, TokenProvider,
+        TokenProviderError,
+    },
     dds::{http as dds_http, register},
     dms::{
         client::DmsClient,
@@ -12,6 +17,7 @@ use server_adapters::{
     storage::HttpDomainClient,
 };
 use server_core::Services;
+use sha3::Digest;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::watch;
 use tracing::{info, warn};
@@ -108,6 +114,28 @@ impl server_core::JobRunner for PythonRunner {
         }
         Ok(())
     }
+}
+
+#[derive(Clone)]
+struct IdentityTokenProvider {
+    token: Arc<String>,
+}
+
+impl IdentityTokenProvider {
+    fn new(token: String) -> Self {
+        Self {
+            token: Arc::new(token),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TokenProvider for IdentityTokenProvider {
+    async fn bearer(&self) -> std::result::Result<String, TokenProviderError> {
+        Ok((*self.token).clone())
+    }
+
+    async fn on_unauthorized(&self) {}
 }
 
 #[async_trait::async_trait]
@@ -217,9 +245,48 @@ async fn main() -> anyhow::Result<()> {
     let dms_http = reqwest::Client::builder()
         .timeout(request_timeout)
         .build()?;
+    // Prefer SIWE-based DDS authentication if DDS_BASE_URL and SECP256K1_PRIVHEX are available.
+    let identity_provider: Arc<dyn TokenProvider> = if let (Some(dds_base_url), Some(privhex)) = (
+        node_config.dds.base_url.clone(),
+        node_config.dds.secp256k1_privhex.clone(),
+    ) {
+        // If registration loop is configured, gate SIWE until registration callback completes.
+        let registration_configured =
+            node_config.dds.node_url.is_some() && node_config.dds.reg_secret.is_some();
+        if registration_configured {
+            info!("DDS auth configured; delaying SIWE until registration completes");
+            Arc::new(SiweAfterRegistrationProvider::new(
+                dds_base_url,
+                privhex,
+                node_config.token_safety_ratio,
+                node_config.token_reauth_max_retries,
+                node_config.token_reauth_jitter,
+            )) as Arc<dyn TokenProvider>
+        } else {
+            info!("DDS auth configured; using SIWE token manager");
+            let authenticator = Arc::new(DdsAuthenticator::new(dds_base_url, privhex));
+            let manager: Arc<TokenManager<DdsAuthenticator, SystemClock>> =
+                Arc::new(TokenManager::new(
+                    authenticator,
+                    Arc::new(SystemClock),
+                    TokenManagerConfig {
+                        safety_ratio: node_config.token_safety_ratio,
+                        max_retries: node_config.token_reauth_max_retries,
+                        jitter: node_config.token_reauth_jitter,
+                    },
+                ));
+            manager.start_bg().await;
+            manager as Arc<dyn TokenProvider>
+        }
+    } else {
+        info!("DDS auth not fully configured; using static node identity");
+        Arc::new(IdentityTokenProvider::new(
+            node_config.node_identity.clone(),
+        )) as Arc<dyn TokenProvider>
+    };
     let dms_client = DmsClient::new(
         node_config.dms_base_url.as_str(),
-        node_config.node_identity.clone(),
+        identity_provider,
         dms_http,
     )?;
     let poller = Poller::new(dms_client, session, controller, heartbeat_policy);
@@ -344,5 +411,153 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+// --- DDS SIWE authenticator used by the token manager ---
+#[derive(Clone)]
+struct DdsAuthenticator {
+    base_url: Arc<String>,
+    priv_hex: Arc<String>,
+    address: Arc<String>,
+}
+
+impl DdsAuthenticator {
+    fn new(base_url: String, priv_hex: String) -> Self {
+        let address = derive_eth_address(&priv_hex);
+        Self {
+            base_url: Arc::new(base_url),
+            priv_hex: Arc::new(priv_hex),
+            address: Arc::new(address),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AccessAuthenticator for DdsAuthenticator {
+    async fn login(
+        &self,
+    ) -> Result<server_adapters::auth::siwe::AccessBundle, server_adapters::auth::siwe::SiweError>
+    {
+        let meta = siwe_auth::request_nonce(self.base_url.as_str(), self.address.as_str()).await?;
+        let message = siwe_auth::compose_message(&meta, self.address.as_str(), None)?;
+        let signature = siwe_auth::sign_message(self.priv_hex.as_str(), &message)?;
+        siwe_auth::verify(
+            self.base_url.as_str(),
+            self.address.as_str(),
+            &message,
+            &signature,
+        )
+        .await
+    }
+}
+
+fn derive_eth_address(priv_hex: &str) -> String {
+    // Compute Ethereum address from secp256k1 private key
+    use k256::{ecdsa::SigningKey, FieldBytes};
+    let trimmed = priv_hex.trim_start_matches("0x");
+    let key_bytes = hex::decode(trimmed).expect("valid secp256k1 hex");
+    let signing_key =
+        SigningKey::from_bytes(FieldBytes::from_slice(&key_bytes)).expect("signing key");
+    let verifying_key = signing_key.verifying_key();
+    let encoded = verifying_key.to_encoded_point(false);
+    let pubkey = encoded.as_bytes();
+    let mut hasher = sha3::Keccak256::new();
+    hasher.update(&pubkey[1..]);
+    let hashed = hasher.finalize();
+    let address_bytes = &hashed[12..];
+    format!("0x{}", hex::encode(address_bytes))
+}
+
+// A TokenProvider that only starts SIWE after the registration callback from DDS
+// has completed (persisting the node secret in memory via posemesh-node-registration).
+#[derive(Clone)]
+struct SiweAfterRegistrationProvider {
+    dds_base_url: Arc<String>,
+    priv_hex: Arc<String>,
+    config: TokenManagerConfig,
+    inner: ManagerCell,
+}
+
+// Clippy appeasement: factor complex types into aliases
+type TokenMgr = TokenManager<DdsAuthenticator, SystemClock>;
+type SharedManager = Arc<TokenMgr>;
+type ManagerCell = Arc<tokio::sync::Mutex<Option<SharedManager>>>;
+
+impl SiweAfterRegistrationProvider {
+    fn new(
+        dds_base_url: String,
+        priv_hex: String,
+        safety_ratio: f64,
+        max_retries: u32,
+        jitter: std::time::Duration,
+    ) -> Self {
+        Self {
+            dds_base_url: Arc::new(dds_base_url),
+            priv_hex: Arc::new(priv_hex),
+            config: TokenManagerConfig {
+                safety_ratio,
+                max_retries,
+                jitter,
+            },
+            inner: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    async fn ensure_started(&self) -> SharedManager {
+        {
+            let guard = self.inner.lock().await;
+            if let Some(m) = &*guard {
+                return m.clone();
+            }
+        }
+
+        // Wait until registration callback persisted the node secret.
+        // This uses the re-exported persist API from posemesh-node-registration.
+        loop {
+            match server_adapters::dds::persist::read_node_secret() {
+                Ok(Some(_)) => {
+                    info!("registration complete; starting SIWE token manager");
+                    break;
+                }
+                Ok(None) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    warn!(error = %e, "registration status read failed; retrying");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+
+        let authenticator = Arc::new(DdsAuthenticator::new(
+            self.dds_base_url.as_ref().clone(),
+            self.priv_hex.as_ref().clone(),
+        ));
+        let manager: SharedManager = Arc::new(TokenManager::new(
+            authenticator,
+            Arc::new(SystemClock),
+            self.config.clone(),
+        ));
+        manager.start_bg().await;
+
+        let mut guard = self.inner.lock().await;
+        *guard = Some(manager.clone());
+        manager
+    }
+}
+
+#[async_trait::async_trait]
+impl TokenProvider for SiweAfterRegistrationProvider {
+    async fn bearer(&self) -> std::result::Result<String, TokenProviderError> {
+        let manager = self.ensure_started().await;
+        manager.bearer().await
+    }
+
+    async fn on_unauthorized(&self) {
+        let guard = self.inner.lock().await;
+        if let Some(m) = &*guard {
+            m.on_unauthorized().await
+        }
     }
 }
