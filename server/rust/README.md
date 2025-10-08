@@ -55,6 +55,12 @@ level flow validated by `e2e_dds_dms_tests` is:
 Tokens are never logged (all tracing fields use `[REDACTED]`) and no refresh
 token or SIWE secret is persisted to disk.
 
+Domain API authorization: All domain/storage HTTP calls (manifest uploads, data
+downloads, refined scan uploads) use the short‑lived `access_token` returned
+with each DMS lease/heartbeat for the active session. The legacy token present
+in `task.meta.legacy.access_token` is treated only as a fallback when no
+session token is available (for example, offline `--job-request` runs).
+
 ## Development Commands
 
 ```bash

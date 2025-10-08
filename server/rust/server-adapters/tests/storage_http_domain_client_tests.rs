@@ -1,10 +1,13 @@
 use std::{collections::HashMap, fs, io::Write};
 
+use async_trait::async_trait;
 use httpmock::MockServer;
 use reqwest::Client;
+use server_adapters::storage::DomainTokenProvider;
 use server_adapters::storage::HttpDomainClient;
 use server_core::{DomainPort, Job, JobMetadata};
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
 fn build_job(temp_dir: &tempfile::TempDir, domain_url: &str) -> Job {
     let job_path = temp_dir.path().join("jobs").join("dom1").join("job_123");
@@ -149,4 +152,145 @@ async fn download_data_batch_streams_large_zip_parts() {
         fs::metadata(zip_path).unwrap().len(),
         zip_bytes.len() as u64
     );
+}
+
+#[derive(Clone)]
+struct StaticProvider(String);
+
+#[async_trait]
+impl DomainTokenProvider for StaticProvider {
+    async fn bearer(&self) -> Option<String> {
+        Some(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn http_client_prefers_session_token_over_legacy_metadata() {
+    let server = MockServer::start_async().await;
+
+    // Expect Authorization header to carry the provider token
+    let _mock = server
+        .mock_async(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/v1/domains/dom1/data")
+                .header("authorization", "Bearer dms-lease-token");
+            then.status(200).json_body(serde_json::json!({
+                "data": [{
+                    "id": "data-1",
+                    "domain_id": "dom1",
+                    "name": "refined_manifest",
+                    "data_type": "refined_manifest_json"
+                }]
+            }));
+        })
+        .await;
+
+    // Build client with provider that returns a DMS lease token
+    let http = Client::builder()
+        .use_rustls_tls()
+        .no_proxy()
+        .build()
+        .expect("reqwest client");
+    let provider = Arc::new(StaticProvider("dms-lease-token".into()));
+    let client = HttpDomainClient::with_provider(http, provider);
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut job = build_job(&tempdir, &server.base_url());
+    // Set a legacy token in metadata; client should not use it
+    job.meta.access_token = "legacy-placeholder".into();
+
+    let manifest_path = job.job_path.join("job_manifest.json");
+    std::fs::create_dir_all(job.job_path.clone()).unwrap();
+    std::fs::write(&manifest_path, b"{}\n").unwrap();
+
+    client
+        .upload_manifest(&mut job, &manifest_path)
+        .await
+        .expect("manifest upload succeeds");
+}
+
+#[derive(Clone)]
+struct SwitchingProvider(Arc<Mutex<String>>);
+
+#[async_trait]
+impl DomainTokenProvider for SwitchingProvider {
+    async fn bearer(&self) -> Option<String> {
+        Some(self.0.lock().expect("token mutex").clone())
+    }
+}
+
+#[tokio::test]
+async fn http_client_uses_updated_token_on_subsequent_requests() {
+    let server = MockServer::start_async().await;
+
+    // First request must use token-1 via POST
+    let post_mock = server
+        .mock_async(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/v1/domains/dom1/data")
+                .header("authorization", "Bearer token-1");
+            then.status(200).json_body(serde_json::json!({
+                "data": [{
+                    "id": "data-1",
+                    "domain_id": "dom1",
+                    "name": "refined_manifest",
+                    "data_type": "refined_manifest_json"
+                }]
+            }));
+        })
+        .await;
+
+    // Second request (update) must use token-2 via PUT
+    let put_mock = server
+        .mock_async(|when, then| {
+            when.method(httpmock::Method::PUT)
+                .path("/api/v1/domains/dom1/data")
+                .header("authorization", "Bearer token-2");
+            then.status(200).json_body(serde_json::json!({
+                "data": [{
+                    "id": "data-1",
+                    "domain_id": "dom1",
+                    "name": "refined_manifest",
+                    "data_type": "refined_manifest_json"
+                }]
+            }));
+        })
+        .await;
+
+    // Build client with switching provider
+    let http = Client::builder()
+        .use_rustls_tls()
+        .no_proxy()
+        .build()
+        .expect("reqwest client");
+    let token_cell = Arc::new(Mutex::new(String::from("token-1")));
+    let provider = Arc::new(SwitchingProvider(token_cell.clone()));
+    let client = HttpDomainClient::with_provider(http, provider);
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut job = build_job(&tempdir, &server.base_url());
+    job.meta.access_token = "legacy-unused".into();
+
+    let manifest_path = job.job_path.join("job_manifest.json");
+    std::fs::create_dir_all(job.job_path.clone()).unwrap();
+    std::fs::write(&manifest_path, b"{}\n").unwrap();
+
+    // First upload: should hit POST mock with token-1
+    client
+        .upload_manifest(&mut job, &manifest_path)
+        .await
+        .expect("first upload");
+
+    // Switch token for subsequent request
+    *token_cell.lock().expect("token mutex") = String::from("token-2");
+
+    // Second upload: should hit PUT mock with token-2
+    client
+        .upload_manifest(&mut job, &manifest_path)
+        .await
+        .expect("second upload");
+
+    // Optional: ensure both mocks were exercised at least once
+    post_mock.assert();
+    put_mock.assert();
 }

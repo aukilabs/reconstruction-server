@@ -175,8 +175,16 @@ async fn main() -> anyhow::Result<()> {
             "localhost",
             (!retrigger_id.is_empty()).then_some(retrigger_id.as_str()),
         )?;
-        let domain: Arc<dyn server_core::DomainPort + Send + Sync> =
-            Arc::new(HttpDomainClient::default());
+        // Build a storage client that prefers session tokens when available.
+        // In offline mode the session is empty, so it will fallback to job meta token.
+        let storage_http = reqwest::Client::builder()
+            .use_rustls_tls()
+            .no_proxy()
+            .build()?;
+        let offline_session = SessionManager::new(CapabilitySelector::new(vec![]));
+        let domain: Arc<dyn server_core::DomainPort + Send + Sync> = Arc::new(
+            HttpDomainClient::with_provider(storage_http, Arc::new(offline_session)),
+        );
         let runner: Arc<dyn server_core::JobRunner + Send + Sync> = if cli.mock_python {
             Arc::new(NoopRunner)
         } else {
@@ -218,8 +226,21 @@ async fn main() -> anyhow::Result<()> {
         capabilities = ?node_config.node_capabilities,
         "Loaded compute node configuration"
     );
-    let domain: Arc<dyn server_core::DomainPort + Send + Sync> =
-        Arc::new(HttpDomainClient::default());
+    // Build DMS session manager first so we can wire it as a token provider
+    let session = SessionManager::new(CapabilitySelector::new(
+        node_config.node_capabilities.clone(),
+    ));
+
+    // Share HTTP timeout setting across clients
+    let request_timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
+
+    // Domain storage client uses session lease tokens when available
+    let storage_http = reqwest::Client::builder()
+        .timeout(request_timeout)
+        .build()?;
+    let domain: Arc<dyn server_core::DomainPort + Send + Sync> = Arc::new(
+        HttpDomainClient::with_provider(storage_http, Arc::new(session.clone())),
+    );
     let runner: Arc<dyn server_core::JobRunner + Send + Sync> = if cli.mock_python {
         Arc::new(NoopRunner)
     } else {
@@ -231,10 +252,7 @@ async fn main() -> anyhow::Result<()> {
         manifest_interval: std::time::Duration::from_millis(cli.job_manifest_interval_ms.max(10)),
     });
 
-    let request_timeout = Duration::from_secs(cli.request_timeout_secs.max(1));
-    let session = SessionManager::new(CapabilitySelector::new(
-        node_config.node_capabilities.clone(),
-    ));
+    // request_timeout already computed above
     let rng = StdRng::from_entropy();
     let controller = PollController::new(
         node_config.poll_backoff.min,

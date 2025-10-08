@@ -1,8 +1,11 @@
+mod token;
+pub use token::DomainTokenProvider;
+
 use multer::Multipart;
 use regex::Regex;
 #[cfg(test)]
 use reqwest::header::HeaderValue;
-use reqwest::Client;
+use reqwest::{header, Client};
 use server_core::{
     DomainError, DomainPort, ExpectedOutput, Job, Result, REFINED_MANIFEST_DATA_NAME,
     REFINED_MANIFEST_DATA_TYPE,
@@ -10,11 +13,13 @@ use server_core::{
 use std::{
     fs,
     io::{Cursor, Read},
+    sync::Arc,
 };
 use zip::ZipArchive;
 
 pub struct HttpDomainClient {
     client: Client,
+    token_provider: Option<Arc<dyn DomainTokenProvider>>,
 }
 
 impl Default for HttpDomainClient {
@@ -30,7 +35,17 @@ impl Default for HttpDomainClient {
 
 impl HttpDomainClient {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            token_provider: None,
+        }
+    }
+
+    pub fn with_provider(client: Client, provider: Arc<dyn DomainTokenProvider>) -> Self {
+        Self {
+            client,
+            token_provider: Some(provider),
+        }
     }
 }
 
@@ -68,7 +83,12 @@ impl HttpDomainClient {
         }
     }
 
-    fn auth(&self, job: &Job) -> String {
+    async fn auth(&self, job: &Job) -> String {
+        if let Some(provider) = &self.token_provider {
+            if let Some(token) = provider.bearer().await {
+                return format!("Bearer {}", token);
+            }
+        }
         format!("Bearer {}", job.meta.access_token)
     }
     fn build_multipart(
@@ -155,10 +175,14 @@ impl DomainPort for HttpDomainClient {
         } else {
             reqwest::Method::POST
         };
+        let auth = self.auth(job).await;
+        let mut auth_header = header::HeaderValue::from_str(&auth)
+            .map_err(|_| DomainError::Internal("invalid authorization header".into()))?;
+        auth_header.set_sensitive(true);
         let resp = self
             .client
             .request(method, &url)
-            .header("Authorization", self.auth(job))
+            .header(header::AUTHORIZATION, auth_header)
             .header("Content-Type", ctype)
             .body(body)
             .send()
@@ -231,10 +255,14 @@ impl DomainPort for HttpDomainClient {
             has_existing_id = existing.is_some(),
             "Uploading output"
         );
+        let auth = self.auth(job).await;
+        let mut auth_header = header::HeaderValue::from_str(&auth)
+            .map_err(|_| DomainError::Internal("invalid authorization header".into()))?;
+        auth_header.set_sensitive(true);
         let resp = self
             .client
             .request(method, &url)
-            .header("Authorization", self.auth(job))
+            .header(header::AUTHORIZATION, auth_header)
             .header("Content-Type", ctype)
             .body(body)
             .send()
@@ -266,10 +294,14 @@ impl DomainPort for HttpDomainClient {
             job.meta.domain_server_url, job.meta.domain_id, ids_param
         );
         debug!(url = %url, ids_count = ids.len(), "Downloading data batch");
+        let auth = self.auth(job).await;
+        let mut auth_header = header::HeaderValue::from_str(&auth)
+            .map_err(|_| DomainError::Internal("invalid authorization header".into()))?;
+        auth_header.set_sensitive(true);
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", self.auth(job))
+            .header(header::AUTHORIZATION, auth_header)
             .header("Accept", "multipart/form-data")
             .send()
             .await
@@ -367,10 +399,14 @@ impl DomainPort for HttpDomainClient {
             &zip_bytes,
         );
         debug!(url = %url, scan_id = %scan_id, "Uploading refined scan ZIP");
+        let auth = self.auth(job).await;
+        let mut auth_header = header::HeaderValue::from_str(&auth)
+            .map_err(|_| DomainError::Internal("invalid authorization header".into()))?;
+        auth_header.set_sensitive(true);
         let resp = self
             .client
             .post(&url)
-            .header("Authorization", self.auth(job))
+            .header(header::AUTHORIZATION, auth_header)
             .header("Content-Type", ctype)
             .body(body)
             .send()

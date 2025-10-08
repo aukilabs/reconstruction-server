@@ -7,6 +7,7 @@ use rand::Rng;
 use serde_json::Value;
 
 use super::models::LeaseResponse;
+use async_trait::async_trait;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -291,9 +292,21 @@ fn compute_next_heartbeat<R: Rng>(
     Some(now + delay.min(ttl))
 }
 
+// --- Domain token provider implementation ---
+
+#[async_trait]
+impl crate::storage::DomainTokenProvider for SessionManager {
+    async fn bearer(&self) -> Option<String> {
+        self.snapshot()
+            .await
+            .and_then(|s| s.access_token().map(|t| t.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::DomainTokenProvider;
     use chrono::{Duration as ChronoDuration, Utc};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -489,5 +502,45 @@ mod tests {
 
         manager.clear().await;
         assert!(manager.snapshot().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn session_manager_provides_and_updates_domain_token() {
+        let manager = SessionManager::new(selector());
+        let lease = LeaseResponse {
+            task: Some(crate::dms::models::TaskSummary {
+                id: "task-xyz".into(),
+                capability: "cap-a".into(),
+                meta: json!({}),
+            }),
+            access_token: Some("token".into()),
+            access_token_expires_at: Some(timestamp_in(60)),
+            lease_expires_at: Some(timestamp_in(5)),
+            ..LeaseResponse::default()
+        };
+        let mut rng = StdRng::seed_from_u64(123);
+        manager
+            .start_session(&lease, Instant::now(), &policy(), &mut rng)
+            .await
+            .expect("session");
+
+        // Provider returns initial lease token
+        let t1 = manager.bearer().await;
+        assert_eq!(t1.as_deref(), Some("token"));
+
+        // Heartbeat updates token
+        let heartbeat = LeaseResponse {
+            access_token: Some("new-token".into()),
+            lease_expires_at: Some(timestamp_in(6)),
+            ..LeaseResponse::default()
+        };
+        let mut rng = StdRng::seed_from_u64(124);
+        manager
+            .apply_heartbeat(&heartbeat, None, Instant::now(), &policy(), &mut rng)
+            .await
+            .expect("heartbeat");
+
+        let t2 = manager.bearer().await;
+        assert_eq!(t2.as_deref(), Some("new-token"));
     }
 }

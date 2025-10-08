@@ -13,7 +13,7 @@ use super::{
     poller::{CompletionError, HeartbeatError, HeartbeatResult, PollError, PollResult, Poller},
     session::SessionSnapshot,
 };
-use server_core::{self, Services};
+use server_core::{self, AccessTokenSink, Services};
 
 /// Configuration parameters required to materialize a job on disk and run the
 /// Python pipeline.
@@ -100,13 +100,13 @@ where
             }
         };
 
-        // For legacy payloads, always use the access token provided inside
-        // meta.legacy (already captured in job metadata). Do not override it
-        // with the short-lived DMS lease token.
-        if snapshot.access_token().is_none() {
+        // Prefer the short‑lived session token from the lease/heartbeat when available.
+        if let Some(token) = snapshot.access_token() {
+            job.set_access_token(token);
+        } else {
             warn!(
                 task_id = snapshot.task_id(),
-                "Lease missing access token; using legacy payload token"
+                "Lease missing access token; falling back to legacy payload token"
             );
         }
 
