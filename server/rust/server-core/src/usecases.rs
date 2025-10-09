@@ -77,6 +77,11 @@ pub fn create_job_metadata(
             req.domain_server_url = Some(iss);
         }
     }
+    let sanitized_domain_url = req
+        .domain_server_url
+        .as_ref()
+        .map(|url| canonicalize_domain_server_url(url));
+    req.domain_server_url = sanitized_domain_url.filter(|url| !url.is_empty());
 
     let start_time = Utc::now();
     let job_id = retrigger_job_id
@@ -374,6 +379,19 @@ pub async fn execute_job(
 }
 
 // --- helpers ---
+
+fn canonicalize_domain_server_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return trimmed.to_string();
+    }
+    let without_leading_slashes = trimmed.trim_start_matches('/');
+    format!("https://{}", without_leading_slashes)
+}
 
 fn decode_jwt_iss(token: &str) -> Option<String> {
     let parts: Vec<&str> = token.split('.').collect();
@@ -696,6 +714,32 @@ mod tests {
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn create_job_metadata_canonicalizes_domain_url_without_scheme() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": ["data-1"],
+            "domain_id": "dom-123",
+            "access_token": "header.eyJpc3MiOiJkZHMiLCJzdWIiOiJ1c2VyIn0.signature",
+            "processing_type": "local_refinement",
+            "inputs_cids": [],
+            "domain_server_url": "dds",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+
+        let job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(job.meta.domain_server_url, "https://dds");
+    }
 
     fn write_dummy_outputs(job: &Job) {
         let global_dir = job.job_path.join("refined").join("global");

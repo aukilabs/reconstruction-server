@@ -108,7 +108,9 @@ async fn lease_heartbeat_complete_smoke() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "task": TaskSummary {
                 id: "task-123".into(),
+                job_id: None,
                 capability: "cap/refinement".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             },
             "lease_expires_at": "2025-01-01T00:03:00Z",

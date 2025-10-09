@@ -107,7 +107,9 @@ async fn client_captures_access_token_but_does_not_echo_it() {
     let lease_response = LeaseResponse {
         task: Some(TaskSummary {
             id: "task-123".into(),
+            job_id: None,
             capability: "local-and-global-refinement".into(),
+            inputs_cids: vec![],
             meta: serde_json::json!({"foo": "bar"}),
         }),
         access_token: Some("secret-token".into()),

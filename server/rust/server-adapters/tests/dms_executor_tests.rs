@@ -330,7 +330,9 @@ fn lease_response(capability: &str) -> LeaseResponse {
     LeaseResponse {
         task: Some(TaskSummary {
             id: "task-1".into(),
+            job_id: None,
             capability: capability.into(),
+            inputs_cids: vec![],
             meta: json!({
                 "legacy": {
                     "data_ids": ["scan-1"],
@@ -353,7 +355,9 @@ fn lease_response_with_inputs(capability: &str, inputs_cids: Vec<String>) -> Lea
     LeaseResponse {
         task: Some(TaskSummary {
             id: "task-1".into(),
+            job_id: None,
             capability: capability.into(),
+            inputs_cids: vec![],
             meta: json!({
                 "legacy": {
                     "inputs_cids": inputs_cids,
@@ -368,6 +372,22 @@ fn lease_response_with_inputs(capability: &str, inputs_cids: Vec<String>) -> Lea
                 }
             }),
         }),
+        access_token: Some("lease-token".into()),
+        ..LeaseResponse::default()
+    }
+}
+
+fn modern_lease_response(capability: &str, inputs_cids: Vec<String>) -> LeaseResponse {
+    LeaseResponse {
+        task: Some(TaskSummary {
+            id: "task-1".into(),
+            job_id: Some("job-123".into()),
+            capability: capability.into(),
+            inputs_cids,
+            meta: json!({}),
+        }),
+        domain_id: Some("domain-42".into()),
+        domain_server_url: Some("https://domain.example".into()),
         access_token: Some("lease-token".into()),
         ..LeaseResponse::default()
     }
@@ -522,6 +542,27 @@ async fn inputs_cids_prefer_uri_downloads() {
         vec![inputs_cids],
         "expected uri downloads to match inputs_cids"
     );
+}
+
+#[tokio::test]
+async fn executor_handles_modern_payload_without_legacy_metadata() {
+    let inputs_cids =
+        vec!["https://domain.example/api/v1/domains/domain-42/data/cid-2".to_string()];
+    let lease = modern_lease_response("cap/refinement", inputs_cids.clone());
+    let domain = Arc::new(UriRecordingDomain::new());
+    let domain_object: Arc<dyn DomainPort + Send + Sync> = domain.clone();
+    let mut harness = build_harness_with(vec![lease], domain_object, false);
+
+    let outcome = harness.executor.step().await.expect("step ok");
+    assert!(outcome.is_none());
+
+    assert_eq!(domain.uri_batches(), vec![inputs_cids]);
+    assert!(domain.data_id_batches().is_empty());
+
+    let runner_calls = harness.runner_calls.lock().expect("runner guard");
+    assert_eq!(runner_calls.len(), 1);
+    assert_eq!(runner_calls[0].capability, "cap/refinement");
+    assert_eq!(runner_calls[0].access_token, "lease-token");
 }
 
 #[tokio::test]

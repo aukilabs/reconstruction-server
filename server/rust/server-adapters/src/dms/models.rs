@@ -15,6 +15,10 @@ pub struct LeaseResponse {
     #[serde(default)]
     pub task: Option<TaskSummary>,
     #[serde(default)]
+    pub domain_id: Option<String>,
+    #[serde(default)]
+    pub domain_server_url: Option<String>,
+    #[serde(default)]
     pub access_token: Option<String>,
     #[serde(default)]
     pub access_token_expires_at: Option<String>,
@@ -29,7 +33,11 @@ pub struct LeaseResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TaskSummary {
     pub id: String,
+    #[serde(default)]
+    pub job_id: Option<String>,
     pub capability: String,
+    #[serde(default)]
+    pub inputs_cids: Vec<String>,
     #[serde(default)]
     pub meta: Value,
 }

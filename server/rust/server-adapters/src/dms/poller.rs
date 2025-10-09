@@ -107,7 +107,7 @@ pub enum PollError {
 pub enum PollResult {
     AlreadyRunning,
     Idle { schedule: IdleSchedule },
-    Leased(SessionSnapshot),
+    Leased(Box<SessionSnapshot>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,7 +122,7 @@ pub enum HeartbeatError {
 
 #[derive(Debug)]
 pub enum HeartbeatResult {
-    Scheduled(SessionSnapshot),
+    Scheduled(Box<SessionSnapshot>),
     Canceled,
     LostLease,
 }
@@ -297,7 +297,7 @@ where
         }
         self.controller.reset();
         let snapshot = self.session.snapshot().await.expect("session just started");
-        Ok(PollResult::Leased(snapshot))
+        Ok(PollResult::Leased(Box::new(snapshot)))
     }
 
     pub async fn send_heartbeat(
@@ -345,7 +345,7 @@ where
                 .apply_heartbeat(&response, progress, now, &self.heartbeat_policy, rng)
                 .await?
         };
-        Ok(HeartbeatResult::Scheduled(snapshot))
+        Ok(HeartbeatResult::Scheduled(Box::new(snapshot)))
     }
 
     pub async fn complete_task(
@@ -687,7 +687,9 @@ mod tests {
                 &LeaseResponse {
                     task: Some(crate::dms::models::TaskSummary {
                         id: "123".into(),
+                        job_id: None,
                         capability: "cap-a".into(),
+                        inputs_cids: vec![],
                         meta: json!({}),
                     }),
                     ..LeaseResponse::default()
@@ -714,7 +716,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({"foo": "bar"}),
             }),
             access_token: Some("token".into()),
@@ -746,7 +750,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             lease_expires_at: Some(lease_expiry),
@@ -802,7 +808,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             ..LeaseResponse::default()
@@ -830,7 +838,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             ..LeaseResponse::default()
@@ -856,7 +866,9 @@ mod tests {
         let lease_active = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({"foo": "bar"}),
             }),
             ..LeaseResponse::default()
@@ -929,7 +941,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             ..LeaseResponse::default()
@@ -989,7 +1003,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             ..LeaseResponse::default()
@@ -1019,7 +1035,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             ..LeaseResponse::default()

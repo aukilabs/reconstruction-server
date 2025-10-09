@@ -313,7 +313,9 @@ async fn dms_lease(
     Json(LeaseResponse {
         task: Some(TaskSummary {
             id: "task-123".into(),
+            job_id: None,
             capability: "cap/refinement".into(),
+            inputs_cids: vec![],
             meta: json!({}),
         }),
         ..LeaseResponse::default()

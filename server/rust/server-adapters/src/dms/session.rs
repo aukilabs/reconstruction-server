@@ -18,37 +18,18 @@ pub enum SessionStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionState {
     pub task_id: String,
+    pub job_id: Option<String>,
     pub capability: String,
     pub meta: Value,
+    pub inputs_cids: Vec<String>,
+    pub domain_id: Option<String>,
+    pub domain_server_url: Option<String>,
     pub lease_expires_at: Option<DateTime<Utc>>,
     pub access_token: Option<String>,
     pub access_token_expires_at: Option<DateTime<Utc>>,
     pub last_progress: Option<Value>,
     pub next_heartbeat_due: Option<Instant>,
     pub status: SessionStatus,
-}
-
-impl SessionState {
-    fn new(
-        task_id: String,
-        capability: String,
-        meta: Value,
-        lease_expires_at: Option<DateTime<Utc>>,
-        access_token: Option<String>,
-        access_token_expires_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
-            task_id,
-            capability,
-            meta,
-            lease_expires_at,
-            access_token,
-            access_token_expires_at,
-            last_progress: None,
-            next_heartbeat_due: None,
-            status: SessionStatus::Pending,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -59,12 +40,28 @@ impl SessionSnapshot {
         &self.0.task_id
     }
 
+    pub fn job_id(&self) -> Option<&str> {
+        self.0.job_id.as_deref()
+    }
+
     pub fn capability(&self) -> &str {
         &self.0.capability
     }
 
     pub fn meta(&self) -> &Value {
         &self.0.meta
+    }
+
+    pub fn inputs_cids(&self) -> &[String] {
+        &self.0.inputs_cids
+    }
+
+    pub fn domain_id(&self) -> Option<&str> {
+        self.0.domain_id.as_deref()
+    }
+
+    pub fn domain_server_url(&self) -> Option<&str> {
+        self.0.domain_server_url.as_deref()
     }
 
     pub fn access_token(&self) -> Option<&str> {
@@ -214,14 +211,21 @@ impl SessionManager {
         let access_token_expires_at = parse_timestamp(lease.access_token_expires_at.as_deref());
         let lease_expires_at = parse_timestamp(lease.lease_expires_at.as_deref());
 
-        let mut new_state = SessionState::new(
-            task.id,
-            task.capability,
-            task.meta,
+        let mut new_state = SessionState {
+            task_id: task.id,
+            job_id: task.job_id,
+            capability: task.capability,
+            meta: task.meta,
+            inputs_cids: task.inputs_cids,
+            domain_id: lease.domain_id.clone(),
+            domain_server_url: extract_domain_server_url(lease),
             lease_expires_at,
             access_token,
             access_token_expires_at,
-        );
+            last_progress: None,
+            next_heartbeat_due: None,
+            status: SessionStatus::Pending,
+        };
         new_state.next_heartbeat_due =
             compute_next_heartbeat(now, new_state.lease_expires_at, policy, rng);
 
@@ -242,8 +246,17 @@ impl SessionManager {
 
         if let Some(task) = lease.task.clone() {
             state.task_id = task.id;
+            state.job_id = task.job_id;
             state.capability = task.capability;
             state.meta = task.meta;
+            state.inputs_cids = task.inputs_cids;
+        }
+
+        if let Some(domain_id) = lease.domain_id.clone() {
+            state.domain_id = Some(domain_id);
+        }
+        if let Some(url) = extract_domain_server_url(lease) {
+            state.domain_server_url = Some(url);
         }
 
         if let Some(token) = lease.access_token.clone() {
@@ -267,6 +280,43 @@ impl SessionManager {
 fn parse_timestamp(raw: Option<&str>) -> Option<DateTime<Utc>> {
     raw.and_then(|value| DateTime::parse_from_rfc3339(value).ok())
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn extract_domain_server_url(lease: &LeaseResponse) -> Option<String> {
+    lease
+        .domain_server_url
+        .as_deref()
+        .and_then(clean_url)
+        .map(str::to_owned)
+        .or_else(|| {
+            lease
+                .task
+                .as_ref()
+                .and_then(|task| lookup_domain_url_from_meta(&task.meta))
+        })
+}
+
+fn lookup_domain_url_from_meta(meta: &Value) -> Option<String> {
+    meta.get("domain_server_url")
+        .and_then(|value| value.as_str())
+        .and_then(clean_url)
+        .map(str::to_owned)
+        .or_else(|| {
+            meta.get("legacy")
+                .and_then(|legacy| legacy.get("domain_server_url"))
+                .and_then(|value| value.as_str())
+                .and_then(clean_url)
+                .map(str::to_owned)
+        })
+}
+
+fn clean_url(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 fn compute_next_heartbeat<R: Rng>(
@@ -366,7 +416,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "123".into(),
+                job_id: None,
                 capability: "other".into(),
+                inputs_cids: vec![],
                 meta: serde_json::json!({}),
             }),
             ..LeaseResponse::default()
@@ -390,7 +442,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "123".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: serde_json::json!({"foo": "bar"}),
             }),
             access_token: Some("token".into()),
@@ -415,12 +469,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_session_extracts_domain_url_from_meta() {
+        let manager = SessionManager::new(selector());
+        let lease = LeaseResponse {
+            task: Some(crate::dms::models::TaskSummary {
+                id: "123".into(),
+                job_id: None,
+                capability: "cap-a".into(),
+                inputs_cids: vec![],
+                meta: serde_json::json!({
+                    "domain_server_url": " https://example.domain "
+                }),
+            }),
+            ..LeaseResponse::default()
+        };
+
+        let snapshot = manager
+            .start_session(
+                &lease,
+                Instant::now(),
+                &policy(),
+                &mut StdRng::seed_from_u64(42),
+            )
+            .await
+            .expect("session");
+
+        assert_eq!(snapshot.domain_server_url(), Some("https://example.domain"));
+    }
+
+    #[tokio::test]
+    async fn start_session_extracts_domain_url_from_legacy_meta() {
+        let manager = SessionManager::new(selector());
+        let lease = LeaseResponse {
+            task: Some(crate::dms::models::TaskSummary {
+                id: "123".into(),
+                job_id: None,
+                capability: "cap-a".into(),
+                inputs_cids: vec![],
+                meta: serde_json::json!({
+                    "legacy": {
+                        "domain_server_url": "https://legacy.example"
+                    }
+                }),
+            }),
+            ..LeaseResponse::default()
+        };
+
+        let snapshot = manager
+            .start_session(
+                &lease,
+                Instant::now(),
+                &policy(),
+                &mut StdRng::seed_from_u64(43),
+            )
+            .await
+            .expect("session");
+
+        assert_eq!(snapshot.domain_server_url(), Some("https://legacy.example"));
+    }
+
+    #[tokio::test]
     async fn apply_heartbeat_marks_running_and_updates_schedule() {
         let manager = SessionManager::new(selector());
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "123".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: serde_json::json!({}),
             }),
             lease_expires_at: Some(timestamp_in(5)),
@@ -454,7 +570,9 @@ mod tests {
         let base_lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-1".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             access_token: Some("token".into()),
@@ -510,7 +628,9 @@ mod tests {
         let lease = LeaseResponse {
             task: Some(crate::dms::models::TaskSummary {
                 id: "task-xyz".into(),
+                job_id: None,
                 capability: "cap-a".into(),
+                inputs_cids: vec![],
                 meta: json!({}),
             }),
             access_token: Some("token".into()),

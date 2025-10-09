@@ -13,6 +13,7 @@ use super::{
     poller::{CompletionError, HeartbeatError, HeartbeatResult, PollError, PollResult, Poller},
     session::SessionSnapshot,
 };
+use server_core::types::JobRequestData;
 use server_core::{self, AccessTokenSink, Services};
 
 /// Configuration parameters required to materialize a job on disk and run the
@@ -68,7 +69,7 @@ where
             PollResult::Idle { schedule } => Ok(Some(schedule.delay)),
             PollResult::AlreadyRunning => Ok(None),
             PollResult::Leased(snapshot) => {
-                self.handle_lease(snapshot).await?;
+                self.handle_lease(*snapshot).await?;
                 Ok(None)
             }
         };
@@ -79,8 +80,19 @@ where
 
     async fn handle_lease(&mut self, snapshot: SessionSnapshot) -> Result<(), TaskExecutorError> {
         let capability = snapshot.capability().to_string();
-        // Unwrap legacy payload: task.meta.legacy becomes the job request body
-        let request_json = serde_json::to_string(&snapshot.meta()["legacy"])?;
+        let request_json = match build_job_request_json(&snapshot) {
+            Ok(json) => json,
+            Err(err) => {
+                let details = json!({
+                    "task_id": snapshot.task_id(),
+                    "error": err.to_string(),
+                });
+                self.poller
+                    .fail_task("JobSetupFailed", Some(details))
+                    .await?;
+                return Err(TaskExecutorError::JobSetup(err));
+            }
+        };
         let mut job = match server_core::create_job_metadata(
             &self.config.data_dir,
             &request_json,
@@ -354,6 +366,95 @@ where
     }
 }
 
+fn build_job_request_json(snapshot: &SessionSnapshot) -> server_core::Result<String> {
+    if let Some(legacy) = snapshot
+        .meta()
+        .get("legacy")
+        .filter(|value| !value.is_null())
+    {
+        return serde_json::to_string(legacy).map_err(server_core::DomainError::from);
+    }
+
+    let access_token = snapshot.access_token().ok_or_else(|| {
+        server_core::DomainError::BadRequest("task lease missing access token".into())
+    })?;
+    let domain_id = snapshot.domain_id().ok_or_else(|| {
+        server_core::DomainError::BadRequest("task lease missing domain_id".into())
+    })?;
+    let processing_type = processing_type_from_capability(snapshot.capability())?;
+    let inputs_cids = snapshot.inputs_cids().to_vec();
+    if inputs_cids.is_empty() {
+        return Err(server_core::DomainError::BadRequest(
+            "task lease missing inputs_cids".into(),
+        ));
+    }
+
+    let domain_server_url = snapshot
+        .domain_server_url()
+        .map(str::to_string)
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| infer_domain_server_url(&inputs_cids));
+
+    let request = JobRequestData {
+        data_ids: Vec::new(),
+        domain_id: domain_id.to_string(),
+        access_token: access_token.to_string(),
+        processing_type,
+        inputs_cids,
+        domain_server_url,
+        skip_manifest_upload: None,
+        override_job_name: None,
+        override_manifest_id: None,
+    };
+
+    serde_json::to_string(&request).map_err(server_core::DomainError::from)
+}
+
+fn processing_type_from_capability(capability: &str) -> server_core::Result<String> {
+    let processing = match capability {
+        "/reconstruction/local-refinement/v1" => Some("local_refinement"),
+        "/reconstruction/global-refinement/v1" => Some("global_refinement"),
+        "/reconstruction/local-and-global-refinement/v1" => Some("local_and_global_refinement"),
+        _ => None,
+    };
+
+    if let Some(p) = processing {
+        return Ok(p.to_string());
+    }
+
+    let lower = capability.to_ascii_lowercase();
+    if lower.contains("local-and-global") || lower.contains("local_and_global") {
+        return Ok("local_and_global_refinement".into());
+    }
+    if lower.contains("global") && !lower.contains("local") {
+        return Ok("global_refinement".into());
+    }
+    if lower.contains("local") {
+        return Ok("local_refinement".into());
+    }
+    if lower.contains("refinement") {
+        return Ok("local_and_global_refinement".into());
+    }
+
+    Err(server_core::DomainError::BadRequest(format!(
+        "unsupported reconstruction capability `{capability}`"
+    )))
+}
+
+fn infer_domain_server_url(inputs_cids: &[String]) -> Option<String> {
+    inputs_cids.iter().find_map(|uri| {
+        reqwest::Url::parse(uri).ok().and_then(|url| {
+            let host = url.host_str()?;
+            let mut base = format!("{}://{}", url.scheme(), host);
+            if let Some(port) = url.port() {
+                base.push(':');
+                base.push_str(&port.to_string());
+            }
+            Some(base)
+        })
+    })
+}
+
 // --- progress helpers ---
 
 fn progress_payload(job_root: &std::path::Path) -> Option<Value> {
@@ -450,4 +551,26 @@ pub async fn run_executor_loop<C, R>(
         }
     }
     info!("Task executor loop exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_domain_server_url;
+
+    #[test]
+    fn infer_domain_server_url_extracts_origin() {
+        let inputs = vec![String::from(
+            "https://domain.dev.aukiverse.com/api/v1/domains/example/data/123",
+        )];
+        assert_eq!(
+            infer_domain_server_url(&inputs),
+            Some(String::from("https://domain.dev.aukiverse.com"))
+        );
+    }
+
+    #[test]
+    fn infer_domain_server_url_returns_none_when_unparsable() {
+        let inputs = vec![String::from("not-a-valid-url")];
+        assert!(infer_domain_server_url(&inputs).is_none());
+    }
 }
