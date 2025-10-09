@@ -140,6 +140,78 @@ impl HttpDomainClient {
         HeaderValue::from_str(&disposition)
             .map_err(|_| DomainError::Internal("invalid content disposition".into()))
     }
+
+    async fn process_data_response(
+        &self,
+        job: &Job,
+        datasets_root: &std::path::Path,
+        resp: reqwest::Response,
+    ) -> Result<()> {
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| DomainError::Internal("missing content-type header".into()))?;
+        let boundary = multer::parse_boundary(content_type)
+            .map_err(|e| DomainError::Internal(e.to_string()))?;
+        let mut multipart = Multipart::new(resp.bytes_stream(), boundary);
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| DomainError::Internal(e.to_string()))?
+        {
+            let disposition = field
+                .headers()
+                .get("content-disposition")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let params = parse_disposition_params(disposition);
+            let name = params.get("name").cloned().unwrap_or_default();
+            let data_type = params.get("data-type").cloned().unwrap_or_default();
+            let mut body = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| DomainError::Internal(e.to_string()))?
+            {
+                body.extend_from_slice(&chunk);
+            }
+            let scan_folder = extract_timestamp(&name).unwrap_or_else(|| name.clone());
+            let file_name = map_filename(&data_type, &name);
+            let scan_dir = datasets_root.join(&scan_folder);
+            fs::create_dir_all(&scan_dir).map_err(DomainError::Io)?;
+            let file_path = scan_dir.join(&file_name);
+            fs::write(&file_path, &body).map_err(DomainError::Io)?;
+            if file_name == "RefinedScan.zip" {
+                let unzip_path = job
+                    .job_path
+                    .join("refined")
+                    .join("local")
+                    .join(&scan_folder)
+                    .join("sfm");
+                fs::create_dir_all(&unzip_path).map_err(DomainError::Io)?;
+                let mut ar = ZipArchive::new(Cursor::new(&body))
+                    .map_err(|e| DomainError::Internal(e.to_string()))?;
+                for i in 0..ar.len() {
+                    let mut f = ar
+                        .by_index(i)
+                        .map_err(|e| DomainError::Internal(e.to_string()))?;
+                    if f.is_dir() {
+                        continue;
+                    }
+                    let mut buf = Vec::new();
+                    f.read_to_end(&mut buf)
+                        .map_err(|e| DomainError::Internal(e.to_string()))?;
+                    let out = unzip_path.join(f.name());
+                    if let Some(parent) = out.parent() {
+                        fs::create_dir_all(parent).map_err(DomainError::Io)?;
+                    }
+                    fs::write(out, &buf).map_err(DomainError::Io)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -313,68 +385,43 @@ impl DomainPort for HttpDomainClient {
             )
             .await);
         }
-        let content_type = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| DomainError::Internal("missing content-type header".into()))?;
-        let boundary = multer::parse_boundary(content_type)
-            .map_err(|e| DomainError::Internal(e.to_string()))?;
-        let mut multipart = Multipart::new(resp.bytes_stream(), boundary);
-        while let Some(mut field) = multipart
-            .next_field()
-            .await
-            .map_err(|e| DomainError::Internal(e.to_string()))?
-        {
-            let disposition = field
-                .headers()
-                .get("content-disposition")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let params = parse_disposition_params(disposition);
-            let name = params.get("name").cloned().unwrap_or_default();
-            let data_type = params.get("data-type").cloned().unwrap_or_default();
-            let mut body = Vec::new();
-            while let Some(chunk) = field
-                .chunk()
+        self.process_data_response(job, datasets_root, resp).await
+    }
+
+    async fn download_data_by_uris(
+        &self,
+        job: &Job,
+        uris: &[String],
+        datasets_root: &std::path::Path,
+    ) -> Result<()> {
+        use tracing::debug;
+        fs::create_dir_all(datasets_root).map_err(DomainError::Io)?;
+        if uris.is_empty() {
+            return Ok(());
+        }
+
+        let auth = self.auth(job).await;
+        for uri in uris {
+            debug!(url = %uri, "Downloading data by uri");
+            let mut auth_header = header::HeaderValue::from_str(&auth)
+                .map_err(|_| DomainError::Internal("invalid authorization header".into()))?;
+            auth_header.set_sensitive(true);
+            let resp = self
+                .client
+                .get(uri)
+                .header(header::AUTHORIZATION, auth_header)
+                .header("Accept", "multipart/form-data")
+                .send()
                 .await
-                .map_err(|e| DomainError::Internal(e.to_string()))?
-            {
-                body.extend_from_slice(&chunk);
+                .map_err(|e| DomainError::Http(e.to_string()))?;
+            if !resp.status().is_success() {
+                return Err(Self::map_http_error(
+                    resp,
+                    &format!("download_data_by_uri(uri={})", uri),
+                )
+                .await);
             }
-            let scan_folder = extract_timestamp(&name).unwrap_or_else(|| name.clone());
-            let file_name = map_filename(&data_type, &name);
-            let scan_dir = datasets_root.join(&scan_folder);
-            fs::create_dir_all(&scan_dir).map_err(DomainError::Io)?;
-            let file_path = scan_dir.join(&file_name);
-            fs::write(&file_path, &body).map_err(DomainError::Io)?;
-            if file_name == "RefinedScan.zip" {
-                let unzip_path = job
-                    .job_path
-                    .join("refined")
-                    .join("local")
-                    .join(&scan_folder)
-                    .join("sfm");
-                fs::create_dir_all(&unzip_path).map_err(DomainError::Io)?;
-                let mut ar = ZipArchive::new(Cursor::new(&body))
-                    .map_err(|e| DomainError::Internal(e.to_string()))?;
-                for i in 0..ar.len() {
-                    let mut f = ar
-                        .by_index(i)
-                        .map_err(|e| DomainError::Internal(e.to_string()))?;
-                    if f.is_dir() {
-                        continue;
-                    }
-                    let mut buf = Vec::new();
-                    f.read_to_end(&mut buf)
-                        .map_err(|e| DomainError::Internal(e.to_string()))?;
-                    let out = unzip_path.join(f.name());
-                    if let Some(parent) = out.parent() {
-                        fs::create_dir_all(parent).map_err(DomainError::Io)?;
-                    }
-                    fs::write(out, &buf).map_err(DomainError::Io)?;
-                }
-            }
+            self.process_data_response(job, datasets_root, resp).await?;
         }
         Ok(())
     }

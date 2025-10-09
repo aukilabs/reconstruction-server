@@ -31,6 +31,12 @@ pub trait DomainPort: Send + Sync {
         ids: &[String],
         datasets_root: &std::path::Path,
     ) -> Result<()>;
+    async fn download_data_by_uris(
+        &self,
+        job: &Job,
+        uris: &[String],
+        datasets_root: &std::path::Path,
+    ) -> Result<()>;
     async fn upload_refined_scan_zip(
         &self,
         job: &Job,
@@ -101,6 +107,7 @@ pub fn create_job_metadata(
             skip_manifest_upload: req.skip_manifest_upload.unwrap_or(false),
             override_job_name: req.override_job_name.clone().unwrap_or_default(),
             override_manifest_id: req.override_manifest_id.clone().unwrap_or_default(),
+            inputs_cids: req.inputs_cids.clone(),
         };
         let meta_json = serde_json::to_vec(&meta)?;
         fs::write(job_path.join("job_metadata.json"), meta_json).map_err(DomainError::Io)?;
@@ -119,6 +126,7 @@ pub fn create_job_metadata(
         skip_manifest_upload: req.skip_manifest_upload.unwrap_or(false),
         override_job_name: req.override_job_name.clone().unwrap_or_default(),
         override_manifest_id: req.override_manifest_id.clone().unwrap_or_default(),
+        inputs_cids: req.inputs_cids.clone(),
     };
 
     let job = Job {
@@ -174,10 +182,47 @@ pub async fn execute_job(
     let datasets_root = job.job_path.join("datasets");
     fs::create_dir_all(&datasets_root).map_err(DomainError::Io)?;
     const BATCH: usize = 20;
-    for chunk in job.meta.data_ids.chunks(BATCH) {
-        svcs.domain
-            .download_data_batch(job, chunk, &datasets_root)
-            .await?;
+    let mut use_data_ids = job.meta.inputs_cids.is_empty();
+    let mut uri_error: Option<DomainError> = None;
+    if !job.meta.inputs_cids.is_empty() {
+        for chunk in job.meta.inputs_cids.chunks(BATCH) {
+            if let Err(err) = svcs
+                .domain
+                .download_data_by_uris(job, chunk, &datasets_root)
+                .await
+            {
+                warn!(
+                    error = %err,
+                    "Failed to download inputs via URIs; falling back to data_ids"
+                );
+                uri_error = Some(err);
+                use_data_ids = true;
+                break;
+            }
+        }
+        if uri_error.is_none() {
+            use_data_ids = false;
+        }
+    }
+
+    if use_data_ids {
+        for chunk in job.meta.data_ids.chunks(BATCH) {
+            if let Err(err) = svcs
+                .domain
+                .download_data_batch(job, chunk, &datasets_root)
+                .await
+            {
+                return Err(DomainError::Internal(format!(
+                    "Invalid reconstruction inputs: unable to fetch provided URIs or data IDs ({})",
+                    err
+                )));
+            }
+        }
+    } else if let Some(err) = uri_error {
+        return Err(DomainError::Internal(format!(
+            "Invalid reconstruction inputs: unable to fetch provided URIs ({})",
+            err
+        )));
     }
 
     if job.meta.processing_type == "local_and_global_refinement"
@@ -681,6 +726,14 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        async fn download_data_by_uris(
+            &self,
+            _job: &Job,
+            _uris: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
         async fn upload_refined_scan_zip(
             &self,
             _job: &Job,
@@ -756,6 +809,14 @@ mod tests {
             &self,
             _job: &Job,
             _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn download_data_by_uris(
+            &self,
+            _job: &Job,
+            _uris: &[String],
             _datasets_root: &std::path::Path,
         ) -> Result<()> {
             Ok(())
@@ -846,6 +907,14 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        async fn download_data_by_uris(
+            &self,
+            _job: &Job,
+            _uris: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
 
         async fn upload_refined_scan_zip(
             &self,
@@ -917,6 +986,14 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        async fn download_data_by_uris(
+            &self,
+            _job: &Job,
+            _uris: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
 
         async fn upload_refined_scan_zip(
             &self,
@@ -983,6 +1060,7 @@ mod tests {
                 reconstruction_server_url: "localhost".into(),
                 access_token: "token".into(),
                 data_ids: vec![],
+                inputs_cids: vec![],
                 skip_manifest_upload: true,
                 override_job_name: String::new(),
                 override_manifest_id: String::new(),
@@ -1029,6 +1107,14 @@ mod tests {
             &self,
             _job: &Job,
             _ids: &[String],
+            _datasets_root: &std::path::Path,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn download_data_by_uris(
+            &self,
+            _job: &Job,
+            _uris: &[String],
             _datasets_root: &std::path::Path,
         ) -> Result<()> {
             Ok(())

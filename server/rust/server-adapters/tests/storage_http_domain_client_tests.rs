@@ -23,6 +23,7 @@ fn build_job(temp_dir: &tempfile::TempDir, domain_url: &str) -> Job {
             reconstruction_server_url: "http://localhost".into(),
             access_token: "token".into(),
             data_ids: vec![],
+            inputs_cids: vec![],
             skip_manifest_upload: false,
             override_job_name: String::new(),
             override_manifest_id: String::new(),

@@ -32,6 +32,8 @@ pub struct JobMetadata {
     #[serde(skip_serializing)]
     pub access_token: String,
     pub data_ids: Vec<String>,
+    #[serde(default)]
+    pub inputs_cids: Vec<String>,
     pub skip_manifest_upload: bool,
     pub override_job_name: String,
     pub override_manifest_id: String,
@@ -69,6 +71,8 @@ pub struct JobRequestData {
     pub access_token: String,
     pub processing_type: String,
     // Optional fields in POST /jobs
+    #[serde(default)]
+    pub inputs_cids: Vec<String>,
     pub domain_server_url: Option<String>,
     pub skip_manifest_upload: Option<bool>,
     pub override_job_name: Option<String>,

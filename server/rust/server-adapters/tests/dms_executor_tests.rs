@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     fs,
+    path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -115,6 +116,155 @@ impl DomainPort for NoopDomain {
         Ok(())
     }
 
+    async fn download_data_by_uris(
+        &self,
+        _job: &Job,
+        _uris: &[String],
+        _datasets_root: &std::path::Path,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+
+    async fn upload_refined_scan_zip(
+        &self,
+        _job: &Job,
+        _scan_id: &str,
+        _zip_bytes: Vec<u8>,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+}
+
+struct UriRecordingDomain {
+    data_id_batches: Arc<Mutex<Vec<Vec<String>>>>,
+    uri_batches: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl UriRecordingDomain {
+    fn new() -> Self {
+        Self {
+            data_id_batches: Arc::new(Mutex::new(Vec::new())),
+            uri_batches: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn data_id_batches(&self) -> Vec<Vec<String>> {
+        self.data_id_batches
+            .lock()
+            .expect("data id mutex poisoned")
+            .clone()
+    }
+
+    fn uri_batches(&self) -> Vec<Vec<String>> {
+        self.uri_batches.lock().expect("uri mutex poisoned").clone()
+    }
+
+    fn write_stub_dataset(&self, datasets_root: &Path, label: &str) -> CoreResult<()> {
+        let dir = datasets_root.join(label);
+        fs::create_dir_all(&dir).map_err(DomainError::Io)?;
+        Ok(())
+    }
+
+    fn dataset_label_from_uri(uri: &str) -> String {
+        uri.rsplit('/').next().unwrap_or(uri).to_string()
+    }
+}
+
+#[async_trait::async_trait]
+impl DomainPort for UriRecordingDomain {
+    async fn upload_manifest(
+        &self,
+        _job: &mut Job,
+        _manifest_path: &std::path::Path,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+
+    async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> CoreResult<()> {
+        Ok(())
+    }
+
+    async fn download_data_batch(
+        &self,
+        _job: &Job,
+        ids: &[String],
+        datasets_root: &std::path::Path,
+    ) -> CoreResult<()> {
+        {
+            let mut guard = self.data_id_batches.lock().expect("data id mutex poisoned");
+            guard.push(ids.to_vec());
+        }
+        for id in ids {
+            self.write_stub_dataset(datasets_root, id)?;
+        }
+        Ok(())
+    }
+
+    async fn download_data_by_uris(
+        &self,
+        _job: &Job,
+        uris: &[String],
+        datasets_root: &std::path::Path,
+    ) -> CoreResult<()> {
+        {
+            let mut guard = self.uri_batches.lock().expect("uri mutex poisoned");
+            guard.push(uris.to_vec());
+        }
+        for uri in uris {
+            let label = Self::dataset_label_from_uri(uri);
+            self.write_stub_dataset(datasets_root, &label)?;
+        }
+        Ok(())
+    }
+
+    async fn upload_refined_scan_zip(
+        &self,
+        _job: &Job,
+        _scan_id: &str,
+        _zip_bytes: Vec<u8>,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+}
+
+struct FailingDownloadDomain;
+
+#[async_trait::async_trait]
+impl DomainPort for FailingDownloadDomain {
+    async fn upload_manifest(
+        &self,
+        _job: &mut Job,
+        _manifest_path: &std::path::Path,
+    ) -> CoreResult<()> {
+        Ok(())
+    }
+
+    async fn upload_output(&self, _job: &Job, _output: &ExpectedOutput) -> CoreResult<()> {
+        Ok(())
+    }
+
+    async fn download_data_batch(
+        &self,
+        _job: &Job,
+        _ids: &[String],
+        _datasets_root: &std::path::Path,
+    ) -> CoreResult<()> {
+        Err(DomainError::NotFound(
+            "data ids unavailable for download".to_string(),
+        ))
+    }
+
+    async fn download_data_by_uris(
+        &self,
+        _job: &Job,
+        _uris: &[String],
+        _datasets_root: &std::path::Path,
+    ) -> CoreResult<()> {
+        Err(DomainError::NotFound(
+            "inputs_cids download failed".to_string(),
+        ))
+    }
+
     async fn upload_refined_scan_zip(
         &self,
         _job: &Job,
@@ -199,6 +349,30 @@ fn lease_response(capability: &str) -> LeaseResponse {
     }
 }
 
+fn lease_response_with_inputs(capability: &str, inputs_cids: Vec<String>) -> LeaseResponse {
+    LeaseResponse {
+        task: Some(TaskSummary {
+            id: "task-1".into(),
+            capability: capability.into(),
+            meta: json!({
+                "legacy": {
+                    "inputs_cids": inputs_cids,
+                    "data_ids": ["scan-1"],
+                    "domain_id": "domain-42",
+                    "access_token": "placeholder",
+                    "processing_type": "local_and_global_refinement",
+                    "domain_server_url": "https://domain.example",
+                    "skip_manifest_upload": false,
+                    "override_job_name": "",
+                    "override_manifest_id": "",
+                }
+            }),
+        }),
+        access_token: Some("lease-token".into()),
+        ..LeaseResponse::default()
+    }
+}
+
 struct Harness {
     executor: TaskExecutor<MockClient, StdRng>,
     client: MockClient,
@@ -206,9 +380,12 @@ struct Harness {
     _tempdir: TempDir,
 }
 
-fn build_harness(fail_runner: bool) -> Harness {
-    let lease = lease_response("cap/refinement");
-    let client = MockClient::new(vec![lease]);
+fn build_harness_with(
+    leases: Vec<LeaseResponse>,
+    domain: Arc<dyn DomainPort + Send + Sync>,
+    fail_runner: bool,
+) -> Harness {
+    let client = MockClient::new(leases);
     let client_handle = client.clone();
 
     let selector = CapabilitySelector::new(vec!["cap/refinement".to_string()]);
@@ -218,7 +395,6 @@ fn build_harness(fail_runner: bool) -> Harness {
     let heartbeat = HeartbeatPolicy::default_policy();
     let poller = Poller::new(client, session, controller, heartbeat);
 
-    let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
     let (runner_instance, runner_calls) = RecordingRunner::new(fail_runner);
     let runner: Arc<dyn server_core::JobRunner + Send + Sync> = Arc::new(runner_instance);
     let services = Arc::new(Services {
@@ -242,6 +418,12 @@ fn build_harness(fail_runner: bool) -> Harness {
         runner_calls,
         _tempdir: tempdir,
     }
+}
+
+fn build_harness(fail_runner: bool) -> Harness {
+    let lease = lease_response("cap/refinement");
+    let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
+    build_harness_with(vec![lease], domain, fail_runner)
 }
 
 #[tokio::test]
@@ -313,4 +495,85 @@ async fn failing_runner_reports_failure() {
     // Executor should use the short‑lived access token
     // from the DMS lease/heartbeat session.
     assert_eq!(runner_calls[0].access_token, "lease-token");
+}
+
+#[tokio::test]
+async fn inputs_cids_prefer_uri_downloads() {
+    let inputs_cids =
+        vec!["https://domain.example/api/v1/domains/domain-42/data/cid-1".to_string()];
+    let lease = lease_response_with_inputs("cap/refinement", inputs_cids.clone());
+    let domain = Arc::new(UriRecordingDomain::new());
+    let domain_object: Arc<dyn DomainPort + Send + Sync> = domain.clone();
+    let mut harness = build_harness_with(vec![lease], domain_object, false);
+
+    let outcome = harness.executor.step().await.expect("step ok");
+    assert!(outcome.is_none());
+
+    let data_id_downloads = domain.data_id_batches();
+    assert!(
+        data_id_downloads.is_empty(),
+        "expected no data_id downloads when inputs_cids are present, got {:?}",
+        data_id_downloads
+    );
+
+    let uri_downloads = domain.uri_batches();
+    assert_eq!(
+        uri_downloads,
+        vec![inputs_cids],
+        "expected uri downloads to match inputs_cids"
+    );
+}
+
+#[tokio::test]
+async fn data_ids_fallback_without_inputs_cids() {
+    let lease = lease_response("cap/refinement");
+    let domain = Arc::new(UriRecordingDomain::new());
+    let domain_object: Arc<dyn DomainPort + Send + Sync> = domain.clone();
+    let mut harness = build_harness_with(vec![lease], domain_object, false);
+
+    let outcome = harness.executor.step().await.expect("step ok");
+    assert!(outcome.is_none());
+
+    let uri_downloads = domain.uri_batches();
+    assert!(
+        uri_downloads.is_empty(),
+        "expected no uri downloads when inputs_cids absent, got {:?}",
+        uri_downloads
+    );
+
+    let data_id_downloads = domain.data_id_batches();
+    assert_eq!(
+        data_id_downloads,
+        vec![vec!["scan-1".to_string()]],
+        "expected data_id downloads to fallback"
+    );
+}
+
+#[tokio::test]
+async fn failing_downloads_report_user_friendly_error() {
+    let inputs_cids =
+        vec!["https://domain.example/api/v1/domains/domain-42/data/cid-missing".to_string()];
+    let lease = lease_response_with_inputs("cap/refinement", inputs_cids);
+    let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(FailingDownloadDomain);
+    let mut harness = build_harness_with(vec![lease], domain, false);
+
+    let outcome = harness.executor.step().await.expect("step ok");
+    assert!(outcome.is_none());
+
+    let fails = harness.client.fail_calls();
+    let fail_guard = fails.lock().expect("fail guard");
+    assert_eq!(fail_guard.len(), 1);
+    let (task_id, reason, details) = &fail_guard[0];
+    assert_eq!(task_id, "task-1");
+    assert_eq!(reason, "JobFailed");
+    let details = details.as_ref().expect("details");
+    let error_msg = details
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        error_msg.contains("Invalid reconstruction inputs"),
+        "expected friendly error message, got {}",
+        error_msg
+    );
 }
