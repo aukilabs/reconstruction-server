@@ -65,6 +65,8 @@ async fn lease_heartbeat_complete_smoke() {
             "capability": "cap/refinement",
             "meta": task_meta,
         },
+        "domain_id": "domain-1",
+        "domain_server_url": "https://domain.example",
         "access_token": "lease-token-abc",
         "access_token_expires_at": "2025-01-01T00:01:00Z",
         "lease_expires_at": "2025-01-01T00:02:00Z"
@@ -91,6 +93,10 @@ async fn lease_heartbeat_complete_smoke() {
         lease.task.as_ref().map(|t| &t.id),
         Some(&"task-123".to_string())
     );
+    assert_eq!(
+        lease.domain_server_url.as_deref(),
+        Some("https://domain.example")
+    );
     assert_eq!(client.access_token().await, Some("lease-token-abc".into()));
 
     client
@@ -114,6 +120,7 @@ async fn lease_heartbeat_complete_smoke() {
                 meta: json!({}),
             },
             "lease_expires_at": "2025-01-01T00:03:00Z",
+            "domain_server_url": "https://domain.example",
         })))
         .expect(1)
         .mount(&server)

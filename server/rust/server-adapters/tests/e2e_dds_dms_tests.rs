@@ -315,9 +315,13 @@ async fn dms_lease(
             id: "task-123".into(),
             job_id: None,
             capability: "cap/refinement".into(),
-            inputs_cids: vec![],
+            inputs_cids: vec![
+                "https://domains.dev/api/v1/domains/domain-123/data/cid-001".to_string()
+            ],
             meta: json!({}),
         }),
+        domain_id: Some("domain-123".into()),
+        domain_server_url: Some("https://domains.dev".into()),
         ..LeaseResponse::default()
     })
 }
@@ -336,6 +340,7 @@ async fn dms_heartbeat(
     }
     let body = LeaseResponse {
         lease_expires_at: Some("2025-01-01T00:05:00Z".into()),
+        domain_server_url: Some("https://domains.dev".into()),
         ..LeaseResponse::default()
     };
     (StatusCode::OK, Json(body)).into_response()

@@ -391,9 +391,12 @@ fn build_job_request_json(snapshot: &SessionSnapshot) -> server_core::Result<Str
 
     let domain_server_url = snapshot
         .domain_server_url()
-        .map(str::to_string)
-        .filter(|url| !url.trim().is_empty())
-        .or_else(|| infer_domain_server_url(&inputs_cids));
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| {
+            server_core::DomainError::BadRequest("task lease missing domain_server_url".into())
+        })?
+        .to_string();
 
     let request = JobRequestData {
         data_ids: Vec::new(),
@@ -401,7 +404,7 @@ fn build_job_request_json(snapshot: &SessionSnapshot) -> server_core::Result<Str
         access_token: access_token.to_string(),
         processing_type,
         inputs_cids,
-        domain_server_url,
+        domain_server_url: Some(domain_server_url),
         skip_manifest_upload: None,
         override_job_name: None,
         override_manifest_id: None,
@@ -439,20 +442,6 @@ fn processing_type_from_capability(capability: &str) -> server_core::Result<Stri
     Err(server_core::DomainError::BadRequest(format!(
         "unsupported reconstruction capability `{capability}`"
     )))
-}
-
-fn infer_domain_server_url(inputs_cids: &[String]) -> Option<String> {
-    inputs_cids.iter().find_map(|uri| {
-        reqwest::Url::parse(uri).ok().and_then(|url| {
-            let host = url.host_str()?;
-            let mut base = format!("{}://{}", url.scheme(), host);
-            if let Some(port) = url.port() {
-                base.push(':');
-                base.push_str(&port.to_string());
-            }
-            Some(base)
-        })
-    })
 }
 
 // --- progress helpers ---
@@ -551,26 +540,4 @@ pub async fn run_executor_loop<C, R>(
         }
     }
     info!("Task executor loop exiting");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::infer_domain_server_url;
-
-    #[test]
-    fn infer_domain_server_url_extracts_origin() {
-        let inputs = vec![String::from(
-            "https://domain.dev.aukiverse.com/api/v1/domains/example/data/123",
-        )];
-        assert_eq!(
-            infer_domain_server_url(&inputs),
-            Some(String::from("https://domain.dev.aukiverse.com"))
-        );
-    }
-
-    #[test]
-    fn infer_domain_server_url_returns_none_when_unparsable() {
-        let inputs = vec![String::from("not-a-valid-url")];
-        assert!(infer_domain_server_url(&inputs).is_none());
-    }
 }

@@ -10,7 +10,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use serde_json::{json, Value};
 use server_adapters::dms::{
     client::DmsClientError,
-    executor::{ExecutorConfig, TaskExecutor},
+    executor::{ExecutorConfig, TaskExecutor, TaskExecutorError},
     models::{LeaseRequest, LeaseResponse, TaskSummary},
     poller::{DmsApi, PollController, Poller},
     session::{CapabilitySelector, HeartbeatPolicy, SessionManager},
@@ -279,6 +279,7 @@ impl DomainPort for FailingDownloadDomain {
 struct RunnerCall {
     capability: String,
     access_token: String,
+    domain_server_url: String,
 }
 
 struct RecordingRunner {
@@ -308,6 +309,7 @@ impl server_core::JobRunner for RecordingRunner {
             .push(RunnerCall {
                 capability: capability.to_string(),
                 access_token: job.meta.access_token.clone(),
+                domain_server_url: job.meta.domain_server_url.clone(),
             });
         if self.fail {
             Err(DomainError::Internal("boom".into()))
@@ -475,6 +477,7 @@ async fn successful_job_triggers_completion() {
     // Executor should use the short‑lived access token
     // from the DMS lease/heartbeat session.
     assert_eq!(runner_calls[0].access_token, "lease-token");
+    assert_eq!(runner_calls[0].domain_server_url, "https://domain.example");
 
     assert!(harness
         .client
@@ -515,6 +518,7 @@ async fn failing_runner_reports_failure() {
     // Executor should use the short‑lived access token
     // from the DMS lease/heartbeat session.
     assert_eq!(runner_calls[0].access_token, "lease-token");
+    assert_eq!(runner_calls[0].domain_server_url, "https://domain.example");
 }
 
 #[tokio::test]
@@ -563,6 +567,45 @@ async fn executor_handles_modern_payload_without_legacy_metadata() {
     assert_eq!(runner_calls.len(), 1);
     assert_eq!(runner_calls[0].capability, "cap/refinement");
     assert_eq!(runner_calls[0].access_token, "lease-token");
+    assert_eq!(runner_calls[0].domain_server_url, "https://domain.example");
+}
+
+#[tokio::test]
+async fn missing_domain_server_url_fails_job_setup() {
+    let inputs_cids =
+        vec!["https://domain.example/api/v1/domains/domain-42/data/cid-3".to_string()];
+    let mut lease = modern_lease_response("cap/refinement", inputs_cids);
+    lease.domain_server_url = None;
+
+    let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
+    let mut harness = build_harness_with(vec![lease], domain, false);
+
+    let err = harness
+        .executor
+        .step()
+        .await
+        .expect_err("expected job setup failure");
+    match err {
+        TaskExecutorError::JobSetup(server_core::DomainError::BadRequest(msg)) => {
+            assert!(msg.contains("domain_server_url"))
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let fail_log = harness.client.fail_calls();
+    let fail_calls = fail_log.lock().expect("fail guard");
+    assert_eq!(fail_calls.len(), 1);
+    assert_eq!(fail_calls[0].0, "task-1");
+    assert_eq!(fail_calls[0].1, "JobSetupFailed");
+    let details = fail_calls[0].2.as_ref().expect("failure details expected");
+    let error_msg = details
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(error_msg.contains("domain_server_url"));
+
+    let runner_calls = harness.runner_calls.lock().expect("runner guard");
+    assert!(runner_calls.is_empty(), "runner should not have run");
 }
 
 #[tokio::test]
