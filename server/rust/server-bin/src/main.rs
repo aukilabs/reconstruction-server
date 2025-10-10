@@ -20,6 +20,7 @@ use server_core::Services;
 use sha3::Digest;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -41,10 +42,13 @@ impl server_core::JobRunner for PythonRunner {
         job: &server_core::Job,
         _capability: &str,
         cpu_workers: usize,
+        cancel: CancellationToken,
     ) -> server_core::Result<()> {
         use std::io::{BufRead, BufReader, Write};
         use std::process::{Command, Stdio};
         use std::thread;
+        use std::time::Duration;
+        use tokio::time::sleep;
         let refinement_python = "main.py";
         let output_path = job.job_path.join("refined");
         let datasets_root = job.job_path.join("datasets");
@@ -101,14 +105,26 @@ impl server_core::JobRunner for PythonRunner {
             });
         }
 
-        // Important: Avoid blocking the async runtime while waiting for the
-        // Python process to finish. If we block here, the executor's
-        // heartbeat loop cannot make progress and the lease may expire.
-        // Offload the blocking wait to a dedicated thread.
-        let status = tokio::task::spawn_blocking(move || child.wait())
-            .await
-            .map_err(|e| server_core::DomainError::Internal(e.to_string()))?
-            .map_err(server_core::DomainError::Io)?;
+        let status = loop {
+            if cancel.is_cancelled() {
+                tracing::warn!("Cancellation requested; terminating python runner");
+                let _ = child.kill();
+                let _ = child.wait().map_err(server_core::DomainError::Io)?;
+                return Err(server_core::DomainError::Internal("python canceled".into()));
+            }
+            if let Some(status) = child.try_wait().map_err(server_core::DomainError::Io)? {
+                break status;
+            }
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    tracing::warn!("Cancellation requested; terminating python runner");
+                    let _ = child.kill();
+                    let _ = child.wait().map_err(server_core::DomainError::Io)?;
+                    return Err(server_core::DomainError::Internal("python canceled".into()));
+                }
+                _ = sleep(Duration::from_millis(200)) => {}
+            }
+        };
         if !status.success() {
             return Err(server_core::DomainError::Internal("python failed".into()));
         }
@@ -145,6 +161,7 @@ impl server_core::JobRunner for NoopRunner {
         _job: &server_core::Job,
         _capability: &str,
         _cpu_workers: usize,
+        _cancel: CancellationToken,
     ) -> server_core::Result<()> {
         // Intentionally do nothing; used for lightweight testing via MOCK_PYTHON=true
         Ok(())
@@ -198,9 +215,14 @@ async fn main() -> anyhow::Result<()> {
             ),
         };
         let capability = job.meta.processing_type.clone();
-        let _outputs =
-            server_core::execute_job(&services, &mut job, capability.as_str(), cli.cpu_workers)
-                .await?;
+        let _outputs = server_core::execute_job(
+            &services,
+            &mut job,
+            capability.as_str(),
+            cli.cpu_workers,
+            CancellationToken::new(),
+        )
+        .await?;
         return Ok(());
     }
 

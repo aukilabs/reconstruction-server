@@ -3,6 +3,7 @@ use base64::Engine;
 use chrono::Utc;
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -47,7 +48,13 @@ pub trait DomainPort: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait JobRunner: Send + Sync {
-    async fn run_python(&self, job: &Job, capability: &str, cpu_workers: usize) -> Result<()>;
+    async fn run_python(
+        &self,
+        job: &Job,
+        capability: &str,
+        cpu_workers: usize,
+        cancel: CancellationToken,
+    ) -> Result<()>;
 }
 
 pub struct Services {
@@ -168,6 +175,7 @@ pub async fn execute_job(
     job: &mut Job,
     capability: &str,
     cpu_workers: usize,
+    cancel: CancellationToken,
 ) -> Result<Vec<String>> {
     if !job.meta.override_job_name.is_empty() && !job.meta.override_manifest_id.is_empty() {
         let key = format!(
@@ -242,6 +250,7 @@ pub async fn execute_job(
         job.clone(),
         job.job_path.join("job_manifest.json"),
         svcs.manifest_interval,
+        cancel.clone(),
     );
 
     let uploader = crate::manifest::PeriodicManifestUploader::spawn(
@@ -249,22 +258,30 @@ pub async fn execute_job(
         job.job_path.join("job_manifest.json"),
         Duration::from_secs(30),
         Arc::clone(&svcs.domain),
+        cancel.clone(),
     );
 
-    let progressing = monitor_and_upload_locals(job.clone(), Arc::clone(&svcs.domain)).await;
+    let progressing =
+        monitor_and_upload_locals(job.clone(), Arc::clone(&svcs.domain), cancel.clone()).await;
 
-    let run_res = svcs.runner.run_python(job, capability, cpu_workers).await;
-    if let Some(done_tx) = progressing {
+    let run_res = svcs
+        .runner
+        .run_python(job, capability, cpu_workers, cancel.clone())
+        .await;
+    let mut monitor_exit = None;
+    if let Some((done_tx, exit_rx)) = progressing {
         let _ = done_tx.send(true);
+        monitor_exit = Some(exit_rx);
     }
     // Stop manifest writer/uploader cleanly
     writer.stop().await;
     uploader.stop().await;
-    if !job.meta.skip_manifest_upload {
-        svcs.domain
-            .upload_manifest(job, &job.job_path.join("job_manifest.json"))
-            .await?;
+    if let Some(exit_rx) = monitor_exit {
+        let _ = exit_rx.await;
     }
+
+    let was_cancelled = cancel.is_cancelled();
+
     if let Err(e) = run_res {
         job.status = "failed".into();
         write_failed_manifest(job, "Reconstruction job script failed")?;
@@ -274,6 +291,23 @@ pub async fn execute_job(
                 .await?;
         }
         return Err(e);
+    }
+
+    if was_cancelled {
+        job.status = "failed".into();
+        write_failed_manifest(job, "Reconstruction job canceled")?;
+        if !job.meta.skip_manifest_upload {
+            svcs.domain
+                .upload_manifest(job, &job.job_path.join("job_manifest.json"))
+                .await?;
+        }
+        return Err(DomainError::Internal("job canceled".into()));
+    }
+
+    if !job.meta.skip_manifest_upload {
+        svcs.domain
+            .upload_manifest(job, &job.job_path.join("job_manifest.json"))
+            .await?;
     }
 
     sweep_and_upload_locals(job.clone(), Arc::clone(&svcs.domain)).await;
@@ -427,20 +461,25 @@ fn write_failed_manifest(job: &Job, msg: &str) -> Result<()> {
 pub(crate) async fn monitor_and_upload_locals(
     mut job: Job,
     domain: Arc<dyn DomainPort + Send + Sync>,
-) -> Option<tokio::sync::watch::Sender<bool>> {
+    cancel: CancellationToken,
+) -> Option<(
+    tokio::sync::watch::Sender<bool>,
+    tokio::sync::oneshot::Receiver<()>,
+)> {
     if job.meta.processing_type != "local_refinement"
         && job.meta.processing_type != "local_and_global_refinement"
     {
         return None;
     }
-    let (tx, rx) = tokio::sync::watch::channel(false);
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
     let datasets_root = job.job_path.join("datasets");
     let refined_root = job.job_path.join("refined").join("local");
     let _manifest_path = job.job_path.join("job_manifest.json");
-
+    let token = cancel.child_token();
     tokio::spawn(async move {
         loop {
-            if *rx.borrow() {
+            if *rx.borrow() || token.is_cancelled() {
                 break;
             }
             let _total = std::fs::read_dir(&datasets_root)
@@ -460,6 +499,9 @@ pub(crate) async fn monitor_and_upload_locals(
                     }
                     let scan_id = e.file_name().to_string_lossy().to_string();
                     let sfm = refined_root.join(&scan_id).join("sfm");
+                    if token.is_cancelled() {
+                        break;
+                    }
                     if sfm.exists() && required_local_outputs_exist(&sfm) {
                         _refined += 1;
                         if !job.completed_scans.get(&scan_id).cloned().unwrap_or(false) {
@@ -479,11 +521,18 @@ pub(crate) async fn monitor_and_upload_locals(
             let (progress, status_text) = compute_progress_status(&job);
             debug!(job_id = %job.meta.id, %progress, %status_text, "progress tick");
 
-            sleep(Duration::from_secs(30)).await;
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = rx.changed() => {
+                    if *rx.borrow() { break; }
+                }
+                _ = sleep(Duration::from_secs(30)) => {}
+            }
         }
+        let _ = exit_tx.send(());
     });
 
-    Some(tx)
+    Some((tx, exit_rx))
 }
 
 /// Compute current job progress and status text based on folders on disk.
@@ -714,6 +763,7 @@ mod tests {
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
+    use tokio::sync::Notify;
 
     #[test]
     fn create_job_metadata_canonicalizes_domain_url_without_scheme() {
@@ -795,6 +845,7 @@ mod tests {
             _job: &Job,
             _capability: &str,
             _cpu_workers: usize,
+            _cancel: CancellationToken,
         ) -> Result<()> {
             write_dummy_outputs(_job);
             Ok(())
@@ -828,9 +879,15 @@ mod tests {
             runner,
             manifest_interval: std::time::Duration::from_millis(50),
         };
-        let outputs = execute_job(&svcs, &mut job, "capability/test", 2)
-            .await
-            .unwrap();
+        let outputs = execute_job(
+            &svcs,
+            &mut job,
+            "capability/test",
+            2,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(job.status, "succeeded");
         assert!(!outputs.is_empty());
     }
@@ -882,9 +939,28 @@ mod tests {
             _job: &Job,
             _capability: &str,
             _cpu_workers: usize,
+            _cancel: CancellationToken,
         ) -> Result<()> {
             write_dummy_outputs(_job);
             Ok(())
+        }
+    }
+
+    struct BlockingRunner {
+        started: Arc<Notify>,
+    }
+    #[async_trait::async_trait]
+    impl JobRunner for BlockingRunner {
+        async fn run_python(
+            &self,
+            _job: &Job,
+            _capability: &str,
+            _cpu_workers: usize,
+            cancel: CancellationToken,
+        ) -> Result<()> {
+            self.started.notify_one();
+            cancel.cancelled().await;
+            Err(DomainError::Internal("runner canceled".into()))
         }
     }
 
@@ -917,15 +993,114 @@ mod tests {
             runner,
             manifest_interval: std::time::Duration::from_millis(50),
         };
-        let outputs = execute_job(&svcs, &mut job, "capability/test", 1)
-            .await
-            .unwrap();
+        let outputs = execute_job(
+            &svcs,
+            &mut job,
+            "capability/test",
+            1,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         // At least 2 calls: initial POST and final PUT after stop
         assert!(
             counter.load(Ordering::SeqCst) >= 2,
             "expected at least 2 manifest uploads"
         );
         assert!(!outputs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn monitor_and_upload_locals_exits_on_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": [],
+            "domain_id": "domx",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+        let job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+        let cancel = CancellationToken::new();
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
+        let monitor = monitor_and_upload_locals(job, domain, cancel.clone()).await;
+        let (tx, exit_rx) = monitor.expect("monitor should spawn for refinement jobs");
+        cancel.cancel();
+        let _ = exit_rx.await;
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn execute_job_cancellation_reports_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = serde_json::json!({
+            "data_ids": ["scan-1"],
+            "domain_id": "dom_canceled",
+            "access_token": "token",
+            "processing_type": "local_and_global_refinement",
+            "domain_server_url": "http://example",
+            "skip_manifest_upload": false,
+            "override_job_name": "",
+            "override_manifest_id": "",
+        });
+        let mut job = create_job_metadata(
+            &dir.path().to_path_buf(),
+            &req.to_string(),
+            "localhost",
+            None,
+        )
+        .unwrap();
+        std::fs::create_dir_all(job.job_path.join("datasets")).unwrap();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(CountingDomain(counter.clone()));
+        let started = Arc::new(Notify::new());
+        let runner: Arc<dyn JobRunner + Send + Sync> = Arc::new(BlockingRunner {
+            started: Arc::clone(&started),
+        });
+        let services = Arc::new(Services {
+            domain,
+            runner,
+            manifest_interval: Duration::from_millis(20),
+        });
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let canceller = tokio::spawn(async move {
+            started.notified().await;
+            cancel_clone.cancel();
+        });
+
+        let result = execute_job(services.as_ref(), &mut job, "capability/test", 1, cancel).await;
+
+        canceller.await.unwrap();
+        match result {
+            Err(DomainError::Internal(msg)) => {
+                assert!(
+                    msg.contains("canceled"),
+                    "expected cancellation error, got {msg}"
+                );
+            }
+            other => panic!("expected cancellation error, got {:?}", other),
+        }
+        assert_eq!(
+            job.status, "failed",
+            "job status should be failed after cancellation"
+        );
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "expected initial + failure manifest upload on cancellation"
+        );
     }
 
     struct FailingManifestDomain;
@@ -1000,7 +1175,14 @@ mod tests {
             manifest_interval: std::time::Duration::from_millis(50),
         };
 
-        let res = execute_job(&svcs, &mut job, "capability/test", 1).await;
+        let res = execute_job(
+            &svcs,
+            &mut job,
+            "capability/test",
+            1,
+            CancellationToken::new(),
+        )
+        .await;
         match res {
             Err(DomainError::Internal(msg)) => assert!(msg.contains("manifest boom")),
             other => panic!("expected manifest failure, got {:?}", other),
@@ -1079,7 +1261,14 @@ mod tests {
             manifest_interval: std::time::Duration::from_millis(50),
         };
 
-        let res = execute_job(&svcs, &mut job, "capability/test", 1).await;
+        let res = execute_job(
+            &svcs,
+            &mut job,
+            "capability/test",
+            1,
+            CancellationToken::new(),
+        )
+        .await;
         match res {
             Err(DomainError::Internal(msg)) => assert!(msg.contains("output boom")),
             other => panic!("expected output failure, got {:?}", other),
@@ -1189,6 +1378,7 @@ mod tests {
             _job: &Job,
             _capability: &str,
             _cpu_workers: usize,
+            _cancel: CancellationToken,
         ) -> Result<()> {
             Ok(())
         }

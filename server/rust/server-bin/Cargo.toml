@@ -12,6 +12,7 @@ metrics = ["server-adapters/metrics"]
 server-core = { path = "../server-core" }
 server-adapters = { path = "../server-adapters" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 axum = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter","fmt","json"] }

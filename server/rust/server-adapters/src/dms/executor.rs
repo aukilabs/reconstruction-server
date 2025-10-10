@@ -7,6 +7,7 @@ use std::{
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, warn};
 
 use super::{
@@ -69,8 +70,12 @@ where
             PollResult::Idle { schedule } => Ok(Some(schedule.delay)),
             PollResult::AlreadyRunning => Ok(None),
             PollResult::Leased(snapshot) => {
-                self.handle_lease(*snapshot).await?;
-                Ok(None)
+                let immediate_repoll = self.handle_lease(*snapshot).await?;
+                if immediate_repoll {
+                    Ok(Some(Duration::from_millis(0)))
+                } else {
+                    Ok(None)
+                }
             }
         };
         #[cfg(feature = "metrics")]
@@ -78,7 +83,7 @@ where
         result
     }
 
-    async fn handle_lease(&mut self, snapshot: SessionSnapshot) -> Result<(), TaskExecutorError> {
+    async fn handle_lease(&mut self, snapshot: SessionSnapshot) -> Result<bool, TaskExecutorError> {
         let capability = snapshot.capability().to_string();
         let request_json = match build_job_request_json(&snapshot) {
             Ok(json) => json,
@@ -140,7 +145,8 @@ where
         metrics::gauge!("dms.active_task").set(1.0);
 
         // Drive heartbeats while the Python pipeline runs to keep the lease alive
-        let run_result = {
+        let cancel_token = CancellationToken::new();
+        let (run_result, lease_interrupted) = {
             // Clone the job root path for progress sampling without borrowing `job`
             let job_root = job.job_path.clone();
             let run_future = server_core::execute_job(
@@ -148,6 +154,7 @@ where
                 &mut job,
                 &capability,
                 self.config.cpu_workers,
+                cancel_token.clone(),
             );
             tokio::pin!(run_future);
 
@@ -159,15 +166,28 @@ where
             let mut last_reported_status: Option<String> = None;
             let mut last_progress_hb_at: Option<Instant> = None; // only for progress-driven heartbeats
             let mut last_progress_poll_at: Instant = Instant::now();
+            let mut lease_interrupted_flag = false;
 
             loop {
+                if lease_interrupted_flag {
+                    let res = (&mut run_future).await;
+                    break (res, true);
+                }
+
                 let now = Instant::now();
                 let snapshot_opt = self.poller.session_snapshot().await;
-                // If no active session, back off briefly
+
                 if snapshot_opt.is_none() {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    let maybe_result = tokio::select! {
+                        res = &mut run_future => Some(res),
+                        _ = tokio::time::sleep(Duration::from_millis(50)) => None,
+                    };
+                    if let Some(res) = maybe_result {
+                        break (res, lease_interrupted_flag);
+                    }
                     continue;
                 }
+
                 let snapshot = snapshot_opt.expect("checked some");
 
                 // 1) TTL-based heartbeat: if due, send immediately
@@ -194,18 +214,24 @@ where
                                 }
                             }
                             Ok(HeartbeatResult::Canceled) => {
+                                lease_interrupted_flag = true;
+                                cancel_token.cancel();
                                 warn!(
                                     task_id = snapshot.task_id(),
                                     capability = %snapshot.capability(),
                                     "Lease canceled during execution; stopping heartbeats"
                                 );
+                                continue;
                             }
                             Ok(HeartbeatResult::LostLease) => {
+                                lease_interrupted_flag = true;
+                                cancel_token.cancel();
                                 warn!(
                                     task_id = snapshot.task_id(),
                                     capability = %snapshot.capability(),
                                     "Lease lost during execution; stopping heartbeats"
                                 );
+                                continue;
                             }
                             Err(HeartbeatError::NoActiveSession) => { /* ignore */ }
                             Err(err) => {
@@ -252,18 +278,24 @@ where
                                 last_reported_status = Some(status);
                             }
                             Ok(HeartbeatResult::Canceled) => {
+                                lease_interrupted_flag = true;
+                                cancel_token.cancel();
                                 warn!(
                                     task_id = snapshot.task_id(),
                                     capability = %snapshot.capability(),
                                     "Lease canceled during execution; stopping heartbeats"
                                 );
+                                continue;
                             }
                             Ok(HeartbeatResult::LostLease) => {
+                                lease_interrupted_flag = true;
+                                cancel_token.cancel();
                                 warn!(
                                     task_id = snapshot.task_id(),
                                     capability = %snapshot.capability(),
                                     "Lease lost during execution; stopping heartbeats"
                                 );
+                                continue;
                             }
                             Err(HeartbeatError::NoActiveSession) => { /* ignore */ }
                             Err(err) => {
@@ -289,13 +321,36 @@ where
                     _ = tokio::time::sleep(sleep_duration) => None,
                 };
                 if let Some(res) = maybe_result {
-                    break res;
+                    break (res, lease_interrupted_flag);
                 }
             }
         };
 
         #[cfg(feature = "metrics")]
         metrics::gauge!("dms.active_task").set(0.0);
+
+        if lease_interrupted {
+            match run_result {
+                Ok(_) => info!(
+                    task_id = snapshot.task_id(),
+                    capability = %capability,
+                    "Job canceled due to lease loss"
+                ),
+                Err(err) => warn!(
+                    task_id = snapshot.task_id(),
+                    capability = %capability,
+                    error = %err,
+                    "Job aborted after lease cancellation"
+                ),
+            }
+            self.poller.clear_session().await;
+            info!(
+                task_id = snapshot.task_id(),
+                capability = %capability,
+                "Cleared canceled lease; resuming polling immediately"
+            );
+            return Ok(true);
+        }
 
         match run_result {
             Ok(outputs) => {
@@ -329,7 +384,7 @@ where
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub async fn shutdown(&mut self) {

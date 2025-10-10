@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::watch, task::JoinHandle, time::interval};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 /// Atomically write bytes to `path` by writing to a temp file in the same
@@ -97,18 +98,28 @@ pub struct PeriodicManifestWriter {
 impl PeriodicManifestWriter {
     /// Spawn a background task that, at `interval`, serializes a manifest for `job`
     /// and writes it atomically to `manifest_path`.
-    pub fn spawn(job: Job, manifest_path: PathBuf, interval_dur: Duration) -> Self {
+    pub fn spawn(
+        job: Job,
+        manifest_path: PathBuf,
+        interval_dur: Duration,
+        cancel: CancellationToken,
+    ) -> Self {
         let (tx, mut rx) = watch::channel(false);
         let join = tokio::spawn(async move {
             let mut ticker = interval(interval_dur);
             let mut first = true;
+            let token = cancel.child_token();
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {},
+                    _ = token.cancelled() => break,
                     _ = rx.changed() => {
                         if *rx.borrow() { break; }
                         continue;
                     }
+                }
+                if token.is_cancelled() {
+                    break;
                 }
 
                 // If Python wrote a final manifest (succeeded/failed), do not overwrite.
@@ -185,13 +196,16 @@ impl PeriodicManifestUploader {
         manifest_path: PathBuf,
         interval_dur: Duration,
         domain: Arc<dyn DomainPort + Send + Sync>,
+        cancel: CancellationToken,
     ) -> Self {
         let (tx, mut rx) = watch::channel(false);
         let join = tokio::spawn(async move {
             let mut ticker = interval(interval_dur);
+            let token = cancel.child_token();
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {},
+                    _ = token.cancelled() => break,
                     _ = rx.changed() => {
                         if *rx.borrow() { break; }
                         continue;
@@ -259,6 +273,7 @@ mod tests {
             job.clone(),
             manifest_path.clone(),
             Duration::from_millis(100),
+            CancellationToken::new(),
         );
 
         // Advance time and wait until file appears
@@ -342,6 +357,7 @@ mod tests {
             job.clone(),
             manifest_path.clone(),
             Duration::from_millis(100),
+            CancellationToken::new(),
         );
         for _ in 0..5 {
             advance(Duration::from_millis(100)).await;

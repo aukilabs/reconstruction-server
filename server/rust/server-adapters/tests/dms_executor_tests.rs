@@ -2,11 +2,15 @@ use std::{
     collections::VecDeque,
     fs,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
 use rand::{rngs::StdRng, SeedableRng};
+use reqwest::StatusCode;
 use serde_json::{json, Value};
 use server_adapters::dms::{
     client::DmsClientError,
@@ -17,12 +21,15 @@ use server_adapters::dms::{
 };
 use server_core::{DomainError, DomainPort, ExpectedOutput, Job, Result as CoreResult, Services};
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 struct MockClient {
     leases: Arc<Mutex<VecDeque<LeaseResponse>>>,
     complete_calls: CompleteCallLog,
     fail_calls: FailCallLog,
+    heartbeat_responses: Arc<Mutex<VecDeque<MockHeartbeatResponse>>>,
+    lease_calls: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 type CompleteCall = (String, Vec<String>, Option<Value>);
@@ -30,12 +37,21 @@ type CompleteCallLog = Arc<Mutex<Vec<CompleteCall>>>;
 type FailCall = (String, String, Option<Value>);
 type FailCallLog = Arc<Mutex<Vec<FailCall>>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MockHeartbeatResponse {
+    Default,
+    Canceled,
+    LostLease,
+}
+
 impl MockClient {
     fn new(leases: Vec<LeaseResponse>) -> Self {
         Self {
             leases: Arc::new(Mutex::new(leases.into_iter().collect())),
             complete_calls: Arc::new(Mutex::new(Vec::new())),
             fail_calls: Arc::new(Mutex::new(Vec::new())),
+            heartbeat_responses: Arc::new(Mutex::new(VecDeque::new())),
+            lease_calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -46,13 +62,33 @@ impl MockClient {
     fn fail_calls(&self) -> FailCallLog {
         Arc::clone(&self.fail_calls)
     }
+
+    fn push_heartbeats<I>(&self, responses: I)
+    where
+        I: IntoIterator<Item = MockHeartbeatResponse>,
+    {
+        let mut guard = self
+            .heartbeat_responses
+            .lock()
+            .expect("heartbeat mutex poisoned");
+        guard.extend(responses);
+    }
+
+    fn lease_calls(&self) -> Arc<Mutex<Vec<Option<String>>>> {
+        Arc::clone(&self.lease_calls)
+    }
 }
 
 #[async_trait::async_trait]
 impl DmsApi for MockClient {
     async fn lease_task(&self, _request: &LeaseRequest) -> Result<LeaseResponse, DmsClientError> {
         let mut leases = self.leases.lock().expect("leases mutex poisoned");
-        Ok(leases.pop_front().unwrap_or_default())
+        let lease = leases.pop_front().unwrap_or_default();
+        {
+            let mut calls = self.lease_calls.lock().expect("lease call mutex poisoned");
+            calls.push(lease.task.as_ref().map(|task| task.id.clone()));
+        }
+        Ok(lease)
     }
 
     async fn send_heartbeat(
@@ -60,7 +96,22 @@ impl DmsApi for MockClient {
         _task_id: &str,
         _progress: Option<&Value>,
     ) -> Result<LeaseResponse, DmsClientError> {
-        Ok(LeaseResponse::default())
+        let response = self
+            .heartbeat_responses
+            .lock()
+            .expect("heartbeat mutex poisoned")
+            .pop_front()
+            .unwrap_or(MockHeartbeatResponse::Default);
+        match response {
+            MockHeartbeatResponse::Default => Ok(LeaseResponse::default()),
+            MockHeartbeatResponse::Canceled => Ok(LeaseResponse {
+                cancel: Some(true),
+                ..LeaseResponse::default()
+            }),
+            MockHeartbeatResponse::LostLease => {
+                Err(DmsClientError::UnexpectedStatus(StatusCode::CONFLICT))
+            }
+        }
     }
 
     async fn complete_task(
@@ -302,7 +353,13 @@ impl RecordingRunner {
 
 #[async_trait::async_trait]
 impl server_core::JobRunner for RecordingRunner {
-    async fn run_python(&self, job: &Job, capability: &str, _cpu_workers: usize) -> CoreResult<()> {
+    async fn run_python(
+        &self,
+        job: &Job,
+        capability: &str,
+        _cpu_workers: usize,
+        _cancel: CancellationToken,
+    ) -> CoreResult<()> {
         self.calls
             .lock()
             .expect("runner mutex poisoned")
@@ -325,6 +382,137 @@ impl server_core::JobRunner for RecordingRunner {
                 .map_err(DomainError::Io)?;
             Ok(())
         }
+    }
+}
+
+#[derive(Debug)]
+struct SlowRunnerState {
+    started: AtomicBool,
+    cancelled: AtomicBool,
+    completed: AtomicBool,
+    dropped: AtomicBool,
+    calls: AtomicUsize,
+}
+
+impl SlowRunnerState {
+    fn new() -> Self {
+        Self {
+            started: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+            completed: AtomicBool::new(false),
+            dropped: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn mark_started(&self) {
+        self.started.store(true, Ordering::SeqCst);
+    }
+
+    fn reset_completion(&self) {
+        self.completed.store(false, Ordering::SeqCst);
+        self.cancelled.store(false, Ordering::SeqCst);
+        self.dropped.store(false, Ordering::SeqCst);
+    }
+
+    fn mark_cancelled(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn mark_completed(&self) {
+        self.completed.store(true, Ordering::SeqCst);
+    }
+
+    fn mark_dropped(&self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+
+    fn started(&self) -> bool {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn dropped(&self) -> bool {
+        self.dropped.load(Ordering::SeqCst)
+    }
+
+    fn completed(&self) -> bool {
+        self.completed.load(Ordering::SeqCst)
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+struct SlowRunner {
+    state: Arc<SlowRunnerState>,
+    calls: Arc<Mutex<Vec<RunnerCall>>>,
+}
+
+impl SlowRunner {
+    fn build() -> (Self, Arc<Mutex<Vec<RunnerCall>>>, Arc<SlowRunnerState>) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let state = Arc::new(SlowRunnerState::new());
+        (
+            Self {
+                state: Arc::clone(&state),
+                calls: Arc::clone(&calls),
+            },
+            calls,
+            state,
+        )
+    }
+}
+
+struct DropProbe {
+    state: Arc<SlowRunnerState>,
+}
+
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        if !self.state.completed() {
+            self.state.mark_dropped();
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl server_core::JobRunner for SlowRunner {
+    async fn run_python(
+        &self,
+        job: &Job,
+        capability: &str,
+        _cpu_workers: usize,
+        cancel: CancellationToken,
+    ) -> CoreResult<()> {
+        let call_index = self.state.calls.fetch_add(1, Ordering::SeqCst);
+        self.state.mark_started();
+        self.calls
+            .lock()
+            .expect("slow runner mutex poisoned")
+            .push(RunnerCall {
+                capability: capability.to_string(),
+                access_token: job.meta.access_token.clone(),
+                domain_server_url: job.meta.domain_server_url.clone(),
+            });
+
+        if call_index == 0 {
+            self.state.reset_completion();
+            let _probe = DropProbe {
+                state: Arc::clone(&self.state),
+            };
+            cancel.cancelled().await;
+            self.state.mark_cancelled();
+            self.state.mark_completed();
+            return Ok(());
+        }
+
+        self.state.mark_completed();
+        Ok(())
     }
 }
 
@@ -395,10 +583,19 @@ fn modern_lease_response(capability: &str, inputs_cids: Vec<String>) -> LeaseRes
     }
 }
 
+fn lease_response_with_id(capability: &str, id: &str) -> LeaseResponse {
+    let mut lease = lease_response(capability);
+    if let Some(task) = lease.task.as_mut() {
+        task.id = id.into();
+    }
+    lease
+}
+
 struct Harness {
     executor: TaskExecutor<MockClient, StdRng>,
     client: MockClient,
     runner_calls: Arc<Mutex<Vec<RunnerCall>>>,
+    slow_runner: Option<Arc<SlowRunnerState>>,
     _tempdir: TempDir,
 }
 
@@ -406,6 +603,18 @@ fn build_harness_with(
     leases: Vec<LeaseResponse>,
     domain: Arc<dyn DomainPort + Send + Sync>,
     fail_runner: bool,
+) -> Harness {
+    let (runner_instance, runner_calls) = RecordingRunner::new(fail_runner);
+    let runner: Arc<dyn server_core::JobRunner + Send + Sync> = Arc::new(runner_instance);
+    build_harness_with_runner(leases, domain, runner, runner_calls, None)
+}
+
+fn build_harness_with_runner(
+    leases: Vec<LeaseResponse>,
+    domain: Arc<dyn DomainPort + Send + Sync>,
+    runner: Arc<dyn server_core::JobRunner + Send + Sync>,
+    runner_calls: Arc<Mutex<Vec<RunnerCall>>>,
+    slow_runner: Option<Arc<SlowRunnerState>>,
 ) -> Harness {
     let client = MockClient::new(leases);
     let client_handle = client.clone();
@@ -417,8 +626,6 @@ fn build_harness_with(
     let heartbeat = HeartbeatPolicy::default_policy();
     let poller = Poller::new(client, session, controller, heartbeat);
 
-    let (runner_instance, runner_calls) = RecordingRunner::new(fail_runner);
-    let runner: Arc<dyn server_core::JobRunner + Send + Sync> = Arc::new(runner_instance);
     let services = Arc::new(Services {
         domain,
         runner,
@@ -438,6 +645,7 @@ fn build_harness_with(
         executor,
         client: client_handle,
         runner_calls,
+        slow_runner,
         _tempdir: tempdir,
     }
 }
@@ -446,6 +654,15 @@ fn build_harness(fail_runner: bool) -> Harness {
     let lease = lease_response("cap/refinement");
     let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
     build_harness_with(vec![lease], domain, fail_runner)
+}
+
+fn build_cancellable_harness(
+    leases: Vec<LeaseResponse>,
+    domain: Arc<dyn DomainPort + Send + Sync>,
+) -> Harness {
+    let (slow_runner, runner_calls, state) = SlowRunner::build();
+    let runner: Arc<dyn server_core::JobRunner + Send + Sync> = Arc::new(slow_runner);
+    build_harness_with_runner(leases, domain, runner, runner_calls, Some(state))
 }
 
 #[tokio::test]
@@ -568,6 +785,131 @@ async fn executor_handles_modern_payload_without_legacy_metadata() {
     assert_eq!(runner_calls[0].capability, "cap/refinement");
     assert_eq!(runner_calls[0].access_token, "lease-token");
     assert_eq!(runner_calls[0].domain_server_url, "https://domain.example");
+}
+
+#[tokio::test]
+async fn lease_interrupts_stop_runner_and_resume_polling() {
+    for response in [
+        MockHeartbeatResponse::LostLease,
+        MockHeartbeatResponse::Canceled,
+    ] {
+        run_lease_interruption_scenario(response).await;
+    }
+}
+
+async fn run_lease_interruption_scenario(response: MockHeartbeatResponse) {
+    let leases = vec![
+        lease_response_with_id("cap/refinement", "task-1"),
+        lease_response_with_id("cap/refinement", "task-2"),
+    ];
+    let domain: Arc<dyn DomainPort + Send + Sync> = Arc::new(NoopDomain);
+    let mut harness = build_cancellable_harness(leases, domain);
+    harness.client.push_heartbeats([response]);
+
+    let state = harness
+        .slow_runner
+        .as_ref()
+        .expect("slow runner state")
+        .clone();
+
+    let first_step = tokio::time::timeout(Duration::from_millis(200), async {
+        harness.executor.step().await
+    })
+    .await
+    .expect("executor should exit promptly after lease interruption");
+    assert!(
+        first_step.is_ok(),
+        "expected step result to be Ok after {:?}, got {:?}",
+        response,
+        first_step
+    );
+
+    assert!(
+        state.started(),
+        "python runner should start before {:?}",
+        response
+    );
+    assert!(
+        state.cancelled(),
+        "expected runner to observe cancellation when {:?} occurs",
+        response
+    );
+    assert!(
+        !state.dropped(),
+        "runner future should complete cleanly when {:?} occurs",
+        response
+    );
+    assert!(
+        state.completed(),
+        "runner should finish after cancellation when {:?} occurs",
+        response
+    );
+
+    let completes = harness.client.complete_calls();
+    assert!(
+        completes.lock().expect("complete guard").is_empty(),
+        "completion should not be reported when {:?} occurs",
+        response
+    );
+    let fails = harness.client.fail_calls();
+    assert!(
+        fails.lock().expect("fail guard").is_empty(),
+        "failure should not be reported when {:?} occurs",
+        response
+    );
+
+    let second_step = tokio::time::timeout(Duration::from_millis(200), async {
+        harness.executor.step().await
+    })
+    .await
+    .expect("executor should poll again after interruption")
+    .expect("second step should succeed");
+    assert!(
+        second_step.is_none(),
+        "expected executor to finish processing second lease after {:?}",
+        response
+    );
+
+    assert_eq!(
+        state.call_count(),
+        2,
+        "runner should be invoked twice even after {:?}",
+        response
+    );
+    assert!(
+        state.completed(),
+        "runner should complete during second lease after {:?}",
+        response
+    );
+
+    let completes = harness.client.complete_calls();
+    assert_eq!(
+        completes.lock().expect("complete guard").len(),
+        1,
+        "expected single completion after {:?}",
+        response
+    );
+    let fails = harness.client.fail_calls();
+    assert!(
+        fails.lock().expect("fail guard").is_empty(),
+        "no failure should be reported after {:?}",
+        response
+    );
+
+    let lease_calls = harness.client.lease_calls();
+    assert!(
+        lease_calls.lock().expect("lease guard").len() >= 2,
+        "executor should re-enter polling loop after {:?}",
+        response
+    );
+
+    let runner_calls = harness.runner_calls.lock().expect("runner guard");
+    assert_eq!(
+        runner_calls.len(),
+        2,
+        "runner call count mismatch for {:?}",
+        response
+    );
 }
 
 #[tokio::test]
