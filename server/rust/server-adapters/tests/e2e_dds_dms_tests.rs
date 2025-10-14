@@ -210,8 +210,8 @@ impl MockDdsState {
 
 fn dds_router(state: Arc<MockDdsState>) -> Router {
     Router::new()
-        .route("/api/v1/auth/siwe/request", post(dds_nonce))
-        .route("/api/v1/auth/siwe/verify", post(dds_verify))
+        .route("/internal/v1/auth/siwe/request", post(dds_nonce))
+        .route("/internal/v1/auth/siwe/verify", post(dds_verify))
         .with_state(state)
 }
 

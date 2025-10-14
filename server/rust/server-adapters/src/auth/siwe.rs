@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
 
-const API_PREFIX: &str = "/api/v1";
+const API_PREFIX: &str = "/internal/v1";
 const REQUEST_PATH: &str = "/auth/siwe/request";
 const VERIFY_PATH: &str = "/auth/siwe/verify";
 

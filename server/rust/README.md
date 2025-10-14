@@ -43,8 +43,8 @@ execute.
 The compute node keeps SIWE-issued access tokens purely in memory. The high
 level flow validated by `e2e_dds_dms_tests` is:
 
-1. Fetch nonce from DDS `/api/v1/auth/siwe/request`, sign the message with the node’s
-   secp256k1 key, and verify via `/api/v1/auth/siwe/verify`.
+1. Fetch nonce from DDS `/internal/v1/auth/siwe/request`, sign the message with the node’s
+   secp256k1 key, and verify via `/internal/v1/auth/siwe/verify`.
 2. Cache the returned bearer token until `TOKEN_SAFETY_RATIO * TTL` elapses
    (with jitter from `TOKEN_REAUTH_JITTER_MS`).
 3. Send DMS requests with `Authorization: Bearer …`. If DMS replies `401`, call
@@ -101,8 +101,8 @@ cargo run -p server-bin -- \
 
 ### Troubleshooting re-authentication
 
-- Check DDS availability: the node must reach `/api/v1/auth/siwe/request` and
-  `/api/v1/auth/siwe/verify` endpoints. Network failures surface as
+- Check DDS availability: the node must reach `/internal/v1/auth/siwe/request` and
+  `/internal/v1/auth/siwe/verify` endpoints. Network failures surface as
   `token.reauth.error` metrics and WARN logs.
 - `TOKEN_REAUTH_MAX_RETRIES` governs additional login attempts. Use a larger
   value only if DDS is temporarily unstable; the node waits with
