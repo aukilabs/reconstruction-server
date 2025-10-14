@@ -366,6 +366,18 @@ where
                 info!(task_id = snapshot.task_id(), "Job completed successfully");
             }
             Err(err) => {
+                // If the runner exited due to an explicit cancellation, do not report
+                // failure to DMS. Just clear the session and resume polling.
+                if matches!(err, server_core::DomainError::Internal(ref msg) if msg.contains("python canceled"))
+                {
+                    warn!(
+                        task_id = snapshot.task_id(),
+                        capability = %capability,
+                        "Job canceled by runner; skipping failure report and resuming polling"
+                    );
+                    self.poller.clear_session().await;
+                    return Ok(true);
+                }
                 warn!(
                     task_id = snapshot.task_id(),
                     job_id = %job.meta.id,

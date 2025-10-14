@@ -350,6 +350,17 @@ async fn main() -> anyhow::Result<()> {
     let dds_state = dds_http::DdsState;
     let app = dds_http::router_dds(dds_state);
 
+    // Start HTTP server first so DDS callbacks are accepted before attempting registration
+    let addr: SocketAddr = normalize_port(&cli.port).parse()?;
+    info!("Server running on {}", addr);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    let mut http_shutdown = shutdown_rx.clone();
+    let server_future =
+        serve(listener, app.into_make_service()).with_graceful_shutdown(async move {
+            let _ = http_shutdown.changed().await;
+        });
+
     // If all DDS config present, prepare registration client and spawn background loop
     if let (Some(dds_base_url), Some(node_url), Some(reg_secret), Some(privhex)) = (
         cli.dds_base_url.clone(),
@@ -370,7 +381,7 @@ async fn main() -> anyhow::Result<()> {
         } else {
             warn!("Invalid SECP256K1_PRIVHEX; DDS registration disabled");
         }
-        // Spawn registration loop
+        // Spawn registration loop (now that HTTP server is accepting connections)
         tokio::spawn(register::run_registration_loop(
             register::RegistrationConfig {
                 dds_base_url,
@@ -388,16 +399,7 @@ async fn main() -> anyhow::Result<()> {
         warn!("DDS config incomplete; skipping registration loop");
     }
 
-    let addr: SocketAddr = normalize_port(&cli.port).parse()?;
-    info!("Server running on {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
-    let mut http_shutdown = shutdown_rx.clone();
-    let server_future =
-        serve(listener, app.into_make_service()).with_graceful_shutdown(async move {
-            let _ = http_shutdown.changed().await;
-        });
-
+    // Shutdown handling
     let shutdown_task = {
         let shutdown_tx = shutdown_tx.clone();
         tokio::spawn(async move {
@@ -406,6 +408,7 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
+    // Run HTTP server (will exit on shutdown)
     let server_result = server_future.await;
     let _ = shutdown_tx.send(true);
 

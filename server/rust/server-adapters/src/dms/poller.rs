@@ -325,7 +325,11 @@ where
 
         let response = match self.client.send_heartbeat(task_id, progress.as_ref()).await {
             Ok(resp) => resp,
-            Err(DmsClientError::UnexpectedStatus(status)) if status == StatusCode::CONFLICT => {
+            Err(DmsClientError::UnexpectedStatus(status))
+                if status == StatusCode::CONFLICT
+                    || status == StatusCode::NOT_FOUND
+                    || status == StatusCode::GONE =>
+            {
                 self.session.clear().await;
                 self.controller.reset();
                 return Ok(HeartbeatResult::LostLease);
