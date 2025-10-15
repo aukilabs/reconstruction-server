@@ -1,0 +1,16 @@
+[term]
+color = "auto"
+
+[build]
+# Keep builds fast in dev; CI enforces linting separately.
+rustflags = []
+
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.release]
+debug = 1
+opt-level = 3
+codegen-units = 1
+lto = "thin"

@@ -4,8 +4,8 @@
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 WORKDIR /app
 ADD server/rust /app
-# Build release binary for the server-bin crate
-RUN cargo build --release -p server-bin
+# Build release binary for the compute-node crate
+RUN cargo build --release -p bin
 
 
 FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
@@ -162,9 +162,5 @@ RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /
 
 USER $USERNAME
 
-COPY --from=rust-build /app/target/release/server-bin ./reconstruction
-ENTRYPOINT ["./reconstruction"]
-
-# Overridable using 'docker run ... image_name -api-key <your-api-key>'
-# TODO: we probably don't need api key, or make it optional. Just check domain token.
-CMD ["--api-key", "aukilabs123"]
+COPY --from=rust-build /app/target/release/compute-node ./compute-node
+ENTRYPOINT ["./compute-node"]

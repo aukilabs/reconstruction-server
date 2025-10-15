@@ -1,0 +1,18 @@
+[package]
+name = "bin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+compute-runner-api = { path = "../compute-runner-api" }
+compute-node-common = { path = "../compute-node-common" }
+runner-reconstruction-legacy-noop = { path = "../runner-reconstruction-legacy-noop" }
+runner-reconstruction-legacy = { path = "../runner-reconstruction-legacy" }
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = { version = "0.7" }
+
+[[bin]]
+name = "compute-node"
+path = "src/main.rs"

@@ -1,121 +1,72 @@
-# Rust Compute Node
+# Compute Node workspace
 
-This workspace hosts the Rust implementation of the reconstruction compute node.
-Instead of exposing a public `/jobs` API, the node registers with DDS, polls the
-DMS task queue, executes the existing Python pipeline, and reports task
-heartbeats/completion/failure back to DMS.
+This workspace hosts the Rust implementation of the compute node that talks to
+Posemesh DDS/DMS backends and executes reconstruction workloads. The codebase
+follows a strict separation of concerns: a thin binary wires together a reusable
+engine crate plus capability-specific runners. Everything is designed to be
+stateless, fail-fast, and observable.
 
-## Crate Layout
+## Workspace layout
+- [`compute-runner-api`](compute-runner-api/README.md) — trait-based API surface
+  that all runners implement. Defines the lease/task contracts as serde models.
+- [`compute-node-common`](compute-node-common/README.md) — engine + shared
+  infrastructure: config, SIWE auth, DDS registration, DMS client, heartbeat
+  loop, storage facade, HTTP router, telemetry helpers.
+- [`runner-reconstruction-legacy`](runner-reconstruction-legacy/README.md) —
+  production runner that shells out to the legacy Python refinement stack while
+  streaming manifests and refined artifacts back to domain storage.
+- [`runner-reconstruction-legacy-noop`](runner-reconstruction-legacy-noop/README.md) —
+  capability-compatible noop runner for dev/CI that produces placeholder
+  artifacts.
+- [`bin`](bin/README.md) — CLI binary
+  that loads configuration, selects runners, exposes the registration callback,
+  and drives the engine loop.
 
-| Crate | Purpose |
-| ----- | ------- |
-| `server-core` | Job orchestration, access token propagation, periodic manifest helpers |
-| `server-adapters` | DMS client/poller/executor, DDS registration HTTP surface, storage adapters |
-| `server-bin` | CLI, configuration loader, node bootstrap and graceful shutdown |
+Supporting directories:
+- `scripts/` — helper scripts used by Make targets or CI glue.
+- `target/` — build artefacts (ignored in version control).
 
-The only HTTP endpoints shipped in the binary are the DDS registration callback
-(`POST /internal/v1/registrations`) and `/health`.
+## High-level data flow
+1. The binary boots, installs telemetry, and starts the HTTP server (health +
+   DDS registration callback).
+2. `NodeConfig` loads all DMS/DDS settings from environment variables. See
+   `compute-node-common/README.md` for the exhaustive list.
+3. Runners are registered (noop or full legacy reconstruction) and the outbound
+   DDS registration loop advertises their capabilities.
+4. Once DDS supplies a SIWE token, the engine polls DMS, leases work, materializes
+   inputs, streams heartbeats, and uploads results through the domain storage
+   facade.
+5. Completion or failure is reported back to DMS, and the cycle repeats until
+  the process is stopped or receives `SIGINT`.
 
-## Configuration
+## Getting started
+1. Install the pinned toolchain (`rustup toolchain install stable` if missing; the
+   workspace ships with `rust-toolchain.toml`).
+2. Export configuration:
+   ```sh
+   export DMS_BASE_URL=https://dms.example
+   export REQUEST_TIMEOUT_SECS=10
+   export DDS_BASE_URL=https://dds.example
+   export NODE_URL=https://node.example
+   export REG_SECRET=replace-me
+   export SECP256K1_PRIVHEX=32-byte-hex-string
+   export ENABLE_NOOP=true           # optional for local smoke tests
+   export LOG_FORMAT=text            # optional for readable logs
+   ```
+3. Build and run the node:
+   ```sh
+   cargo run -p bin
+   ```
+4. Hit `http://localhost:8080/health` to verify liveness. Watch the logs for DDS
+   registration and leasing activity. With noop runners enabled the node will
+   produce placeholder outputs without launching the Python stack.
 
-`server-bin` reads the following environment variables (all available as CLI
-flags). Required values are marked `*`.
-
-| Variable | Description |
-| -------- | ----------- |
-| `DMS_BASE_URL`* | Base URL for the DMS API (e.g. `https://dms.example.com/`) |
-| `NODE_IDENTITY`* | Identity used when authenticating to DMS (`siwe:<uuid>`) |
-| `NODE_CAPABILITIES`* | Comma‑separated list of capabilities this node can claim |
-| `TOKEN_SAFETY_RATIO` | Fraction of the SIWE token TTL treated as “safe” before refreshing (default `0.75`) |
-| `TOKEN_REAUTH_MAX_RETRIES` | Additional SIWE login attempts before surfacing an error (default `3`) |
-| `TOKEN_REAUTH_JITTER_MS` | ± jitter applied to the refresh deadline to stagger multiple nodes (default `500`) |
-| `HEARTBEAT_JITTER_MS` | Random jitter applied when scheduling heartbeats (default `250`) |
-| `POLL_BACKOFF_MS_MIN/MAX` | Bounds for exponential backoff when the queue is empty (defaults `1000/30000`) |
-| `DDS_BASE_URL`, `NODE_URL`, `REG_SECRET`, `SECP256K1_PRIVHEX` | Optional DDS registration configuration |
-| `REGISTER_INTERVAL_SECS`, `REGISTER_MAX_RETRY`, `REQUEST_TIMEOUT_SECS` | Optional tuning knobs |
-
-`NODE_CAPABILITIES` determines the default claim capability (first entry) and is
-propagated to the Python runner so downstream tooling knows which pipeline to
-execute.
-
-### Token lifecycle overview
-
-The compute node keeps SIWE-issued access tokens purely in memory. The high
-level flow validated by `e2e_dds_dms_tests` is:
-
-1. Fetch nonce from DDS `/internal/v1/auth/siwe/request`, sign the message with the node’s
-   secp256k1 key, and verify via `/internal/v1/auth/siwe/verify`.
-2. Cache the returned bearer token until `TOKEN_SAFETY_RATIO * TTL` elapses
-   (with jitter from `TOKEN_REAUTH_JITTER_MS`).
-3. Send DMS requests with `Authorization: Bearer …`. If DMS replies `401`, call
-   `onUnauthorizedRetry` to force a single re-login, then retry once. Any
-   subsequent `401` is surfaced to the caller and the token manager remains in a
-   stopped state until the next explicit access request.
-
-Tokens are never logged (all tracing fields use `[REDACTED]`) and no refresh
-token or SIWE secret is persisted to disk.
-
-Domain API authorization: All domain/storage HTTP calls (manifest uploads, data
-downloads, refined scan uploads) use the short‑lived `access_token` returned
-with each DMS lease/heartbeat for the active session. The legacy token present
-in `task.meta.legacy.access_token` is treated only as a fallback when no
-session token is available (for example, offline `--job-request` runs).
-
-## Development Commands
-
-```bash
-# Format + lint + test
-make ci
-
-# Format
-make fmt
-
-# Lint (clippy with warnings as errors)
-make clippy
-
-# Run with mock Python pipeline
-docker compose up   # if you need supporting services
-make run             # equivalent to `cargo run -p server-bin -- --mock-python`
-```
-
-To execute a single job request offline:
-
-```bash
-cargo run -p server-bin -- \
-  --job-request /path/to/request.json \
-  --data-dir jobs \
-  --mock-python
-```
-
-## Observability & Shutdown
-
-- All lease/heartbeat/complete/fail requests emit `tracing` spans tagged with
-  task id and capability. Access tokens and bearer headers are redacted.
-- The executor exposes optional `metrics` (enable with
-  `--features metrics`): `dms.poll.latency_ms` histogram and
-  `dms.active_task` gauge. The token manager publishes
-  `token.reauth.success` / `token.reauth.error` counters under the same feature
-  flag.
-- SIGINT/SIGTERM triggers a final best-effort heartbeat before the poller loop
-  exits.
-
-### Troubleshooting re-authentication
-
-- Check DDS availability: the node must reach `/internal/v1/auth/siwe/request` and
-  `/internal/v1/auth/siwe/verify` endpoints. Network failures surface as
-  `token.reauth.error` metrics and WARN logs.
-- `TOKEN_REAUTH_MAX_RETRIES` governs additional login attempts. Use a larger
-  value only if DDS is temporarily unstable; the node waits with
-  `TOKEN_REAUTH_JITTER_MS` jitter between attempts.
-- If DMS continually returns `401`, the client stops retrying after one
-  refresh. Inspect the DMS audit logs—the node intentionally avoids looping on
-  invalid credentials.
-- When rotating keys, deploy a fresh `NODE_IDENTITY` + private key pair; the
-  process does not persist refresh tokens that could be revoked later.
-
-## Tests
-
-- Unit tests cover DMS client/poller/session behaviour.
-- Integration tests (`dms_executor_tests`) exercise the end-to-end executor
-  wiring using mocked runners.
-- `make ci` runs `cargo fmt`, `cargo clippy`, and `cargo test --workspace`.
+## Development tooling
+- `cargo fmt --all` (or `make fmt`) keeps formatting consistent.
+- `cargo clippy --workspace -- -D warnings` (or `make clippy`) enforces lint
+  hygiene.
+- `cargo test --workspace` (or `make test`) runs unit + integration tests across
+  all crates.
+- `make ci` executes the full formatter + lint + test pipeline locally.
+- The workspace prefers `LOG_FORMAT=json` in production; switch to `text` while
+  iterating locally.

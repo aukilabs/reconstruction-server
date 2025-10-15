@@ -4,8 +4,8 @@
 FROM --platform=$BUILDPLATFORM rust:1.89-bookworm AS rust-build
 WORKDIR /app
 ADD server/rust /app
-# Build release binary for the server-bin crate
-RUN cargo build --release -p server-bin
+# Build release binary for the compute-node crate
+RUN cargo build --release -p bin
 
 FROM debian:bookworm-slim AS runtime
 
@@ -26,11 +26,10 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 WORKDIR /app
 RUN mkdir -p /app/jobs && chown -R ${USERNAME}:${USERNAME} /app
 
-COPY --from=rust-build /app/target/release/server-bin /usr/local/bin/reconstruction
+COPY --from=rust-build /app/target/release/compute-node /usr/local/bin/compute-node
 
 USER ${USERNAME}
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/reconstruction"]
-CMD ["--api-key", "dev", "--port", ":8080"]
+ENTRYPOINT ["/usr/local/bin/compute-node"]
