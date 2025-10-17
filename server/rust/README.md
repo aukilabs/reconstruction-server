@@ -7,11 +7,12 @@ engine crate plus capability-specific runners. Everything is designed to be
 stateless, fail-fast, and observable.
 
 ## Workspace layout
-- [`compute-runner-api`](compute-runner-api/README.md) — trait-based API surface
-  that all runners implement. Defines the lease/task contracts as serde models.
-- [`compute-node-common`](compute-node-common/README.md) — engine + shared
-  infrastructure: config, SIWE auth, DDS registration, DMS client, heartbeat
-  loop, storage facade, HTTP router, telemetry helpers.
+- [`posemesh-compute-node-runner-api`](../../posemesh/core/posemesh-compute-node-runner-api/README.md) —
+  trait-based API surface that all runners implement. Defines the lease/task
+  contracts as serde models.
+- [`posemesh-compute-node`](../../posemesh/core/posemesh-compute-node/README.md) —
+  engine + shared infrastructure: config, SIWE auth, DDS registration, DMS
+  client, heartbeat loop, storage facade, HTTP router, telemetry helpers.
 - [`runner-reconstruction-legacy`](runner-reconstruction-legacy/README.md) —
   production runner that shells out to the legacy Python refinement stack while
   streaming manifests and refined artifacts back to domain storage.
@@ -30,9 +31,10 @@ Supporting directories:
 1. The binary boots, installs telemetry, and starts the HTTP server (health +
    DDS registration callback).
 2. `NodeConfig` loads all DMS/DDS settings from environment variables. See
-   `compute-node-common/README.md` for the exhaustive list.
-3. Runners are registered (noop or full legacy reconstruction) and the outbound
-   DDS registration loop advertises their capabilities.
+   [`posemesh-compute-node/README.md`](../../posemesh/core/posemesh-compute-node/README.md)
+   for the exhaustive list.
+3. Runners are registered in a `RunnerRegistry`; the binary decides which
+   capabilities to advertise.
 4. Once DDS supplies a SIWE token, the engine polls DMS, leases work, materializes
    inputs, streams heartbeats, and uploads results through the domain storage
    facade.

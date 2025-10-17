@@ -8,7 +8,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-compute-runner-api = { path = "../compute-runner-api" }
+compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.0" }
 anyhow = "1"
 async-trait = "0.1"
 tempfile = "3"

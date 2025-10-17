@@ -1,7 +1,7 @@
 # runner-reconstruction-legacy
 
 `runner-reconstruction-legacy` reimplements the legacy reconstruction pipeline
-on top of the shared `compute-runner-api`. The runner is capable of servicing
+on top of the shared `posemesh-compute-node-runner-api`. The runner is capable of servicing
 three capabilities that map to the historical product SKUs:
 
 - `/reconstruction/local-refinement/v1`

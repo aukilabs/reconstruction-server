@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "compute-runner-api",
-    "compute-node-common",
     "runner-reconstruction-legacy",
     "runner-reconstruction-legacy-noop",
     "bin",

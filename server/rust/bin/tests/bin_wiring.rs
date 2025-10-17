@@ -1,4 +1,4 @@
-use compute_node_common::{config::NodeConfig, dds::persist, engine::RunnerRegistry};
+use posemesh_compute_node::{config::NodeConfig, dds::persist, engine::RunnerRegistry};
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
@@ -25,7 +25,7 @@ async fn registry_contains_noop_when_enabled_and_run_node_ok() {
         register_interval_secs: None,
         register_max_retry: None,
         max_concurrency: 1,
-        log_format: compute_node_common::config::LogFormat::Json,
+        log_format: posemesh_compute_node::config::LogFormat::Json,
         enable_noop: true,
         noop_sleep_secs: 1,
     };
@@ -56,7 +56,7 @@ async fn registry_contains_noop_when_enabled_and_run_node_ok() {
     // Engine now waits for shutdown; ensure it stays pending.
     let result = timeout(
         Duration::from_millis(50),
-        compute_node_common::engine::run_node(cfg, reg),
+        posemesh_compute_node::engine::run_node(cfg, reg),
     )
     .await;
     assert!(result.is_err(), "run_node unexpectedly completed");

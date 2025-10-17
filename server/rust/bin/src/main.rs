@@ -1,9 +1,9 @@
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize telemetry (LOG_FORMAT respected if set).
-    compute_node_common::telemetry::init_from_env()?;
+    posemesh_compute_node::telemetry::init_from_env()?;
 
-    let app = compute_node_common::http::router();
+    let app = posemesh_compute_node::http::router();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     let addr = listener.local_addr()?;
     println!("http listening on {}", addr);
@@ -12,9 +12,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Load config and wire runners
-    let cfg = compute_node_common::config::NodeConfig::from_env()?;
+    let cfg = posemesh_compute_node::config::NodeConfig::from_env()?;
     let legacy_runner_cfg = runner_reconstruction_legacy::RunnerConfig::from_env()?;
-    let mut reg = compute_node_common::engine::RunnerRegistry::new();
+    let mut reg = posemesh_compute_node::engine::RunnerRegistry::new();
     if cfg.enable_noop {
         for runner in
             runner_reconstruction_legacy_noop::RunnerReconstructionLegacyNoop::for_all_capabilities(
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let capabilities = reg.capabilities();
-    compute_node_common::dds::register::spawn_registration_if_configured(&cfg, &capabilities)?;
+    posemesh_compute_node::dds::register::spawn_registration_if_configured(&cfg, &capabilities)?;
 
-    compute_node_common::engine::run_node(cfg, reg).await
+    posemesh_compute_node::engine::run_node(cfg, reg).await
 }
