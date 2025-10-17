@@ -1047,9 +1047,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "posemesh-compute-node"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75ba1fa8e2f1fc6b059a417cfd9a06c75da2a115d8ddbc29cdf918c529df5183"
+checksum = "d7435f9fb8cf8b7e8e7978dbfb6964d694f568dd83c5c567545b7a6c7bb58ee6"
 dependencies = [
  "anyhow",
  "async-trait",
