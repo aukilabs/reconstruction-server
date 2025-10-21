@@ -414,8 +414,15 @@ impl Runner for RunnerReconstructionLegacy {
         let state = ManifestState::default();
         update_progress(&state, &progress_tx, 0, "initializing");
 
-        manifest::write_processing_manifest(workspace.job_manifest_path(), 0, "initializing")
-            .await?;
+        // Rich processing manifest snapshot using Python helper (parity with Go).
+        manifest::write_processing_manifest_python(
+            workspace.job_manifest_path(),
+            workspace.root(),
+            &self.config.python_bin,
+            0,
+            "initializing",
+        )
+        .await?;
         upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload()).await?;
 
         let materialized = input::materialize_datasets(&ctx, &workspace).await?;
@@ -430,9 +437,23 @@ impl Runner for RunnerReconstructionLegacy {
             create_mock_outputs(&workspace).context("create mock outputs")?;
         }
 
+        // Generate scan data summary before Python starts so it can be embedded in final manifest (parity with Go).
+        if job_ctx.should_generate_scan_summary() {
+            if let Err(err) = summary::write_scan_data_summary(
+                workspace.datasets(),
+                workspace.scan_data_summary_path(),
+            )
+            .await
+            {
+                eprintln!("failed to write scan data summary (pre-run): {err}");
+            }
+        }
+
         let cancel_token = CancellationToken::new();
-        let manifest_task = manifest::spawn_processing_writer(
+        let manifest_task = manifest::spawn_python_processing_writer(
             workspace.job_manifest_path().to_path_buf(),
+            workspace.root().to_path_buf(),
+            self.config.python_bin.clone(),
             Duration::from_secs(2),
             state.clone(),
             Arc::new(ProgressForwarder {
@@ -505,6 +526,12 @@ impl Runner for RunnerReconstructionLegacy {
             }
 
             if python_result.is_some() {
+                // Before exiting the loop, probe cancellation once to avoid races
+                // where an immediate python completion starves the cancellation branch.
+                if !cancelled && ctx.ctrl.is_cancelled().await {
+                    cancelled = true;
+                    cancel_token.cancel();
+                }
                 break;
             }
         }
@@ -534,16 +561,7 @@ impl Runner for RunnerReconstructionLegacy {
             .await
             .context("final refined upload pass")?;
 
-        if job_ctx.should_generate_scan_summary() {
-            if let Err(err) = summary::write_scan_data_summary(
-                workspace.datasets(),
-                workspace.scan_data_summary_path(),
-            )
-            .await
-            {
-                eprintln!("failed to write scan data summary: {err}");
-            }
-        }
+        // Scan summary has already been generated before Python started.
 
         update_progress(&state, &progress_tx, 90, "uploading outputs");
         drop(progress_tx);
