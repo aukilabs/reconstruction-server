@@ -35,16 +35,23 @@ use workspace::Workspace;
 
 #[derive(Serialize)]
 struct JobMetadataRecord {
+    // Fields expected by the Python manifest writer (utils/data_utils.py::save_manifest_json)
+    id: String,
+    name: String,
+    domain_id: String,
+    processing_type: String,
     created_at: String,
+    domain_server_url: String,
+    reconstruction_server_url: Option<String>,
+    data_ids: Vec<String>,
+
+    // Extra fields retained for debugging/back-compat with prior formats
     job_id: String,
     task_id: String,
     job_name: String,
-    domain_id: String,
     capability: String,
-    processing_type: String,
     inputs_cids: Vec<String>,
     outputs_prefix: Option<String>,
-    domain_server_url: String,
     skip_manifest_upload: bool,
     override_job_name: Option<String>,
     override_manifest_id: Option<String>,
@@ -113,17 +120,34 @@ impl JobContext {
             })
             .unwrap_or_default();
 
+        // Attempt to capture the externally advertised node URL so Python can include
+        // it in the final manifest (reconstructionServerURL). This mirrors legacy Go.
+        let reconstruction_server_url = env::var("NODE_URL").ok();
+
+        // Extract data IDs from input CIDs (last path segment), falling back to the full CID if parsing fails.
+        let data_ids: Vec<String> = inputs_cids
+            .iter()
+            .map(|cid| extract_last_segment(cid))
+            .collect();
+
         let metadata = JobMetadataRecord {
+            // Primary keys expected by Python
+            id: job_id.clone(),
+            name: job_name.clone(),
+            domain_id: lease.domain_id.map(|id| id.to_string()).unwrap_or_default(),
+            processing_type: processing_type.clone(),
             created_at: Utc::now().to_rfc3339(),
+            domain_server_url: domain_server_url.clone(),
+            reconstruction_server_url,
+            data_ids,
+
+            // Back-compat / debugging
             job_id: job_id.clone(),
             task_id: lease.task.id.to_string(),
             job_name,
-            domain_id: lease.domain_id.map(|id| id.to_string()).unwrap_or_default(),
             capability: lease.task.capability.clone(),
-            processing_type,
             inputs_cids,
             outputs_prefix,
-            domain_server_url,
             skip_manifest_upload,
             override_job_name,
             override_manifest_id,
@@ -658,4 +682,17 @@ fn collect_scan_names(datasets_path: &Path) -> Result<Vec<String>> {
     scans.sort();
     scans.dedup();
     Ok(scans)
+}
+
+/// Extract the last non-empty segment from a CID/URL-like string.
+/// Examples:
+/// - "https://domain/.../data/abc123" -> "abc123"
+/// - "abc123" -> "abc123"
+/// - "https://domain/.../data/" -> "data" (best-effort)
+fn extract_last_segment(input: &str) -> String {
+    let trimmed = input.trim_end_matches('/');
+    match trimmed.rsplit('/').next() {
+        Some(seg) if !seg.is_empty() => seg.to_string(),
+        _ => input.to_string(),
+    }
 }
