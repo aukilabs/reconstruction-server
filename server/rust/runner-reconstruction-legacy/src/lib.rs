@@ -615,7 +615,7 @@ fn build_python_args(
     args.push(job_ctx.processing_type().to_string());
     args.push("--job_root_path".to_string());
     args.push(workspace.root().display().to_string());
-    args.push("--output".to_string());
+    args.push("--output_path".to_string());
     args.push(workspace.root().join("refined").display().to_string());
     args.push("--domain_id".to_string());
     args.push(job_ctx.metadata.domain_id.clone());
