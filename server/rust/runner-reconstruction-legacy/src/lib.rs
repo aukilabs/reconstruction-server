@@ -1,6 +1,12 @@
 //! runner-reconstruction-legacy: skeleton runner for legacy reconstruction.
 
-use std::{env, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -14,6 +20,7 @@ use tokio::{
     time::{interval, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 pub mod input;
 pub mod manifest;
@@ -359,11 +366,25 @@ impl Runner for RunnerReconstructionLegacy {
         let task_id = lease.task.id.to_string();
 
         let workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
-
         let job_ctx = JobContext::from_lease(lease)?;
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
             .await?;
+
+        info!(
+            capability = self.capability,
+            domain_id = %job_ctx.metadata.domain_id,
+            job_id = %job_ctx.metadata.job_name,
+            task_id = %task_id,
+            workspace = %workspace.root().display(),
+            configured_workspace_root = %self
+                .config
+                .workspace_root
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<temp>".into()),
+            "workspace prepared"
+        );
 
         let (progress_tx, mut progress_rx) = unbounded_channel::<(i32, String)>();
         let state = ManifestState::default();
@@ -400,18 +421,36 @@ impl Runner for RunnerReconstructionLegacy {
         let mut refined_interval = interval(Duration::from_secs(5));
         refined_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
+        let scan_names = collect_scan_names(workspace.datasets()).context("collect scan names")?;
         let mut python_future: Pin<
             Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
         > = if self.config.mock_mode {
             Box::pin(async { Ok(()) })
         } else {
-            let args = self.config.python_args.clone();
+            let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
+            info!(
+                capability = self.capability,
+                domain_id = %job_ctx.metadata.domain_id,
+                job_name = %job_ctx.metadata.job_name,
+                python_bin = %self.config.python_bin.display(),
+                python_script = %self.config.python_script.display(),
+                workspace = %workspace.root().display(),
+                args = ?python_args,
+                "launching legacy python pipeline"
+            );
             let python_bin = self.config.python_bin.clone();
             let python_script = self.config.python_script.clone();
             let log_path = workspace.root().join("python.log");
             let cancel = cancel_token.clone();
             Box::pin(async move {
-                python::run_script(&python_bin, &python_script, &args, &log_path, &cancel).await
+                python::run_script(
+                    &python_bin,
+                    &python_script,
+                    &python_args,
+                    &log_path,
+                    &cancel,
+                )
+                .await
             })
         };
         let mut python_result: Option<Result<(), anyhow::Error>> = None;
@@ -488,8 +527,15 @@ impl Runner for RunnerReconstructionLegacy {
         output::upload_final_outputs(&workspace, ctx.output)
             .await
             .context("upload final outputs")?;
-        manifest::write_processing_manifest(workspace.job_manifest_path(), 100, "succeeded")
-            .await?;
+        if !workspace.job_manifest_path().exists() {
+            warn!(
+                capability = self.capability,
+                domain_id = %job_ctx.metadata.domain_id,
+                job_name = %job_ctx.metadata.job_name,
+                manifest = %workspace.job_manifest_path().display(),
+                "python pipeline did not produce job manifest; skipping upload"
+            );
+        }
         upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload()).await?;
 
         ctx.ctrl
@@ -556,4 +602,60 @@ fn create_mock_outputs(workspace: &Workspace) -> Result<()> {
         .with_context(|| "write mock points".to_string())?;
 
     Ok(())
+}
+
+fn build_python_args(
+    config: &RunnerConfig,
+    job_ctx: &JobContext,
+    workspace: &Workspace,
+    scan_names: &[String],
+) -> Vec<String> {
+    let mut args = config.python_args.clone();
+    args.push("--mode".to_string());
+    args.push(job_ctx.processing_type().to_string());
+    args.push("--job_root_path".to_string());
+    args.push(workspace.root().display().to_string());
+    args.push("--output".to_string());
+    args.push(workspace.root().join("refined").display().to_string());
+    args.push("--domain_id".to_string());
+    args.push(job_ctx.metadata.domain_id.clone());
+    args.push("--job_id".to_string());
+    args.push(job_ctx.metadata.job_name.clone());
+    args.push("--local_refinement_workers".to_string());
+    args.push(config.cpu_workers.to_string());
+
+    if !scan_names.is_empty() {
+        args.push("--scans".to_string());
+        args.extend(scan_names.iter().cloned());
+    }
+
+    args
+}
+
+fn collect_scan_names(datasets_path: &Path) -> Result<Vec<String>> {
+    let mut scans = Vec::new();
+    let entries = match std::fs::read_dir(datasets_path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(scans),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("read_dir datasets path {}", datasets_path.display()))
+        }
+    };
+
+    for entry in entries.flatten() {
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        if let Some(name_str) = name.to_str() {
+            if !name_str.is_empty() {
+                scans.push(name_str.to_string());
+            }
+        }
+    }
+
+    scans.sort();
+    scans.dedup();
+    Ok(scans)
 }

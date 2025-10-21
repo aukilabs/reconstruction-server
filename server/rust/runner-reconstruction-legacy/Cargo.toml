@@ -19,6 +19,7 @@ serde = { version = "1", features = ["derive"] }
 walkdir = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["serde", "v4"] }
