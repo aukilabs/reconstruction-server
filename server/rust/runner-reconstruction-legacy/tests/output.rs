@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use runner_reconstruction_legacy::{output::upload_final_outputs, workspace::Workspace};
 use tempfile::tempdir;
@@ -27,6 +28,21 @@ impl ArtifactSink for RecordingSink {
     async fn put_file(&self, rel_path: &str, file_path: &std::path::Path) -> anyhow::Result<()> {
         let bytes = std::fs::read(file_path)?;
         self.put_bytes(rel_path, &bytes).await
+    }
+
+    async fn put_domain_artifact(
+        &self,
+        request: DomainArtifactRequest<'_>,
+    ) -> anyhow::Result<Option<String>> {
+        match request.content {
+            DomainArtifactContent::Bytes(bytes) => {
+                self.put_bytes(request.rel_path, bytes).await?;
+            }
+            DomainArtifactContent::File(path) => {
+                self.put_file(request.rel_path, path).await?;
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -83,7 +99,7 @@ fn upload_final_outputs_sends_expected_files() {
         let workspace = temp.workspace;
         let sink = RecordingSink::default();
 
-        let uploaded = upload_final_outputs(&workspace, &sink)
+        let uploaded = upload_final_outputs(&workspace, &sink, "suffix", None)
             .await
             .expect("upload outputs");
 
@@ -119,7 +135,7 @@ fn missing_optional_outputs_are_ignored() {
         .unwrap();
 
         let sink = RecordingSink::default();
-        let uploaded = upload_final_outputs(&ws, &sink)
+        let uploaded = upload_final_outputs(&ws, &sink, "suffix", None)
             .await
             .expect("upload outputs");
         assert!(uploaded.contains_key("refined_manifest"));
@@ -135,7 +151,9 @@ fn missing_mandatory_outputs_return_error() {
         let temp = tempdir().unwrap();
         let ws = Workspace::create(Some(temp.path()), "dom", Some("job"), "task").unwrap();
         let sink = RecordingSink::default();
-        let err = upload_final_outputs(&ws, &sink).await.unwrap_err();
+        let err = upload_final_outputs(&ws, &sink, "suffix", None)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("missing mandatory output"));
     });
 }

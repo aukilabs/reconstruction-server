@@ -3,12 +3,16 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use tokio::task;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::workspace::Workspace;
+
+const REQUIRED_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
+const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt"];
 
 /// Tracks which scans have already been uploaded from the local refinement folder.
 #[derive(Default)]
@@ -30,6 +34,7 @@ impl RefinedUploader {
         &mut self,
         workspace: &Workspace,
         sink: &dyn ArtifactSink,
+        upload_local_zips: bool,
     ) -> Result<Vec<String>> {
         let mut uploaded = Vec::new();
         let refined_root = workspace.refined_local();
@@ -54,7 +59,11 @@ impl RefinedUploader {
                 continue;
             }
 
-            let zip_bytes = zip_directory(&sfm_path)
+            if !upload_local_zips || !has_required_sfm_files(&sfm_path) {
+                continue;
+            }
+
+            let zip_bytes = zip_directory(&sfm_path, ZIP_ALLOWED_EXTENSIONS)
                 .await
                 .with_context(|| format!("zip scan directory {}", sfm_path.display()))?;
             if zip_bytes.is_empty() {
@@ -62,9 +71,15 @@ impl RefinedUploader {
             }
 
             let artifact_path = format!("refined/local/{}/RefinedScan.zip", scan_id);
-            sink.put_bytes(&artifact_path, &zip_bytes)
-                .await
-                .with_context(|| format!("upload refined scan {}", scan_id))?;
+            sink.put_domain_artifact(DomainArtifactRequest {
+                rel_path: &artifact_path,
+                name: &format!("refined_scan_{}", scan_id),
+                data_type: "refined_scan_zip",
+                existing_id: None,
+                content: DomainArtifactContent::Bytes(&zip_bytes),
+            })
+            .await
+            .with_context(|| format!("upload refined scan {}", scan_id))?;
 
             self.completed.insert(scan_id.clone());
             uploaded.push(scan_id);
@@ -74,13 +89,17 @@ impl RefinedUploader {
     }
 }
 
-async fn zip_directory(dir: &Path) -> Result<Vec<u8>> {
+async fn zip_directory(dir: &Path, allowed_extensions: &[&str]) -> Result<Vec<u8>> {
     let dir = dir.to_path_buf();
-    let bytes = task::spawn_blocking(move || zip_directory_blocking(&dir)).await??;
+    let allowed = allowed_extensions
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    let bytes = task::spawn_blocking(move || zip_directory_blocking(&dir, &allowed)).await??;
     Ok(bytes)
 }
 
-fn zip_directory_blocking(dir: &Path) -> Result<Vec<u8>> {
+fn zip_directory_blocking(dir: &Path, allowed_extensions: &[String]) -> Result<Vec<u8>> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = FileOptions::default().compression_method(CompressionMethod::Stored);
     let mut has_files = false;
@@ -91,6 +110,9 @@ fn zip_directory_blocking(dir: &Path) -> Result<Vec<u8>> {
             continue;
         }
         if entry.file_type().is_dir() {
+            continue;
+        }
+        if !should_include_file(path, allowed_extensions) {
             continue;
         }
         let relative = path
@@ -112,16 +134,45 @@ fn zip_directory_blocking(dir: &Path) -> Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
+fn should_include_file(path: &Path, allowed_extensions: &[String]) -> bool {
+    if allowed_extensions.is_empty() {
+        return true;
+    }
+    let ext = path.extension().and_then(|os| os.to_str()).map(|s| {
+        let mut lower = String::with_capacity(s.len() + 1);
+        lower.push('.');
+        lower.push_str(&s.to_ascii_lowercase());
+        lower
+    });
+    match ext {
+        Some(ext) => allowed_extensions.iter().any(|allowed| allowed == &ext),
+        None => false,
+    }
+}
+
+fn has_required_sfm_files(sfm: &Path) -> bool {
+    REQUIRED_SFM_FILES
+        .iter()
+        .all(|name| sfm.join(name).exists())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn owned_allowed_exts() -> Vec<String> {
+        ZIP_ALLOWED_EXTENSIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
 
     #[test]
     fn zip_directory_blocking_returns_empty_when_no_files() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("sfm");
         std::fs::create_dir_all(&dir).unwrap();
-        let bytes = zip_directory_blocking(&dir).unwrap();
+        let bytes = zip_directory_blocking(&dir, &owned_allowed_exts()).unwrap();
         assert!(bytes.is_empty());
     }
 }

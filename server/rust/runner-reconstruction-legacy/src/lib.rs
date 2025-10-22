@@ -11,9 +11,10 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use compute_runner_api::{ArtifactSink, Runner, TaskCtx};
+use compute_runner_api::ArtifactSink;
+use compute_runner_api::{Runner, TaskCtx};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::{
     fs,
     sync::mpsc::{unbounded_channel, UnboundedSender},
@@ -32,6 +33,10 @@ pub mod workspace;
 
 use manifest::{ManifestState, ProgressListener};
 use workspace::Workspace;
+
+const LEGACY_INITIAL_STATUS: &str = "Request received by reconstruction server";
+const LEGACY_FAILURE_STATUS: &str = "Reconstruction job script failed";
+const LEGACY_PROGRESS_INTERVAL_SECS: u64 = 30;
 
 #[derive(Serialize)]
 struct JobMetadataRecord {
@@ -59,7 +64,9 @@ struct JobMetadataRecord {
 
 struct JobContext {
     metadata: JobMetadataRecord,
+    #[allow(dead_code)]
     skip_manifest_upload: bool,
+    job_request_json: Option<String>,
 }
 
 impl JobContext {
@@ -153,18 +160,41 @@ impl JobContext {
             override_manifest_id,
         };
 
+        let job_request_json = sanitized_job_request_json(&legacy, &metadata.domain_id)?;
+
         Ok(Self {
             metadata,
             skip_manifest_upload,
+            job_request_json,
         })
     }
 
+    #[allow(dead_code)]
     fn skip_manifest_upload(&self) -> bool {
         self.skip_manifest_upload
     }
 
+    fn allow_local_scan_zips(&self) -> bool {
+        self.processing_type() != "global_refinement"
+    }
+
     fn processing_type(&self) -> &str {
         &self.metadata.processing_type
+    }
+
+    fn domain_data_name_suffix(&self) -> String {
+        if let Some(override_name) = self.metadata.override_job_name.as_ref() {
+            if !override_name.trim().is_empty() {
+                return override_name.clone();
+            }
+        }
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&self.metadata.created_at) {
+            return parsed.format("%Y-%m-%d_%H-%M-%S").to_string();
+        }
+        if !self.metadata.job_name.trim().is_empty() {
+            return self.metadata.job_name.clone();
+        }
+        "legacy_job".to_string()
     }
 
     fn should_generate_scan_summary(&self) -> bool {
@@ -186,6 +216,91 @@ impl JobContext {
             .with_context(|| format!("write job metadata to {}", path.display()))?;
         Ok(())
     }
+
+    async fn persist_job_request(&self, path: &std::path::Path) -> Result<()> {
+        let Some(contents) = self.job_request_json.as_ref() else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create job request directory {}", parent.display()))?;
+        }
+        fs::write(path, contents)
+            .await
+            .with_context(|| format!("write job request to {}", path.display()))?;
+        Ok(())
+    }
+}
+
+fn sanitized_job_request_json(legacy: &Value, fallback_domain_id: &str) -> Result<Option<String>> {
+    let map = match legacy.as_object() {
+        Some(map) if !map.is_empty() => map,
+        _ => return Ok(None),
+    };
+    let mut cloned = map.clone();
+    cloned.remove("access_token");
+    cloned
+        .entry("domain_id".to_string())
+        .or_insert_with(|| Value::String(fallback_domain_id.to_string()));
+    let sanitized = Value::Object(cloned);
+    let json = serde_json::to_string_pretty(&sanitized)?;
+    Ok(Some(json))
+}
+
+#[cfg(test)]
+mod job_request_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn sanitized_job_request_removes_access_token_and_inserts_domain_id() {
+        let legacy = json!({
+            "access_token": "secret",
+            "data_ids": ["abc"],
+            "processing_type": "local_refinement"
+        });
+        let json = sanitized_job_request_json(&legacy, "domain-123")
+            .unwrap()
+            .expect("expected sanitized json");
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("access_token").is_none());
+        assert_eq!(parsed["domain_id"], "domain-123");
+        assert_eq!(parsed["processing_type"], "local_refinement");
+    }
+
+    #[tokio::test]
+    async fn persist_job_request_writes_file() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("job_request.json");
+        let metadata = JobMetadataRecord {
+            id: "id".into(),
+            name: "job_id".into(),
+            domain_id: "domain".into(),
+            processing_type: "local_refinement".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            domain_server_url: "https://example.com".into(),
+            reconstruction_server_url: None,
+            data_ids: vec!["abc".into()],
+            job_id: "id".into(),
+            task_id: "task".into(),
+            job_name: "job_id".into(),
+            capability: "/cap".into(),
+            inputs_cids: vec![],
+            outputs_prefix: None,
+            skip_manifest_upload: false,
+            override_job_name: None,
+            override_manifest_id: None,
+        };
+        let job_ctx = JobContext {
+            metadata,
+            skip_manifest_upload: false,
+            job_request_json: Some("{\"foo\":1}".into()),
+        };
+        job_ctx.persist_job_request(&path).await.unwrap();
+        let contents = std::fs::read_to_string(path).unwrap();
+        assert!(contents.contains("\"foo\""));
+    }
 }
 
 fn infer_processing_type(capability: &str) -> String {
@@ -199,25 +314,6 @@ fn infer_processing_type(capability: &str) -> String {
     } else {
         "local_and_global_refinement".into()
     }
-}
-
-async fn upload_manifest_if_needed(
-    sink: &dyn ArtifactSink,
-    workspace: &Workspace,
-    skip_manifest_upload: bool,
-) -> anyhow::Result<()> {
-    if skip_manifest_upload {
-        return Ok(());
-    }
-    let path = workspace.job_manifest_path();
-    if !path.exists() {
-        return Ok(());
-    }
-    let bytes = fs::read(path)
-        .await
-        .with_context(|| format!("read manifest {}", path.display()))?;
-    sink.put_bytes("job_manifest.json", &bytes).await?;
-    Ok(())
 }
 
 /// Configuration for the legacy reconstruction runner.
@@ -394,6 +490,11 @@ impl Runner for RunnerReconstructionLegacy {
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
             .await?;
+        job_ctx
+            .persist_job_request(workspace.job_request_path())
+            .await?;
+
+        let allow_refined_scan_uploads = job_ctx.allow_local_scan_zips();
 
         info!(
             capability = self.capability,
@@ -410,28 +511,32 @@ impl Runner for RunnerReconstructionLegacy {
             "workspace prepared"
         );
 
+        let name_suffix = job_ctx.domain_data_name_suffix();
+        let override_manifest_id = job_ctx.metadata.override_manifest_id.as_deref();
+
         let (progress_tx, mut progress_rx) = unbounded_channel::<(i32, String)>();
         let state = ManifestState::default();
-        update_progress(&state, &progress_tx, 0, "initializing");
+        update_progress(&state, &progress_tx, 0, LEGACY_INITIAL_STATUS);
 
-        // Rich processing manifest snapshot using Python helper (parity with Go).
+        // Write initial manifest snapshot and publish it.
         manifest::write_processing_manifest_python(
             workspace.job_manifest_path(),
             workspace.root(),
             &self.config.python_bin,
             0,
-            "initializing",
+            LEGACY_INITIAL_STATUS,
         )
         .await?;
-        upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload()).await?;
+        upload_manifest_artifact(
+            ctx.output,
+            "job_manifest.json",
+            workspace.job_manifest_path(),
+            &name_suffix,
+            override_manifest_id,
+        )
+        .await?;
 
-        let materialized = input::materialize_datasets(&ctx, &workspace).await?;
-        update_progress(
-            &state,
-            &progress_tx,
-            20,
-            format!("materialized {} inputs", materialized.len()),
-        );
+        input::materialize_datasets(&ctx, &workspace).await?;
 
         if self.config.mock_mode {
             create_mock_outputs(&workspace).context("create mock outputs")?;
@@ -454,7 +559,7 @@ impl Runner for RunnerReconstructionLegacy {
             workspace.job_manifest_path().to_path_buf(),
             workspace.root().to_path_buf(),
             self.config.python_bin.clone(),
-            Duration::from_secs(2),
+            Duration::from_secs(LEGACY_PROGRESS_INTERVAL_SECS),
             state.clone(),
             Arc::new(ProgressForwarder {
                 tx: progress_tx.clone(),
@@ -463,7 +568,7 @@ impl Runner for RunnerReconstructionLegacy {
         );
 
         let mut refined_uploader = refined::RefinedUploader::new();
-        let mut refined_interval = interval(Duration::from_secs(5));
+        let mut refined_interval = interval(Duration::from_secs(LEGACY_PROGRESS_INTERVAL_SECS));
         refined_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let scan_names = collect_scan_names(workspace.datasets()).context("collect scan names")?;
@@ -509,12 +614,39 @@ impl Runner for RunnerReconstructionLegacy {
                 Some((progress, status)) = progress_rx.recv() => {
                     let payload = json!({"progress": progress, "status": status});
                     let _ = ctx.ctrl.progress(payload).await;
+                    // Also push the updated manifest snapshot to the domain server for user-visible progress.
+                    let _ = upload_manifest_artifact(
+                        ctx.output,
+                        "job_manifest.json",
+                        workspace.job_manifest_path(),
+                        &name_suffix,
+                        override_manifest_id,
+                    )
+                    .await;
                 }
                 _ = refined_interval.tick(), if python_result.is_none() => {
-                    if let Err(err) = refined_uploader.process(&workspace, ctx.output).await {
+                    if let Err(err) = refined_uploader
+                        .process(
+                            &workspace,
+                            ctx.output,
+                            allow_refined_scan_uploads,
+                        )
+                        .await
+                    {
                         cancel_token.cancel();
                         manifest_task.stop().await;
                         return Err(err);
+                    }
+                    // Progress parity with Go: compute N/M completed scans and update manifest status.
+                    let (done, total) = scan_completion(&workspace, &scan_names)?;
+                    if total > 0 {
+                        let pct = ((done as f64 / total as f64) * 100.0).round() as i32;
+                        update_progress(
+                            &state,
+                            &progress_tx,
+                            pct.clamp(0, 100),
+                            format!("Processed {} of {} scans", done, total),
+                        );
                     }
                 }
                 cancelled_now = ctx.ctrl.is_cancelled(), if !cancelled => {
@@ -541,34 +673,57 @@ impl Runner for RunnerReconstructionLegacy {
         manifest_task.stop().await;
 
         if cancelled {
-            manifest::write_failed_manifest(workspace.job_manifest_path(), "task cancelled")
-                .await?;
-            upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload())
-                .await?;
+            manifest::write_failed_manifest_python(
+                workspace.job_manifest_path(),
+                workspace.root(),
+                &self.config.python_bin,
+                "task cancelled",
+            )
+            .await?;
+            upload_manifest_artifact(
+                ctx.output,
+                "job_manifest.json",
+                workspace.job_manifest_path(),
+                &name_suffix,
+                override_manifest_id,
+            )
+            .await?;
             return Err(anyhow!("task cancelled"));
         }
 
         let python_result = python_result.unwrap_or(Ok(()));
         if let Err(err) = python_result {
-            manifest::write_failed_manifest(workspace.job_manifest_path(), "python failed").await?;
-            upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload())
-                .await?;
+            manifest::write_failed_manifest_python(
+                workspace.job_manifest_path(),
+                workspace.root(),
+                &self.config.python_bin,
+                LEGACY_FAILURE_STATUS,
+            )
+            .await?;
+            upload_manifest_artifact(
+                ctx.output,
+                "job_manifest.json",
+                workspace.job_manifest_path(),
+                &name_suffix,
+                override_manifest_id,
+            )
+            .await?;
             return Err(err);
         }
 
         refined_uploader
-            .process(&workspace, ctx.output)
+            .process(&workspace, ctx.output, allow_refined_scan_uploads)
             .await
             .context("final refined upload pass")?;
 
         // Scan summary has already been generated before Python started.
 
-        update_progress(&state, &progress_tx, 90, "uploading outputs");
         drop(progress_tx);
 
-        output::upload_final_outputs(&workspace, ctx.output)
+        // Upload refined outputs directly to the domain server.
+        output::upload_final_outputs(&workspace, ctx.output, &name_suffix, override_manifest_id)
             .await
-            .context("upload final outputs")?;
+            .context("upload refined outputs")?;
         if !workspace.job_manifest_path().exists() {
             warn!(
                 capability = self.capability,
@@ -578,7 +733,15 @@ impl Runner for RunnerReconstructionLegacy {
                 "python pipeline did not produce job manifest; skipping upload"
             );
         }
-        upload_manifest_if_needed(ctx.output, &workspace, job_ctx.skip_manifest_upload()).await?;
+        // Upload final manifest snapshot.
+        upload_manifest_artifact(
+            ctx.output,
+            "job_manifest.json",
+            workspace.job_manifest_path(),
+            &name_suffix,
+            override_manifest_id,
+        )
+        .await?;
 
         ctx.ctrl
             .progress(json!({"progress": 100, "status": "succeeded"}))
@@ -646,6 +809,28 @@ fn create_mock_outputs(workspace: &Workspace) -> Result<()> {
     Ok(())
 }
 
+async fn upload_manifest_artifact(
+    sink: &dyn ArtifactSink,
+    rel_path: &str,
+    file_path: &Path,
+    name_suffix: &str,
+    existing_id: Option<&str>,
+) -> anyhow::Result<()> {
+    use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
+    if !file_path.exists() {
+        return Ok(());
+    }
+    sink.put_domain_artifact(DomainArtifactRequest {
+        rel_path,
+        name: &format!("refined_manifest_{}", name_suffix),
+        data_type: "refined_manifest_json",
+        existing_id,
+        content: DomainArtifactContent::File(file_path),
+    })
+    .await?;
+    Ok(())
+}
+
 fn build_python_args(
     config: &RunnerConfig,
     job_ctx: &JobContext,
@@ -700,6 +885,29 @@ fn collect_scan_names(datasets_path: &Path) -> Result<Vec<String>> {
     scans.sort();
     scans.dedup();
     Ok(scans)
+}
+
+fn scan_completion(workspace: &Workspace, scan_names: &[String]) -> Result<(usize, usize)> {
+    let mut done = 0usize;
+    for scan in scan_names {
+        let sfm = workspace.refined_local().join(scan).join("sfm");
+        if !sfm.exists() {
+            continue;
+        }
+        // Require the core files like the Go server did.
+        let required = ["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
+        let mut complete = true;
+        for f in required.iter() {
+            if !sfm.join(f).exists() {
+                complete = false;
+                break;
+            }
+        }
+        if complete {
+            done += 1;
+        }
+    }
+    Ok((done, scan_names.len()))
 }
 
 /// Extract the last non-empty segment from a CID/URL-like string.

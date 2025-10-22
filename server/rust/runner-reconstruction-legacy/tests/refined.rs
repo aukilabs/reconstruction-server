@@ -6,6 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use runner_reconstruction_legacy::{refined::RefinedUploader, workspace::Workspace};
 use tokio::runtime::Runtime;
@@ -33,6 +34,21 @@ impl ArtifactSink for RecordingSink {
         let bytes = std::fs::read(file_path)?;
         self.put_bytes(rel_path, &bytes).await
     }
+
+    async fn put_domain_artifact(
+        &self,
+        request: DomainArtifactRequest<'_>,
+    ) -> anyhow::Result<Option<String>> {
+        match request.content {
+            DomainArtifactContent::Bytes(bytes) => {
+                self.put_bytes(request.rel_path, bytes).await?;
+            }
+            DomainArtifactContent::File(path) => {
+                self.put_file(request.rel_path, path).await?;
+            }
+        }
+        Ok(None)
+    }
 }
 
 fn create_workspace() -> Workspace {
@@ -41,6 +57,7 @@ fn create_workspace() -> Workspace {
 
 fn populate_scan(workspace: &Workspace, scan: &str, files: &[(&str, &str)]) -> PathBuf {
     let sfm_dir = workspace.refined_local().join(scan).join("sfm");
+    std::fs::create_dir_all(&sfm_dir).unwrap();
     for (path, contents) in files {
         let path = sfm_dir.join(path);
         if let Some(parent) = path.parent() {
@@ -59,22 +76,40 @@ fn uploader_zips_and_uploads_new_scans_once() {
         populate_scan(
             &workspace,
             "scan_a",
-            &[("config.txt", "hello"), ("nested/data.bin", "123")],
+            &[
+                ("images.bin", "img"),
+                ("cameras.bin", "cam"),
+                ("points3D.bin", "pts"),
+                ("portals.csv", "1,2"),
+                ("config.txt", "hello"),
+                ("nested/data.bin", "123"),
+                ("notes.md", "skip"),
+            ],
         );
-        populate_scan(&workspace, "scan_b", &[("points.csv", "1,2,3")]);
+        populate_scan(
+            &workspace,
+            "scan_b",
+            &[
+                ("images.bin", "img"),
+                ("cameras.bin", "cam"),
+                ("points3D.bin", "pts"),
+                ("portals.csv", "1,2"),
+                ("points.csv", "1,2,3"),
+            ],
+        );
 
         let sink = RecordingSink::default();
         let mut uploader = RefinedUploader::new();
 
         let uploaded = uploader
-            .process(&workspace, &sink)
+            .process(&workspace, &sink, true)
             .await
             .expect("process scans");
         assert_eq!(uploaded.len(), 2);
 
         // Second run should not reupload completed scans.
         let second = uploader
-            .process(&workspace, &sink)
+            .process(&workspace, &sink, true)
             .await
             .expect("process scans second time");
         assert!(second.is_empty());
@@ -101,6 +136,10 @@ fn uploader_zips_and_uploads_new_scans_once() {
         }
         assert!(contents.contains_key("config.txt"));
         assert!(contents.contains_key("nested/data.bin"));
+        assert!(
+            !contents.contains_key("notes.md"),
+            "non-whitelisted extension should be skipped"
+        );
     });
 }
 
@@ -115,7 +154,56 @@ fn uploader_ignores_scans_without_sfm() {
         let sink = RecordingSink::default();
         let mut uploader = RefinedUploader::new();
         let uploaded = uploader
-            .process(&workspace, &sink)
+            .process(&workspace, &sink, true)
+            .await
+            .expect("process scans");
+        assert!(uploaded.is_empty());
+        assert!(sink.uploads.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn uploader_skips_when_required_files_missing() {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        let workspace = create_workspace();
+        populate_scan(
+            &workspace,
+            "scan_incomplete",
+            &[("images.bin", "img"), ("cameras.bin", "cam")],
+        );
+
+        let sink = RecordingSink::default();
+        let mut uploader = RefinedUploader::new();
+        let uploaded = uploader
+            .process(&workspace, &sink, true)
+            .await
+            .expect("process scans");
+        assert!(uploaded.is_empty());
+        assert!(sink.uploads.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn uploader_respects_upload_toggle() {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        let workspace = create_workspace();
+        populate_scan(
+            &workspace,
+            "scan_disabled",
+            &[
+                ("images.bin", "img"),
+                ("cameras.bin", "cam"),
+                ("points3D.bin", "pts"),
+                ("portals.csv", "1,2"),
+            ],
+        );
+
+        let sink = RecordingSink::default();
+        let mut uploader = RefinedUploader::new();
+        let uploaded = uploader
+            .process(&workspace, &sink, false)
             .await
             .expect("process scans");
         assert!(uploaded.is_empty());

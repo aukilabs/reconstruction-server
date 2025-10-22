@@ -12,6 +12,7 @@ pub struct Workspace {
     datasets: PathBuf,
     refined_local: PathBuf,
     refined_global: PathBuf,
+    request: PathBuf,
     manifest: PathBuf,
     summary: PathBuf,
     metadata: PathBuf,
@@ -46,6 +47,7 @@ impl Workspace {
         let datasets = root.join("datasets");
         let refined_local = root.join("refined").join("local");
         let refined_global = root.join("refined").join("global");
+        let request = root.join("job_request.json");
         let manifest = root.join("job_manifest.json");
         let summary = root.join("scan_data_summary.json");
         let metadata = root.join("job_metadata.json");
@@ -59,6 +61,7 @@ impl Workspace {
             datasets,
             refined_local,
             refined_global,
+            request,
             manifest,
             summary,
             metadata,
@@ -84,6 +87,11 @@ impl Workspace {
     /// Path containing global refinement outputs.
     pub fn refined_global(&self) -> &Path {
         &self.refined_global
+    }
+
+    /// Path to the job request JSON file.
+    pub fn job_request_path(&self) -> &Path {
+        &self.request
     }
 
     /// Path to the job manifest JSON file.

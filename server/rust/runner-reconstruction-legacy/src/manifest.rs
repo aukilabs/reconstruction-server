@@ -114,6 +114,30 @@ pub async fn write_failed_manifest(path: &Path, message: &str) -> Result<()> {
     atomic_write_bytes(path, &bytes).context("write failed manifest")
 }
 
+/// Write a rich failed manifest via the Python helper, falling back to minimal JSON on error.
+pub async fn write_failed_manifest_python(
+    manifest_path: &Path,
+    job_root_path: &Path,
+    python_bin: &Path,
+    message: &str,
+) -> Result<()> {
+    let script = format!(
+        "from utils.data_utils import save_failed_manifest_json; save_failed_manifest_json(r'{manifest}', r'{root}', r'{msg}')",
+        manifest = manifest_path.display(),
+        root = job_root_path.display(),
+        msg = escape_py_single_quoted(message),
+    );
+    let out = tokio::process::Command::new(python_bin)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .await;
+    match out {
+        Ok(o) if o.status.success() => Ok(()),
+        _ => write_failed_manifest(manifest_path, message).await,
+    }
+}
+
 pub async fn write_processing_manifest(path: &Path, progress: i32, status: &str) -> Result<()> {
     let snapshot = ManifestJson {
         job_status: "processing",

@@ -8,7 +8,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.0" }
+compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.1" }
 anyhow = "1"
 async-trait = "0.1"
 tempfile = "3"
@@ -23,6 +23,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["serde", "v4"] }
+hyper = { version = "0.14", default-features = false, features = ["server", "http1", "tcp"] }
 
 [package.metadata]
 description = "Reconstruction-specific runner (legacy), no HTTP wiring."

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
+use tracing::{debug, info};
 
 use crate::workspace::Workspace;
 
@@ -66,6 +68,8 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
 pub async fn upload_final_outputs(
     workspace: &Workspace,
     sink: &dyn ArtifactSink,
+    name_suffix: &str,
+    override_manifest_id: Option<&str>,
 ) -> Result<HashMap<String, String>> {
     let mut uploaded = HashMap::new();
 
@@ -74,19 +78,43 @@ pub async fn upload_final_outputs(
         if !path.exists() {
             if spec.mandatory {
                 return Err(anyhow::anyhow!(
-                    "missing mandatory output {} at {}",
+                    "missing mandatory output '{}' at {}",
                     spec.display_name,
                     path.display()
                 ));
             }
+            debug!(
+                display = spec.display_name,
+                rel_path = spec.relative_path,
+                abs_path = %path.display(),
+                "optional output missing; skipping upload"
+            );
             continue;
         }
-        let bytes = tokio::fs::read(&path)
-            .await
-            .with_context(|| format!("read output {}", path.display()))?;
-        sink.put_bytes(spec.relative_path, &bytes)
-            .await
-            .with_context(|| format!("upload output {}", spec.display_name))?;
+        let size = std::fs::metadata(&path)
+            .map(|m| m.len())
+            .unwrap_or_default();
+        info!(
+            display = spec.display_name,
+            rel_path = spec.relative_path,
+            size_bytes = size,
+            "uploading output"
+        );
+        let name = format!("{}_{}", spec.display_name, name_suffix);
+        let existing_id = if spec.display_name == "refined_manifest" {
+            override_manifest_id
+        } else {
+            None
+        };
+        sink.put_domain_artifact(DomainArtifactRequest {
+            rel_path: spec.relative_path,
+            name: &name,
+            data_type: data_type_for_display(spec.display_name),
+            existing_id,
+            content: DomainArtifactContent::File(&path),
+        })
+        .await
+        .with_context(|| format!("upload output {}", spec.display_name))?;
         uploaded.insert(
             spec.display_name.to_string(),
             spec.relative_path.to_string(),
@@ -107,13 +135,34 @@ async fn upload_json_if_exists(
 ) -> Result<()> {
     let path = root.join(file_name);
     if !path.exists() {
+        debug!(file = file_name, path = %path.display(), "json output missing; skipping upload");
         return Ok(());
     }
     let bytes = tokio::fs::read(&path)
         .await
         .with_context(|| format!("read output {}", path.display()))?;
+    info!(
+        file = file_name,
+        size_bytes = bytes.len(),
+        "uploading json output"
+    );
     sink.put_bytes(file_name, &bytes)
         .await
         .with_context(|| format!("upload output {}", file_name))?;
     Ok(())
+}
+
+fn data_type_for_display(display: &str) -> &str {
+    match display {
+        "refined_manifest" => "refined_manifest_json",
+        "refined_pointcloud" => "refined_pointcloud_ply",
+        "refined_pointcloud_full_draco" => "refined_pointcloud_ply_draco",
+        "topologymesh_v1_lowpoly_obj" => "obj",
+        "topologymesh_v1_lowpoly_glb" => "glb",
+        "topologymesh_v1_midpoly_obj" => "obj",
+        "topologymesh_v1_midpoly_glb" => "glb",
+        "topologymesh_v1_highpoly_obj" => "obj",
+        "topologymesh_v1_highpoly_glb" => "glb",
+        _ => "binary",
+    }
 }
