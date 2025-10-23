@@ -25,9 +25,9 @@ offline smoke tests.
 4. **Input materialisation** — `input::materialize_datasets` downloads all
    declared CIDs using the `InputSource`, unpacks refined zips when present, and
    prepares the on-disk layout expected by the Python tooling.
-5. **Python control loop** — Unless `LEGACY_RUNNER_MOCK=1`, the runner launches
-   the configured Python script and streams its stdout/stderr into
-   `python.log`. Cancellation is observed through a `CancellationToken`.
+5. **Python control loop** — The runner launches the configured Python script
+   and streams its stdout/stderr into `python.log`. Cancellation is observed
+   through a `CancellationToken`.
 6. **Refined artifact uploads** — `refined::RefinedUploader` periodically scans
    the workspace and uploads new or updated refined outputs via the `ArtifactSink`.
 7. **Summary generation** — When the capability implies local/global refinement,
@@ -52,8 +52,6 @@ All knobs are exposed through environment variables with sensible defaults:
 - `LEGACY_RUNNER_PYTHON_ARGS` — additional args (split on ASCII whitespace).
 - `LEGACY_RUNNER_CPU_WORKERS` (default `2`) — propagated to the Python process
   via arguments or environment (wiring is performed in the Python helper).
-- `LEGACY_RUNNER_MOCK` (`true`/`1` etc.) — when set, skip the Python launch and
-  create placeholder outputs instead.
 
 The runner reads most of its behavioural toggles from the lease’s `meta.legacy`
 payload:
@@ -76,7 +74,5 @@ The workspace modules ensure interoperability with the legacy stack:
 ## Testing and development
 - `cargo test -p runner-reconstruction-legacy` covers manifest management,
   workspace layout, refined uploader behaviour, and configuration parsing.
-- Use `LEGACY_RUNNER_MOCK=1` when iterating locally to avoid invoking the Python
-  stack; the runner will still exercise storage, manifests, and uploads.
 - The runner logs progress through the control plane; set `RUST_LOG=debug` to
   observe detailed transfer and manifest messages.

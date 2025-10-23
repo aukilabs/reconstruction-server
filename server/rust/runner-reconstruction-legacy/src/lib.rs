@@ -49,15 +49,6 @@ struct JobMetadataRecord {
     domain_server_url: String,
     reconstruction_server_url: Option<String>,
     data_ids: Vec<String>,
-
-    // Extra fields retained for debugging/back-compat with prior formats
-    job_id: String,
-    task_id: String,
-    job_name: String,
-    capability: String,
-    inputs_cids: Vec<String>,
-    outputs_prefix: Option<String>,
-    skip_manifest_upload: bool,
     override_job_name: Option<String>,
     override_manifest_id: Option<String>,
 }
@@ -114,7 +105,6 @@ impl JobContext {
             .unwrap_or_else(|| infer_processing_type(&lease.task.capability));
 
         let inputs_cids = lease.task.inputs_cids.clone();
-        let outputs_prefix = lease.task.outputs_prefix.clone();
         let domain_server_url = lease
             .domain_server_url
             .as_ref()
@@ -147,15 +137,6 @@ impl JobContext {
             domain_server_url: domain_server_url.clone(),
             reconstruction_server_url,
             data_ids,
-
-            // Back-compat / debugging
-            job_id: job_id.clone(),
-            task_id: lease.task.id.to_string(),
-            job_name,
-            capability: lease.task.capability.clone(),
-            inputs_cids,
-            outputs_prefix,
-            skip_manifest_upload,
             override_job_name,
             override_manifest_id,
         };
@@ -167,11 +148,6 @@ impl JobContext {
             skip_manifest_upload,
             job_request_json,
         })
-    }
-
-    #[allow(dead_code)]
-    fn skip_manifest_upload(&self) -> bool {
-        self.skip_manifest_upload
     }
 
     fn allow_local_scan_zips(&self) -> bool {
@@ -191,8 +167,8 @@ impl JobContext {
         if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&self.metadata.created_at) {
             return parsed.format("%Y-%m-%d_%H-%M-%S").to_string();
         }
-        if !self.metadata.job_name.trim().is_empty() {
-            return self.metadata.job_name.clone();
+        if !self.metadata.name.trim().is_empty() {
+            return self.metadata.name.clone();
         }
         "legacy_job".to_string()
     }
@@ -282,13 +258,6 @@ mod job_request_tests {
             domain_server_url: "https://example.com".into(),
             reconstruction_server_url: None,
             data_ids: vec!["abc".into()],
-            job_id: "id".into(),
-            task_id: "task".into(),
-            job_name: "job_id".into(),
-            capability: "/cap".into(),
-            inputs_cids: vec![],
-            outputs_prefix: None,
-            skip_manifest_upload: false,
             override_job_name: None,
             override_manifest_id: None,
         };
@@ -329,8 +298,6 @@ pub struct RunnerConfig {
     pub python_args: Vec<String>,
     /// Number of CPU workers granted to the pipeline.
     pub cpu_workers: usize,
-    /// If true, execute in mock mode (skip heavy pipeline).
-    pub mock_mode: bool,
 }
 
 impl RunnerConfig {
@@ -339,7 +306,6 @@ impl RunnerConfig {
     pub const ENV_PYTHON_SCRIPT: &'static str = "LEGACY_RUNNER_PYTHON_SCRIPT";
     pub const ENV_PYTHON_ARGS: &'static str = "LEGACY_RUNNER_PYTHON_ARGS";
     pub const ENV_CPU_WORKERS: &'static str = "LEGACY_RUNNER_CPU_WORKERS";
-    pub const ENV_MOCK_MODE: &'static str = "LEGACY_RUNNER_MOCK";
 
     pub const DEFAULT_PYTHON_BIN: &'static str = "python3";
     pub const DEFAULT_PYTHON_SCRIPT: &'static str = "main.py";
@@ -371,18 +337,12 @@ impl RunnerConfig {
             _ => Self::DEFAULT_CPU_WORKERS,
         };
 
-        let mock_mode = env::var(Self::ENV_MOCK_MODE)
-            .ok()
-            .map(|v| parse_bool(&v))
-            .unwrap_or(false);
-
         Ok(Self {
             workspace_root,
             python_bin,
             python_script,
             python_args,
             cpu_workers,
-            mock_mode,
         })
     }
 }
@@ -395,17 +355,8 @@ impl Default for RunnerConfig {
             python_script: PathBuf::from(Self::DEFAULT_PYTHON_SCRIPT),
             python_args: Vec::new(),
             cpu_workers: Self::DEFAULT_CPU_WORKERS,
-            mock_mode: false,
         }
     }
-}
-
-/// Parse a string into a boolean. Accepts common truthy values.
-fn parse_bool(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
 }
 
 /// Public crate identifier used by workspace smoke tests.
@@ -499,7 +450,7 @@ impl Runner for RunnerReconstructionLegacy {
         info!(
             capability = self.capability,
             domain_id = %job_ctx.metadata.domain_id,
-            job_id = %job_ctx.metadata.job_name,
+            job_id = %job_ctx.metadata.name,
             task_id = %task_id,
             workspace = %workspace.root().display(),
             configured_workspace_root = %self
@@ -538,9 +489,7 @@ impl Runner for RunnerReconstructionLegacy {
 
         input::materialize_datasets(&ctx, &workspace).await?;
 
-        if self.config.mock_mode {
-            create_mock_outputs(&workspace).context("create mock outputs")?;
-        }
+        // mock mode removed; rely on runner-reconstruction-legacy-noop for smoke tests.
 
         // Generate scan data summary before Python starts so it can be embedded in final manifest (parity with Go).
         if job_ctx.should_generate_scan_summary() {
@@ -572,37 +521,33 @@ impl Runner for RunnerReconstructionLegacy {
         refined_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let scan_names = collect_scan_names(workspace.datasets()).context("collect scan names")?;
+        let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
+        info!(
+            capability = self.capability,
+            domain_id = %job_ctx.metadata.domain_id,
+            job_name = %job_ctx.metadata.name,
+            python_bin = %self.config.python_bin.display(),
+            python_script = %self.config.python_script.display(),
+            workspace = %workspace.root().display(),
+            args = ?python_args,
+            "launching legacy python pipeline"
+        );
+        let python_bin = self.config.python_bin.clone();
+        let python_script = self.config.python_script.clone();
+        let log_path = workspace.root().join("python.log");
+        let cancel = cancel_token.clone();
         let mut python_future: Pin<
             Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
-        > = if self.config.mock_mode {
-            Box::pin(async { Ok(()) })
-        } else {
-            let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
-            info!(
-                capability = self.capability,
-                domain_id = %job_ctx.metadata.domain_id,
-                job_name = %job_ctx.metadata.job_name,
-                python_bin = %self.config.python_bin.display(),
-                python_script = %self.config.python_script.display(),
-                workspace = %workspace.root().display(),
-                args = ?python_args,
-                "launching legacy python pipeline"
-            );
-            let python_bin = self.config.python_bin.clone();
-            let python_script = self.config.python_script.clone();
-            let log_path = workspace.root().join("python.log");
-            let cancel = cancel_token.clone();
-            Box::pin(async move {
-                python::run_script(
-                    &python_bin,
-                    &python_script,
-                    &python_args,
-                    &log_path,
-                    &cancel,
-                )
-                .await
-            })
-        };
+        > = Box::pin(async move {
+            python::run_script(
+                &python_bin,
+                &python_script,
+                &python_args,
+                &log_path,
+                &cancel,
+            )
+            .await
+        });
         let mut python_result: Option<Result<(), anyhow::Error>> = None;
         let mut cancelled = false;
 
@@ -732,7 +677,7 @@ impl Runner for RunnerReconstructionLegacy {
             warn!(
                 capability = self.capability,
                 domain_id = %job_ctx.metadata.domain_id,
-                job_name = %job_ctx.metadata.job_name,
+                job_name = %job_ctx.metadata.name,
                 manifest = %workspace.job_manifest_path().display(),
                 "python pipeline did not produce job manifest; skipping upload"
             );
@@ -770,40 +715,7 @@ fn update_progress(
     let _ = tx.send((progress, status));
 }
 
-fn create_mock_outputs(workspace: &Workspace) -> Result<()> {
-    let global_root = workspace.root().join("refined/global");
-    let topology_root = global_root.join("topology");
-    std::fs::create_dir_all(&topology_root)
-        .with_context(|| format!("create directory {}", topology_root.display()))?;
-    std::fs::write(
-        global_root.join("refined_manifest.json"),
-        b"{\"mock\":true}\n",
-    )
-    .with_context(|| "write mock refined_manifest".to_string())?;
-    std::fs::write(global_root.join("RefinedPointCloudReduced.ply"), b"ply\n")
-        .with_context(|| "write mock reduced pointcloud".to_string())?;
-    std::fs::write(global_root.join("RefinedPointCloud.ply.drc"), b"drc")
-        .with_context(|| "write mock draco pointcloud".to_string())?;
-    std::fs::write(topology_root.join("topology_downsampled_0.111.obj"), b"obj")
-        .with_context(|| "write mock topology obj".to_string())?;
-
-    std::fs::write(
-        workspace.root().join("result.json"),
-        b"{\"status\":\"mock\"}\n",
-    )
-    .with_context(|| "write mock result".to_string())?;
-    std::fs::write(workspace.root().join("outputs_index.json"), b"{}\n")
-        .with_context(|| "write mock outputs index".to_string())?;
-    let sfm_dir = workspace.refined_local().join("mock_scan").join("sfm");
-    std::fs::create_dir_all(&sfm_dir)
-        .with_context(|| format!("create directory {}", sfm_dir.display()))?;
-    std::fs::write(sfm_dir.join("Manifest.json"), b"{}\n")
-        .with_context(|| "write mock local manifest".to_string())?;
-    std::fs::write(sfm_dir.join("points.bin"), b"123")
-        .with_context(|| "write mock points".to_string())?;
-
-    Ok(())
-}
+// mock outputs helper removed; use runner-reconstruction-legacy-noop for smoke tests.
 
 async fn upload_manifest_artifact(
     sink: &dyn ArtifactSink,
@@ -843,7 +755,7 @@ fn build_python_args(
     args.push("--domain_id".to_string());
     args.push(job_ctx.metadata.domain_id.clone());
     args.push("--job_id".to_string());
-    args.push(job_ctx.metadata.job_name.clone());
+    args.push(job_ctx.metadata.name.clone());
     args.push("--local_refinement_workers".to_string());
     args.push(config.cpu_workers.to_string());
 

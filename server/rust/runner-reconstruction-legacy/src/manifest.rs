@@ -66,44 +66,6 @@ impl ManifestTask {
     }
 }
 
-pub fn spawn_processing_writer(
-    manifest_path: PathBuf,
-    interval_dur: Duration,
-    state: ManifestState,
-    listener: Arc<dyn ProgressListener>,
-    cancel: CancellationToken,
-) -> ManifestTask {
-    let (tx, mut rx) = watch::channel(false);
-    let join = tokio::spawn(async move {
-        if let Err(err) = write_snapshot(&manifest_path, &state, listener.as_ref()).await {
-            eprintln!("manifest: failed to write initial snapshot: {err}");
-        }
-
-        let mut ticker = interval(interval_dur);
-        let token = cancel.child_token();
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {},
-                _ = token.cancelled() => break,
-                _ = rx.changed() => {
-                    if *rx.borrow() {
-                        break;
-                    }
-                    continue;
-                }
-            }
-
-            if let Err(err) = write_snapshot(&manifest_path, &state, listener.as_ref()).await {
-                eprintln!(
-                    "manifest: failed to write snapshot for {}: {err}",
-                    manifest_path.display()
-                );
-            }
-        }
-    });
-    ManifestTask { stop_tx: tx, join }
-}
-
 pub async fn write_failed_manifest(path: &Path, message: &str) -> Result<()> {
     let snapshot = ManifestJson {
         job_status: "failed",
@@ -265,25 +227,8 @@ struct ManifestJson {
     job_status_details: String,
 }
 
-async fn write_snapshot(
-    manifest_path: &Path,
-    state: &ManifestState,
-    listener: &dyn ProgressListener,
-) -> Result<()> {
-    let snapshot = state.snapshot();
-    listener
-        .report_progress(snapshot.progress, snapshot.status.clone())
-        .await
-        .context("report progress")?;
-
-    let json = ManifestJson {
-        job_status: "processing",
-        job_progress: snapshot.progress,
-        job_status_details: snapshot.status.clone(),
-    };
-    let bytes = serde_json::to_vec_pretty(&json).context("serialize manifest json")?;
-    atomic_write_bytes(manifest_path, &bytes).context("write manifest")
-}
+// Removed legacy write_snapshot() and spawn_processing_writer(); tests use
+// spawn_python_processing_writer() which mirrors production behavior.
 
 fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::fs;

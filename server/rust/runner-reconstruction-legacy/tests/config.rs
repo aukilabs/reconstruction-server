@@ -12,7 +12,6 @@ const ENV_VARS: &[&str] = &[
     RunnerConfig::ENV_PYTHON_SCRIPT,
     RunnerConfig::ENV_PYTHON_ARGS,
     RunnerConfig::ENV_CPU_WORKERS,
-    RunnerConfig::ENV_MOCK_MODE,
 ];
 
 fn env_lock() -> &'static Mutex<()> {
@@ -43,7 +42,6 @@ fn defaults_without_env_variables() {
     );
     assert!(cfg.python_args.is_empty());
     assert_eq!(cfg.cpu_workers, RunnerConfig::DEFAULT_CPU_WORKERS);
-    assert!(!cfg.mock_mode);
     clear_env();
 }
 
@@ -56,7 +54,6 @@ fn env_overrides_are_respected() {
     env::set_var(RunnerConfig::ENV_PYTHON_SCRIPT, "/opt/run.py");
     env::set_var(RunnerConfig::ENV_PYTHON_ARGS, "--foo bar");
     env::set_var(RunnerConfig::ENV_CPU_WORKERS, "8");
-    env::set_var(RunnerConfig::ENV_MOCK_MODE, "true");
 
     let cfg = RunnerConfig::from_env().expect("config");
     assert_eq!(cfg.workspace_root, Some(PathBuf::from("/tmp/runner-jobs")));
@@ -67,7 +64,6 @@ fn env_overrides_are_respected() {
         vec![String::from("--foo"), String::from("bar")]
     );
     assert_eq!(cfg.cpu_workers, 8);
-    assert!(cfg.mock_mode);
     clear_env();
 }
 

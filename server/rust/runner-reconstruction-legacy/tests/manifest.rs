@@ -4,8 +4,9 @@ use std::{
 };
 
 use runner_reconstruction_legacy::manifest::{
-    spawn_processing_writer, write_failed_manifest, ManifestState, ProgressListener,
+    spawn_python_processing_writer, write_failed_manifest, ManifestState, ProgressListener,
 };
+use std::path::PathBuf;
 use tempfile::tempdir;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -31,8 +32,11 @@ async fn manifest_writer_updates_file_and_progress() {
     let listener = RecordingListener::default();
     let cancel = CancellationToken::new();
 
-    let task = spawn_processing_writer(
+    // Use the python-based writer (falls back to minimal JSON if python import fails)
+    let task = spawn_python_processing_writer(
         manifest_path.clone(),
+        tmp.path().to_path_buf(),
+        PathBuf::from("python3"),
         Duration::from_millis(50),
         state.clone(),
         Arc::new(listener.clone()),
