@@ -721,6 +721,10 @@ impl Runner for RunnerReconstructionLegacy {
         drop(progress_tx);
 
         // Upload refined outputs directly to the domain server.
+        // Important: refined_manifest.json (global) represents the final state and must
+        // be the last write to the domain for this name. Avoid re-uploading the
+        // in-progress job_manifest.json afterward, otherwise we overwrite the final
+        // refined manifest with a "processing" snapshot and UIs will show the job as pending.
         output::upload_final_outputs(&workspace, ctx.output, &name_suffix, override_manifest_id)
             .await
             .context("upload refined outputs")?;
@@ -733,15 +737,7 @@ impl Runner for RunnerReconstructionLegacy {
                 "python pipeline did not produce job manifest; skipping upload"
             );
         }
-        // Upload final manifest snapshot.
-        upload_manifest_artifact(
-            ctx.output,
-            "job_manifest.json",
-            workspace.job_manifest_path(),
-            &name_suffix,
-            override_manifest_id,
-        )
-        .await?;
+        // Do not upload job_manifest.json here. Final domain state is carried by refined_manifest.json.
 
         ctx.ctrl
             .progress(json!({"progress": 100, "status": "succeeded"}))
