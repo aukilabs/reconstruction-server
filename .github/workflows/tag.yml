@@ -1,30 +1,39 @@
-name: Tag Release
-
-concurrency:
-  group: reconstruction-server-tag-${{ github.ref_name }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+name: Docker build and push
 
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
-  release:
-    uses: aukilabs/github-actions/.github/workflows/rust-workflow.yml@v2
-    with:
-      # Build multi-arch binaries and push image
-      enable_build: true
-      work_dir: server/rust
-      docker_context: .
-      image_name: reconstruction-server
-      aws_region: ${{ vars.GLOBAL_COMMON_AWS_REGION }}
-      # Enable ArgoCD sync + restart for deployment
-      enable_sync: true
-      enable_restart: true
-      argocd_host: argocd.dev.aukiverse.com
-      argocd_app: reconstruction-server
-    secrets:
-      aws_access_key: ${{ secrets.GLOBAL_COMMON_AWS_ACCESS_KEY }}
-      aws_secret_access_key: ${{ secrets.GLOBAL_COMMON_AWS_SECRET_ACCESS_KEY }}
-      argocd_password: ${{ secrets.GLOBAL_DEV_ARGOCD_PASSWORD }}
+  build:
+    name: Build
+    runs-on: [ubuntu-latest]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Update version in file
+        run: |
+          sed -i 's/VERSION = "develop"/VERSION = "${{ github.ref_name }}"/' utils/data_utils.py
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.GLOBAL_COMMON_AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.GLOBAL_COMMON_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.GLOBAL_COMMON_AWS_REGION }}
+      - name: Log in to AWS ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker build and push
+        id: docker-build-and-push
+        run: |
+
+          docker build \
+            -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:latest" \
+            -t "${{ steps.ecr-login.outputs.registry }}/reconstruction-server:${{ github.ref_name }}" \
+            --push \
+            -f docker/Dockerfile \
+            .
