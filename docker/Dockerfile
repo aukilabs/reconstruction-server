@@ -15,7 +15,16 @@ ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y \
+# Use a mirror with better connectivity from CI, switch to HTTPS, and add retries
+RUN set -e; \
+    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
+    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y ca-certificates; \
+    sed -i \
+      -e 's|http://archive.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
+      -e 's|http://security.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
+      /etc/apt/sources.list; \
+    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
+    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y \
     wget \
     curl \
     vim \
@@ -48,7 +57,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-tk
 
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y --no-install-recommends \
     ssh \
     netcat-openbsd \
     ca-certificates \
