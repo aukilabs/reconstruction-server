@@ -4,29 +4,18 @@
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 WORKDIR /app
 ADD server/rust /app
-# Build release binary for the compute-node crate
-RUN cargo build --release -p bin
+# Build release binary for the server-bin crate
+RUN cargo build --release -p server-bin
 
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM --platform=$BUILDPLATFORM nvidia/cuda:11.8.0-base-ubuntu22.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Use a mirror with better connectivity from CI, switch to HTTPS, enable universe/multiverse, and add retries
-RUN set -e; \
-    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
-    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y ca-certificates software-properties-common; \
-    sed -i \
-      -e 's|http://archive.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
-      -e 's|http://security.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
-      /etc/apt/sources.list; \
-    add-apt-repository -y universe; \
-    add-apt-repository -y multiverse; \
-    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
-    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y \
+RUN apt-get update && apt-get install -y \
     wget \
     curl \
     vim \
@@ -59,7 +48,7 @@ RUN set -e; \
     python3-pip \
     python3-tk
 
-RUN apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
     ssh \
     netcat-openbsd \
     ca-certificates \
@@ -173,5 +162,9 @@ RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /
 
 USER $USERNAME
 
-COPY --from=rust-build /app/target/release/compute-node ./compute-node
-ENTRYPOINT ["./compute-node"]
+COPY --from=rust-build /app/target/release/server-bin ./reconstruction
+ENTRYPOINT ["./reconstruction"]
+
+# Overridable using 'docker run ... image_name -api-key <your-api-key>'
+# TODO: we probably don't need api key, or make it optional. Just check domain token.
+CMD ["--api-key", "aukilabs123"]
