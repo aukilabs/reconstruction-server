@@ -15,14 +15,16 @@ ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Use a mirror with better connectivity from CI, switch to HTTPS, and add retries
+# Use a mirror with better connectivity from CI, switch to HTTPS, enable universe/multiverse, and add retries
 RUN set -e; \
     apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
-    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y ca-certificates; \
+    apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y ca-certificates software-properties-common; \
     sed -i \
       -e 's|http://archive.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
       -e 's|http://security.ubuntu.com/ubuntu|https://azure.archive.ubuntu.com/ubuntu|g' \
       /etc/apt/sources.list; \
+    add-apt-repository -y universe; \
+    add-apt-repository -y multiverse; \
     apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true update; \
     apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true install -y \
     wget \
