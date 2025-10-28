@@ -4,8 +4,8 @@
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 WORKDIR /app
 ADD server/rust /app
-# Build release binary for the server-bin crate
-RUN cargo build --release -p server-bin
+# Build release binary for the compute-node crate
+RUN cargo build --release -p bin
 
 
 FROM --platform=$BUILDPLATFORM nvidia/cuda:11.8.0-base-ubuntu22.04
@@ -56,7 +56,7 @@ RUN apt-get install -y --no-install-recommends \
     iputils-ping \
     bind9-dnsutils
 
-RUN pip install --upgrade pip setuptools wheel
+RUN python3 -m pip install --upgrade pip setuptools wheel
 
 RUN wget https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz \
     && tar xvf cmake-3.27.9-linux-x86_64.tar.gz \
@@ -73,9 +73,9 @@ RUN git clone https://github.com/google/glog.git && cd glog && \
     cmake -S . -B build -G "Unix Makefiles" && \
     cmake --build build --target install
 
-RUN pip install "pybind11[global]==2.12.0"
+RUN python3 -m pip install "pybind11[global]==2.12.0"
 
-RUN pip install psutil gputil
+RUN python3 -m pip install psutil gputil
     
 WORKDIR /src
 
@@ -162,9 +162,5 @@ RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /
 
 USER $USERNAME
 
-COPY --from=rust-build /app/target/release/server-bin ./reconstruction
-ENTRYPOINT ["./reconstruction"]
-
-# Overridable using 'docker run ... image_name -api-key <your-api-key>'
-# TODO: we probably don't need api key, or make it optional. Just check domain token.
-CMD ["--api-key", "aukilabs123"]
+COPY --from=rust-build /app/target/release/compute-node ./compute-node
+ENTRYPOINT ["./compute-node"]
