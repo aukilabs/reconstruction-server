@@ -1,14 +1,6 @@
-##
-## Rust build for server
-##
-FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
-WORKDIR /app
-ADD server/rust /app
-# Build release binary for the compute-node crate
-RUN cargo build --release -p bin
-
-
 FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
+
+ARG TARGETPLATFORM
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -160,7 +152,18 @@ RUN groupadd --gid $USER_GID $USERNAME \
 
 RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
 
+# Copy prebuilt Rust binaries produced by CI into the image
+# Expectation: server/rust/target/<platform>/release/compute-node exists in the build context
+COPY server/rust/target /app/target
+
+RUN set -eux; \
+    case "$TARGETPLATFORM" in \
+      linux/amd64)  cp /app/target/linux-amd64/release/compute-node /app/compute-node ;; \
+      linux/arm64)  cp /app/target/linux-arm64/release/compute-node /app/compute-node ;; \
+      *) echo "Unsupported TARGETPLATFORM: $TARGETPLATFORM" >&2; exit 1 ;; \
+    esac; \
+    chmod +x /app/compute-node
+
 USER $USERNAME
 
-COPY --from=rust-build /app/target/release/compute-node ./compute-node
-ENTRYPOINT ["./compute-node"]
+ENTRYPOINT ["/app/compute-node"]

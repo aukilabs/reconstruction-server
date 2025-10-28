@@ -1,0 +1,17 @@
+
+.git
+.gitignore
+.idea
+.vscode
+
+server/rust/target
+!server/rust/target/linux-amd64
+!server/rust/target/linux-arm64
+!server/rust/target/linux-amd64/release
+!server/rust/target/linux-arm64/release
+!server/rust/target/linux-amd64/release/compute-node
+!server/rust/target/linux-arm64/release/compute-node
+
+**/__pycache__
+**/*.pyc
+tmp
