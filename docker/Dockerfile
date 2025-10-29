@@ -8,7 +8,7 @@ ADD server/rust /app
 RUN cargo build --release -p bin
 
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:11.8.0-base-ubuntu22.04
+FROM --platform=$BUILDPLATFORM nvidia/cuda:11.0.3-base-ubuntu20.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -56,7 +56,7 @@ RUN apt-get install -y --no-install-recommends \
     iputils-ping \
     bind9-dnsutils
 
-RUN python3 -m pip install --upgrade pip setuptools wheel
+RUN pip install --upgrade pip setuptools wheel
 
 RUN wget https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz \
     && tar xvf cmake-3.27.9-linux-x86_64.tar.gz \
@@ -73,9 +73,9 @@ RUN git clone https://github.com/google/glog.git && cd glog && \
     cmake -S . -B build -G "Unix Makefiles" && \
     cmake --build build --target install
 
-RUN python3 -m pip install "pybind11[global]==2.12.0"
+RUN pip install "pybind11[global]==2.12.0"
 
-RUN python3 -m pip install psutil gputil
+RUN pip install psutil gputil
     
 WORKDIR /src
 
