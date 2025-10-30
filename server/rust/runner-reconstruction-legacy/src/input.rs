@@ -102,6 +102,50 @@ fn copy_materialized_to_workspace(
         let candidate = root.join("Manifest.json");
         if candidate.exists() {
             manifest_path = Some(candidate);
+        } else {
+            // Fallback: if compute-node saved DMT manifest without renaming,
+            // normalize it to Manifest.json for downstream expectations.
+            let mut found = None;
+            if let Ok(entries) = std::fs::read_dir(root) {
+                for entry in entries.flatten() {
+                    if let Some(fname) = entry.file_name().to_str() {
+                        if fname.ends_with(".dmt_manifest_json")
+                            || fname == "manifest.dmt_manifest_json"
+                        {
+                            found = Some(entry.path());
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(src) = found {
+                let dest = root.join("Manifest.json");
+                std::fs::rename(&src, &dest)
+                    .or_else(|_| std::fs::copy(&src, &dest).map(|_| ()))
+                    .with_context(|| {
+                        format!("normalize manifest {} -> {}", src.display(), dest.display())
+                    })?;
+                manifest_path = Some(dest);
+            }
+        }
+
+        // Normalize refined scan zip filename if present under generic naming from compute-node.
+        let refined_zip_target = root.join("RefinedScan.zip");
+        if !refined_zip_target.exists() {
+            if let Ok(entries) = std::fs::read_dir(root) {
+                for entry in entries.flatten() {
+                    if let Some(fname) = entry.file_name().to_str() {
+                        if fname.ends_with(".refined_scan_zip") {
+                            // Best-effort rename; fallback to copy on cross-device moves.
+                            let _ =
+                                std::fs::rename(entry.path(), &refined_zip_target).or_else(|_| {
+                                    std::fs::copy(entry.path(), &refined_zip_target).map(|_| ())
+                                });
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 

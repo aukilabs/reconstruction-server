@@ -121,9 +121,15 @@ pub async fn upload_final_outputs(
         );
     }
 
-    upload_json_if_exists(sink, "outputs_index.json", workspace.root()).await?;
-    upload_json_if_exists(sink, "result.json", workspace.root()).await?;
-    upload_json_if_exists(sink, "scan_data_summary.json", workspace.root()).await?;
+    upload_json_if_exists(sink, "outputs_index.json", workspace.root(), name_suffix).await?;
+    upload_json_if_exists(sink, "result.json", workspace.root(), name_suffix).await?;
+    upload_json_if_exists(
+        sink,
+        "scan_data_summary.json",
+        workspace.root(),
+        name_suffix,
+    )
+    .await?;
 
     Ok(uploaded)
 }
@@ -132,6 +138,7 @@ async fn upload_json_if_exists(
     sink: &dyn ArtifactSink,
     file_name: &str,
     root: &Path,
+    name_suffix: &str,
 ) -> Result<()> {
     let path = root.join(file_name);
     if !path.exists() {
@@ -146,9 +153,22 @@ async fn upload_json_if_exists(
         size_bytes = bytes.len(),
         "uploading json output"
     );
-    sink.put_bytes(file_name, &bytes)
+    if let Some((name, data_type)) = crate::strategy::describe_known_output(file_name, name_suffix)
+    {
+        sink.put_domain_artifact(DomainArtifactRequest {
+            rel_path: file_name,
+            name: &name,
+            data_type: &data_type,
+            existing_id: None,
+            content: DomainArtifactContent::Bytes(&bytes),
+        })
         .await
         .with_context(|| format!("upload output {}", file_name))?;
+    } else {
+        sink.put_bytes(file_name, &bytes)
+            .await
+            .with_context(|| format!("upload output {}", file_name))?;
+    }
     Ok(())
 }
 

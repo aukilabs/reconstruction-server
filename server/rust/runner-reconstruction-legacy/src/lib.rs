@@ -28,6 +28,7 @@ pub mod manifest;
 pub mod output;
 pub mod python;
 pub mod refined;
+pub mod strategy;
 pub mod summary;
 pub mod workspace;
 
