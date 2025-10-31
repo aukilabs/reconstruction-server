@@ -171,7 +171,11 @@ pub fn spawn_python_processing_writer(
         )
         .await
         {
-            eprintln!("manifest(py): failed to write initial snapshot: {err}");
+            tracing::warn!(
+                target: "runner_reconstruction_legacy",
+                error = %err,
+                "manifest(py): failed to write initial snapshot"
+            );
         }
 
         let mut ticker = interval(interval_dur);
@@ -191,7 +195,11 @@ pub fn spawn_python_processing_writer(
                 .report_progress(snap.progress, snap.status.clone())
                 .await
             {
-                eprintln!("manifest(py): progress forward failed: {err}");
+                tracing::warn!(
+                    target: "runner_reconstruction_legacy",
+                    error = %err,
+                    "manifest(py): progress forward failed"
+                );
             }
 
             if let Err(err) = write_processing_manifest_python(
@@ -203,9 +211,12 @@ pub fn spawn_python_processing_writer(
             )
             .await
             {
-                eprintln!(
-                    "manifest(py): failed to write snapshot for {}: {err}",
-                    manifest_path.display()
+                let path_str = manifest_path.display().to_string();
+                tracing::warn!(
+                    target: "runner_reconstruction_legacy",
+                    error = %err,
+                    manifest_path = %path_str,
+                    "manifest(py): failed to write snapshot"
                 );
             }
         }

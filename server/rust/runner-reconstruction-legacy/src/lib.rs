@@ -492,13 +492,19 @@ impl Runner for RunnerReconstructionLegacy {
 
         // Stage any pre-existing refined scan zip(s) so global can reuse them without re-running local.
         if let Err(err) = stage_existing_refined_outputs(&workspace).await {
-            eprintln!("failed to stage existing refined outputs: {err}");
+            tracing::warn!(
+                target: "runner_reconstruction_legacy",
+                error = %err,
+                "failed to stage existing refined outputs"
+            );
         }
 
         // Try to stage refined outputs using Domain metadata (fallback silently to local-only if this fails)
         if let Err(err) = stage_from_domain(&workspace, &job_ctx, &ctx).await {
-            eprintln!(
-                "domain-driven staging failed; continuing with local-only classification: {err}"
+            tracing::info!(
+                target: "runner_reconstruction_legacy",
+                error = %err,
+                "domain-driven staging failed; continuing with local-only classification"
             );
         }
 
@@ -512,7 +518,11 @@ impl Runner for RunnerReconstructionLegacy {
             )
             .await
             {
-                eprintln!("failed to write scan data summary (pre-run): {err}");
+                tracing::warn!(
+                    target: "runner_reconstruction_legacy",
+                    error = %err,
+                    "failed to write scan data summary (pre-run)"
+                );
             }
         }
 
