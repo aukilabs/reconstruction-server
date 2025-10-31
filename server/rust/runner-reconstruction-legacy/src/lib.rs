@@ -32,11 +32,15 @@ pub mod strategy;
 pub mod summary;
 pub mod workspace;
 
+use crate::strategy::unzip_refined_scan;
 use manifest::{ManifestState, ProgressListener};
+use posemesh_domain_http::domain_data::{
+    download_by_id, download_metadata_v1, DomainDataMetadata, DownloadQuery,
+};
+use uuid::Uuid;
 use workspace::Workspace;
 
 const LEGACY_INITIAL_STATUS: &str = "Request received by reconstruction server";
-const LEGACY_FAILURE_STATUS: &str = "Reconstruction job script failed";
 const LEGACY_PROGRESS_INTERVAL_SECS: u64 = 30;
 
 #[derive(Serialize)]
@@ -149,10 +153,6 @@ impl JobContext {
             skip_manifest_upload,
             job_request_json,
         })
-    }
-
-    fn allow_local_scan_zips(&self) -> bool {
-        self.processing_type() != "global_refinement"
     }
 
     fn processing_type(&self) -> &str {
@@ -446,7 +446,7 @@ impl Runner for RunnerReconstructionLegacy {
             .persist_job_request(workspace.job_request_path())
             .await?;
 
-        let allow_refined_scan_uploads = job_ctx.allow_local_scan_zips();
+        // Decide upload policy per-stage; global-only stages won't upload local zips.
 
         info!(
             capability = self.capability,
@@ -490,6 +490,18 @@ impl Runner for RunnerReconstructionLegacy {
 
         input::materialize_datasets(&ctx, &workspace).await?;
 
+        // Stage any pre-existing refined scan zip(s) so global can reuse them without re-running local.
+        if let Err(err) = stage_existing_refined_outputs(&workspace).await {
+            eprintln!("failed to stage existing refined outputs: {err}");
+        }
+
+        // Try to stage refined outputs using Domain metadata (fallback silently to local-only if this fails)
+        if let Err(err) = stage_from_domain(&workspace, &job_ctx, &ctx).await {
+            eprintln!(
+                "domain-driven staging failed; continuing with local-only classification: {err}"
+            );
+        }
+
         // mock mode removed; rely on runner-reconstruction-legacy-noop for smoke tests.
 
         // Generate scan data summary before Python starts so it can be embedded in final manifest (parity with Go).
@@ -521,169 +533,162 @@ impl Runner for RunnerReconstructionLegacy {
         let mut refined_interval = interval(Duration::from_secs(LEGACY_PROGRESS_INTERVAL_SECS));
         refined_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        let scan_names = collect_scan_names(workspace.datasets()).context("collect scan names")?;
-        let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
-        info!(
-            capability = self.capability,
-            domain_id = %job_ctx.metadata.domain_id,
-            job_name = %job_ctx.metadata.name,
-            python_bin = %self.config.python_bin.display(),
-            python_script = %self.config.python_script.display(),
-            workspace = %workspace.root().display(),
-            args = ?python_args,
-            "launching legacy python pipeline"
-        );
-        let python_bin = self.config.python_bin.clone();
-        let python_script = self.config.python_script.clone();
-        let log_path = workspace.root().join("python.log");
-        let cancel = cancel_token.clone();
-        let mut python_future: Pin<
-            Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
-        > = Box::pin(async move {
-            python::run_script(
-                &python_bin,
-                &python_script,
-                &python_args,
-                &log_path,
-                &cancel,
-            )
-            .await
-        });
-        let mut python_result: Option<Result<(), anyhow::Error>> = None;
-        let mut cancelled = false;
+        // Compute pending vs refined scans based on presence of refined/local/<scan>/sfm core files.
+        let all_scan_names =
+            collect_scan_names(workspace.datasets()).context("collect scan names")?;
+        let (pending_scans, refined_scans) = classify_scans(&workspace, &all_scan_names)?;
 
-        loop {
-            tokio::select! {
-                res = &mut python_future, if python_result.is_none() => {
-                    python_result = Some(res);
+        // Execute stages according to processing type
+        match job_ctx.processing_type() {
+            "local_refinement" => {
+                if pending_scans.is_empty() {
+                    info!("no pending scans for local_refinement; skipping local stage");
+                } else {
+                    execute_python_stage(
+                        &self.config,
+                        &job_ctx,
+                        &workspace,
+                        &ctx,
+                        &cancel_token,
+                        &mut progress_rx,
+                        &mut refined_uploader,
+                        &state,
+                        &progress_tx,
+                        &name_suffix,
+                        override_manifest_id,
+                        "local_refinement",
+                        &pending_scans,
+                        &refined_scans,
+                    )
+                    .await?;
                 }
-                Some((progress, status)) = progress_rx.recv() => {
-                    let payload = json!({"progress": progress, "status": status});
-                    let _ = ctx.ctrl.progress(payload).await;
-                    // Also push the updated manifest snapshot to the domain server for user-visible progress.
-                    let _ = upload_manifest_artifact(
+            }
+            "global_refinement" => {
+                // Validate all scans have refined outputs
+                let missing: Vec<_> = all_scan_names
+                    .iter()
+                    .filter(|s| !is_refined_complete(&workspace, s))
+                    .cloned()
+                    .collect();
+                if !missing.is_empty() {
+                    manifest::write_failed_manifest_python(
+                        workspace.job_manifest_path(),
+                        workspace.root(),
+                        &self.config.python_bin,
+                        &format!("missing refined outputs for scans: {}", missing.join(", ")),
+                    )
+                    .await?;
+                    upload_manifest_artifact(
                         ctx.output,
                         "job_manifest.json",
                         workspace.job_manifest_path(),
                         &name_suffix,
                         override_manifest_id,
                     )
-                    .await;
+                    .await?;
+                    return Err(anyhow!("missing refined outputs for some scans"));
                 }
-                _ = refined_interval.tick(), if python_result.is_none() => {
-                    if let Err(err) = refined_uploader
-                        .process(
-                            &workspace,
-                            ctx.output,
-                            allow_refined_scan_uploads,
-                        )
-                        .await
-                    {
-                        cancel_token.cancel();
-                        manifest_task.stop().await;
-                        return Err(err);
-                    }
-                    // Progress parity with Go: compute N/M completed scans and update manifest status.
-                    let (done, total) = scan_completion(&workspace, &scan_names)?;
-                    if total > 0 {
-                        let pct = ((done as f64 / total as f64) * 100.0).round() as i32;
-                        update_progress(
-                            &state,
-                            &progress_tx,
-                            pct.clamp(0, 100),
-                            format!("Processed {} of {} scans", done, total),
-                        );
-                    }
-                }
-                cancelled_now = ctx.ctrl.is_cancelled(), if !cancelled => {
-                    if cancelled_now {
-                        cancelled = true;
-                        cancel_token.cancel();
-                    }
-                }
+                update_progress(&state, &progress_tx, 0, "Running global refinement");
+                execute_python_stage(
+                    &self.config,
+                    &job_ctx,
+                    &workspace,
+                    &ctx,
+                    &cancel_token,
+                    &mut progress_rx,
+                    &mut refined_uploader,
+                    &state,
+                    &progress_tx,
+                    &name_suffix,
+                    override_manifest_id,
+                    "global_refinement",
+                    &[],
+                    &[],
+                )
+                .await?;
             }
-
-            if python_result.is_some() {
-                // Before exiting the loop, probe cancellation once to avoid races
-                // where an immediate python completion starves the cancellation branch.
-                if !cancelled && ctx.ctrl.is_cancelled().await {
-                    cancelled = true;
-                    cancel_token.cancel();
+            _ => {
+                // local_and_global_refinement
+                if pending_scans.is_empty() {
+                    info!("no pending scans; running only global refinement");
+                } else {
+                    update_progress(
+                        &state,
+                        &progress_tx,
+                        0,
+                        format!("Refining {} pending scans", pending_scans.len()),
+                    );
+                    execute_python_stage(
+                        &self.config,
+                        &job_ctx,
+                        &workspace,
+                        &ctx,
+                        &cancel_token,
+                        &mut progress_rx,
+                        &mut refined_uploader,
+                        &state,
+                        &progress_tx,
+                        &name_suffix,
+                        override_manifest_id,
+                        "local_refinement",
+                        &pending_scans,
+                        &refined_scans,
+                    )
+                    .await?;
                 }
-                break;
+                update_progress(&state, &progress_tx, 0, "Running global refinement");
+                execute_python_stage(
+                    &self.config,
+                    &job_ctx,
+                    &workspace,
+                    &ctx,
+                    &cancel_token,
+                    &mut progress_rx,
+                    &mut refined_uploader,
+                    &state,
+                    &progress_tx,
+                    &name_suffix,
+                    override_manifest_id,
+                    "global_refinement",
+                    &[],
+                    &[],
+                )
+                .await?;
             }
         }
 
-        progress_rx.close();
+        // Stop background tasks
+        drop(progress_tx);
         cancel_token.cancel();
         manifest_task.stop().await;
 
-        if cancelled {
-            manifest::write_failed_manifest_python(
-                workspace.job_manifest_path(),
-                workspace.root(),
-                &self.config.python_bin,
-                "task cancelled",
-            )
-            .await?;
-            upload_manifest_artifact(
+        // Upload final global outputs only when a global stage ran
+        if matches!(
+            job_ctx.processing_type(),
+            "global_refinement" | "local_and_global_refinement"
+        ) {
+            output::upload_final_outputs(
+                &workspace,
                 ctx.output,
-                "job_manifest.json",
-                workspace.job_manifest_path(),
                 &name_suffix,
                 override_manifest_id,
             )
-            .await?;
-            return Err(anyhow!("task cancelled"));
-        }
-
-        let python_result = python_result.unwrap_or(Ok(()));
-        if let Err(err) = python_result {
-            manifest::write_failed_manifest_python(
-                workspace.job_manifest_path(),
-                workspace.root(),
-                &self.config.python_bin,
-                LEGACY_FAILURE_STATUS,
-            )
-            .await?;
-            upload_manifest_artifact(
-                ctx.output,
-                "job_manifest.json",
-                workspace.job_manifest_path(),
-                &name_suffix,
-                override_manifest_id,
-            )
-            .await?;
-            return Err(err);
-        }
-
-        refined_uploader
-            .process(&workspace, ctx.output, allow_refined_scan_uploads)
-            .await
-            .context("final refined upload pass")?;
-
-        // Scan summary has already been generated before Python started.
-
-        drop(progress_tx);
-
-        // Upload refined outputs directly to the domain server.
-        // Important: refined_manifest.json (global) represents the final state and must
-        // be the last write to the domain for this name. Avoid re-uploading the
-        // in-progress job_manifest.json afterward, otherwise we overwrite the final
-        // refined manifest with a "processing" snapshot and UIs will show the job as pending.
-        output::upload_final_outputs(&workspace, ctx.output, &name_suffix, override_manifest_id)
             .await
             .context("upload refined outputs")?;
-        if !workspace.job_manifest_path().exists() {
-            warn!(
-                capability = self.capability,
-                domain_id = %job_ctx.metadata.domain_id,
-                job_name = %job_ctx.metadata.name,
-                manifest = %workspace.job_manifest_path().display(),
-                "python pipeline did not produce job manifest; skipping upload"
-            );
+            if !workspace.job_manifest_path().exists() {
+                warn!(
+                    capability = self.capability,
+                    domain_id = %job_ctx.metadata.domain_id,
+                    job_name = %job_ctx.metadata.name,
+                    manifest = %workspace.job_manifest_path().display(),
+                    "python pipeline did not produce job manifest; skipping upload"
+                );
+            }
+            // Do not upload job_manifest.json here; refined_manifest.json carries final state.
+        } else {
+            // Final sweep for local-only runs
+            let _ = refined_uploader.process(&workspace, ctx.output, true).await;
         }
-        // Do not upload job_manifest.json here. Final domain state is carried by refined_manifest.json.
 
         ctx.ctrl
             .progress(json!({"progress": 100, "status": "succeeded"}))
@@ -744,11 +749,12 @@ fn build_python_args(
     config: &RunnerConfig,
     job_ctx: &JobContext,
     workspace: &Workspace,
+    mode: &str,
     scan_names: &[String],
 ) -> Vec<String> {
     let mut args = config.python_args.clone();
     args.push("--mode".to_string());
-    args.push(job_ctx.processing_type().to_string());
+    args.push(mode.to_string());
     args.push("--job_root_path".to_string());
     args.push(workspace.root().display().to_string());
     args.push("--output_path".to_string());
@@ -829,5 +835,385 @@ fn extract_last_segment(input: &str) -> String {
     match trimmed.rsplit('/').next() {
         Some(seg) if !seg.is_empty() => seg.to_string(),
         _ => input.to_string(),
+    }
+}
+
+// --- Scheduler-parity helpers: staging + conditional local/global orchestration ---
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_python_stage(
+    config: &RunnerConfig,
+    job_ctx: &JobContext,
+    workspace: &Workspace,
+    ctx: &TaskCtx<'_>,
+    cancel_token: &CancellationToken,
+    progress_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(i32, String)>,
+    refined_uploader: &mut refined::RefinedUploader,
+    state: &ManifestState,
+    progress_tx: &UnboundedSender<(i32, String)>,
+    name_suffix: &str,
+    override_manifest_id: Option<&str>,
+    mode: &'static str,
+    progress_scans: &[String],
+    hide: &[String],
+) -> Result<()> {
+    // Temporarily hide selected dataset folders to prevent Python local from processing them.
+    let mut hidden = false;
+    if !hide.is_empty() {
+        hide_scans(workspace, hide)?;
+        hidden = true;
+    }
+
+    let python_args = build_python_args(config, job_ctx, workspace, mode, progress_scans);
+    info!(
+        domain_id = %job_ctx.metadata.domain_id,
+        job_name = %job_ctx.metadata.name,
+        python_bin = %config.python_bin.display(),
+        python_script = %config.python_script.display(),
+        workspace = %workspace.root().display(),
+        mode = mode,
+        args = ?python_args,
+        "launching legacy python stage"
+    );
+
+    let python_bin = config.python_bin.clone();
+    let python_script = config.python_script.clone();
+    let log_path = workspace.root().join("python.log");
+    let cancel = cancel_token.clone();
+    let mut python_future: Pin<
+        Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
+    > = Box::pin(async move {
+        python::run_script(
+            &python_bin,
+            &python_script,
+            &python_args,
+            &log_path,
+            &cancel,
+        )
+        .await
+    });
+    let mut python_result: Option<Result<(), anyhow::Error>> = None;
+    let mut refined_interval = interval(Duration::from_secs(LEGACY_PROGRESS_INTERVAL_SECS));
+    refined_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            res = &mut python_future, if python_result.is_none() => {
+                python_result = Some(res);
+            }
+            Some((progress, status)) = progress_rx.recv() => {
+                let payload = json!({"progress": progress, "status": status});
+                let _ = ctx.ctrl.progress(payload).await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    name_suffix,
+                    override_manifest_id,
+                ).await;
+            }
+            _ = refined_interval.tick(), if python_result.is_none() => {
+                if let Err(err) = refined_uploader
+                    .process(
+                        workspace,
+                        ctx.output,
+                        // Upload local zips only during stages that include local refinement
+                        mode != "global_refinement",
+                    )
+                    .await
+                {
+                    cancel_token.cancel();
+                    if hidden { let _ = restore_scans(workspace, hide); }
+                    return Err(err);
+                }
+
+                // Progress parity with Go: compute N/M completed scans (only for local stages)
+                if mode != "global_refinement" {
+                    let (done, total) = scan_completion(workspace, progress_scans)?;
+                    if total > 0 {
+                        let pct = ((done as f64 / total as f64) * 100.0).round() as i32;
+                        update_progress(state, progress_tx, pct.clamp(0, 100), format!("Processed {} of {} scans", done, total));
+                    }
+                }
+            }
+            cancelled_now = ctx.ctrl.is_cancelled() => {
+                if cancelled_now {
+                    cancel_token.cancel();
+                }
+            }
+        }
+
+        if python_result.is_some() {
+            break;
+        }
+    }
+
+    if hidden {
+        let _ = restore_scans(workspace, hide);
+    }
+
+    let python_result = python_result.unwrap_or(Ok(()));
+    python_result?;
+    Ok(())
+}
+
+async fn stage_existing_refined_outputs(workspace: &Workspace) -> Result<()> {
+    let datasets_path = workspace.datasets();
+    let entries = match std::fs::read_dir(datasets_path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("read_dir {}", datasets_path.display()))
+        }
+    };
+
+    for entry in entries.flatten() {
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let scan = entry.file_name().to_string_lossy().to_string();
+        let zip_path = entry.path().join("RefinedScan.zip");
+        if !zip_path.exists() {
+            continue;
+        }
+        let unzip_root = workspace.refined_local().join(&scan).join("sfm");
+        let bytes = tokio::fs::read(&zip_path)
+            .await
+            .with_context(|| format!("read refined zip {}", zip_path.display()))?;
+        let _ = unzip_refined_scan(bytes, &unzip_root)
+            .await
+            .with_context(|| {
+                format!(
+                    "unzip refined scan {} into {}",
+                    zip_path.display(),
+                    unzip_root.display()
+                )
+            })?;
+    }
+    Ok(())
+}
+
+fn classify_scans(
+    workspace: &Workspace,
+    scan_names: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut pending = Vec::new();
+    let mut refined = Vec::new();
+    for scan in scan_names {
+        if is_refined_complete(workspace, scan) {
+            refined.push(scan.clone());
+        } else {
+            pending.push(scan.clone());
+        }
+    }
+    Ok((pending, refined))
+}
+
+fn is_refined_complete(workspace: &Workspace, scan: &str) -> bool {
+    let sfm = workspace.refined_local().join(scan).join("sfm");
+    if !sfm.exists() {
+        return false;
+    }
+    let required = ["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
+    required.iter().all(|f| sfm.join(f).exists())
+}
+
+fn hide_scans(workspace: &Workspace, scans: &[String]) -> Result<()> {
+    if scans.is_empty() {
+        return Ok(());
+    }
+    let hidden_root = workspace.root().join("datasets_hidden");
+    std::fs::create_dir_all(&hidden_root)
+        .with_context(|| format!("create {}", hidden_root.display()))?;
+    for scan in scans {
+        let src = workspace.datasets().join(scan);
+        let dst = hidden_root.join(scan);
+        if src.exists() {
+            std::fs::rename(&src, &dst)
+                .with_context(|| format!("hide dataset {} -> {}", src.display(), dst.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn restore_scans(workspace: &Workspace, scans: &[String]) -> Result<()> {
+    let hidden_root = workspace.root().join("datasets_hidden");
+    for scan in scans {
+        let src = hidden_root.join(scan);
+        let dst = workspace.datasets().join(scan);
+        if src.exists() {
+            std::fs::rename(&src, &dst).with_context(|| {
+                format!("restore dataset {} -> {}", src.display(), dst.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+async fn stage_from_domain(
+    workspace: &Workspace,
+    job_ctx: &JobContext,
+    ctx: &TaskCtx<'_>,
+) -> Result<()> {
+    let domain_url = job_ctx.metadata.domain_server_url.trim().to_string();
+    let domain_id = job_ctx.metadata.domain_id.trim().to_string();
+    if domain_url.is_empty() || domain_id.is_empty() {
+        return Ok(());
+    }
+
+    let client_id = get_client_id();
+    let token = ctx.access_token.get();
+
+    let metas: Vec<DomainDataMetadata> = download_metadata_v1(
+        &domain_url,
+        &client_id,
+        &token,
+        &domain_id,
+        &DownloadQuery {
+            ids: vec![],
+            name: None,
+            data_type: None,
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("download metadata failed: {}", e))?;
+
+    use std::collections::HashMap;
+    let mut manifests: HashMap<String, String> = HashMap::new();
+    let mut refined: HashMap<String, String> = HashMap::new();
+
+    for m in metas.iter() {
+        let name = m.name.as_str();
+        if name.starts_with("dmt_manifest_") && m.data_type == "dmt_manifest_json" {
+            let scan = name.trim_start_matches("dmt_manifest_").to_string();
+            manifests.insert(scan, m.id.clone());
+        } else if name.starts_with("refined_scan_") && m.data_type == "refined_scan_zip" {
+            let scan = name.trim_start_matches("refined_scan_").to_string();
+            refined.insert(scan, m.id.clone());
+        }
+    }
+
+    for scan in manifests.keys().chain(refined.keys()) {
+        let dir = workspace.datasets().join(scan);
+        if !dir.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+        }
+    }
+
+    for (scan, data_id) in refined.iter() {
+        if is_refined_complete(workspace, scan) {
+            continue;
+        }
+        let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, data_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("download refined zip {} failed: {}", data_id, e))?;
+        let unzip_root = workspace.refined_local().join(scan).join("sfm");
+        let _ = unzip_refined_scan(bytes, &unzip_root).await?;
+    }
+
+    for (scan, manifest_id) in manifests.iter() {
+        let mpath = workspace.datasets().join(scan).join("Manifest.json");
+        if mpath.exists() {
+            continue;
+        }
+        if let Ok(bytes) =
+            download_by_id(&domain_url, &client_id, &token, &domain_id, manifest_id).await
+        {
+            if let Some(parent) = mpath.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&mpath, &bytes);
+        }
+    }
+
+    Ok(())
+}
+
+fn get_client_id() -> String {
+    if let Ok(id) = std::env::var("CLIENT_ID") {
+        if !id.trim().is_empty() {
+            return id;
+        }
+    }
+    format!("posemesh-compute-node/{}", Uuid::new_v4())
+}
+
+#[cfg(test)]
+mod conditional_tests {
+    use super::*;
+    use std::io::Write as _;
+    use zip::{write::FileOptions, CompressionMethod, ZipWriter};
+
+    fn make_zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        {
+            let mut writer = ZipWriter::new(&mut cursor);
+            let opts = FileOptions::default().compression_method(CompressionMethod::Stored);
+            for (name, data) in entries.iter() {
+                writer.start_file(*name, opts).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[tokio::test]
+    async fn staging_and_classification_respects_preexisting_refined_zip() {
+        let ws = Workspace::create(None, "dom", Some("job"), "task").unwrap();
+
+        // Create dataset with a pre-existing refined zip
+        let scan = "scan_old".to_string();
+        let ds_dir = ws.datasets().join(&scan);
+        std::fs::create_dir_all(&ds_dir).unwrap();
+
+        let zip_bytes = make_zip_bytes(&[
+            ("images.bin", b"a" as &[u8]),
+            ("cameras.bin", b"b"),
+            ("points3D.bin", b"c"),
+            ("portals.csv", b"d"),
+            ("notes.txt", b"e"),
+        ]);
+        std::fs::write(ds_dir.join("RefinedScan.zip"), &zip_bytes).unwrap();
+
+        // Stage refined zip into refined/local/<scan>/sfm
+        stage_existing_refined_outputs(&ws).await.unwrap();
+
+        for req in ["images.bin", "cameras.bin", "points3D.bin", "portals.csv"].iter() {
+            assert!(ws
+                .refined_local()
+                .join(&scan)
+                .join("sfm")
+                .join(req)
+                .exists());
+        }
+
+        // Classification should mark this scan as refined
+        let all = collect_scan_names(ws.datasets()).unwrap();
+        let (pending, refined) = classify_scans(&ws, &all).unwrap();
+        assert!(refined.contains(&scan));
+        assert!(!pending.contains(&scan));
+    }
+
+    #[test]
+    fn hide_and_restore_moves_dataset_folders_temporarily() {
+        let ws = Workspace::create(None, "dom", Some("job"), "task").unwrap();
+        let scans = vec!["scan_x".to_string(), "scan_y".to_string()];
+        for s in scans.iter() {
+            std::fs::create_dir_all(ws.datasets().join(s)).unwrap();
+            assert!(ws.datasets().join(s).exists());
+        }
+
+        hide_scans(&ws, &scans).unwrap();
+        for s in scans.iter() {
+            assert!(!ws.datasets().join(s).exists());
+            assert!(ws.root().join("datasets_hidden").join(s).exists());
+        }
+
+        restore_scans(&ws, &scans).unwrap();
+        for s in scans.iter() {
+            assert!(ws.datasets().join(s).exists());
+            assert!(!ws.root().join("datasets_hidden").join(s).exists());
+        }
     }
 }

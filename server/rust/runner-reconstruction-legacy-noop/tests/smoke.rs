@@ -97,6 +97,7 @@ async fn noop_writes_ack_and_sleeps() {
             input: &input,
             output: &sink,
             ctrl: &ctrl,
+            access_token: &TokenStub,
         })
         .await
         .unwrap();
@@ -121,4 +122,11 @@ async fn noop_writes_ack_and_sleeps() {
         "elapsed: {:?}",
         elapsed
     );
+}
+
+struct TokenStub;
+impl compute_runner_api::runner::AccessTokenProvider for TokenStub {
+    fn get(&self) -> String {
+        "t".into()
+    }
 }

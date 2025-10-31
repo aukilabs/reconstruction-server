@@ -1076,9 +1076,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "posemesh-compute-node"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd3cf2776677d3494d5d022c3fc0d1ff2b40a26b0c045052f62c06f44773dc50"
+checksum = "2c364ee127658093014e199f5df9dc0f89e309a7a235cd807c6577874ca7316a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1110,9 +1110,9 @@ dependencies = [
 
 [[package]]
 name = "posemesh-compute-node-runner-api"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8551b64d62f0b7d1812898b31245f485b2f2216b4e94d26b1fafc4163d138435"
+checksum = "4bb84df2f05514f04cfe3cfc0652a2f6c159f420927647a14469bf05d49c5e78"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1450,6 +1450,7 @@ dependencies = [
  "chrono",
  "hyper 0.14.32",
  "posemesh-compute-node-runner-api",
+ "posemesh-domain-http",
  "serde",
  "serde_json",
  "tempfile",

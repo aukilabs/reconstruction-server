@@ -97,6 +97,7 @@ async fn materialize_copies_into_workspace() {
             input: &input,
             output: &sink,
             ctrl: &ctrl,
+            access_token: &TokenStub,
         },
         &workspace,
     )
@@ -113,6 +114,13 @@ async fn materialize_copies_into_workspace() {
         .is_some_and(|p| p.ends_with("Manifest.json")));
     assert!(ds.dataset_dir.starts_with(workspace.datasets()));
     assert!(ds.manifest_path.as_ref().unwrap().exists());
+}
+
+struct TokenStub;
+impl compute_runner_api::runner::AccessTokenProvider for TokenStub {
+    fn get(&self) -> String {
+        "token".into()
+    }
 }
 
 fn lease_with_inputs(inputs: Vec<&str>) -> LeaseEnvelope {
