@@ -39,7 +39,7 @@ pub async fn materialize_datasets(
         if !workspace.root().starts_with(&materialized.root_dir)
             && !materialized.root_dir.starts_with(workspace.root())
         {
-            let _ = fs::remove_dir_all(&materialized.root_dir);
+            fs::remove_dir_all(&materialized.root_dir).ok();
         }
 
         datasets.push(MaterializedDataset {
@@ -99,6 +99,7 @@ fn copy_materialized_to_workspace(
     }
 
     if let Some(root) = dataset_root.as_ref() {
+        // 1) Normalize manifest file naming to Manifest.json
         let candidate = root.join("Manifest.json");
         if candidate.exists() {
             manifest_path = Some(candidate);
@@ -129,7 +130,7 @@ fn copy_materialized_to_workspace(
             }
         }
 
-        // Normalize refined scan zip filename if present under generic naming from compute-node.
+        // 2) Normalize refined scan zip filename if present under generic naming from compute-node.
         let refined_zip_target = root.join("RefinedScan.zip");
         if !refined_zip_target.exists() {
             if let Ok(entries) = std::fs::read_dir(root) {
@@ -137,12 +138,57 @@ fn copy_materialized_to_workspace(
                     if let Some(fname) = entry.file_name().to_str() {
                         if fname.ends_with(".refined_scan_zip") {
                             // Best-effort rename; fallback to copy on cross-device moves.
-                            let _ =
-                                std::fs::rename(entry.path(), &refined_zip_target).or_else(|_| {
+                            std::fs::rename(entry.path(), &refined_zip_target)
+                                .or_else(|_| {
                                     std::fs::copy(entry.path(), &refined_zip_target).map(|_| ())
-                                });
+                                })
+                                .ok();
                             break;
                         }
+                    }
+                }
+            }
+        }
+
+        // 3) Normalize DMT input artifacts to legacy-friendly filenames expected by Python
+        //    This matches legacy Go helper.go mapping.
+        let renames: &[(&str, &str)] = &[
+            (".dmt_arposes_csv", "ARposes.csv"),
+            (".dmt_portal_detections_csv", "PortalDetections.csv"),
+            (".dmt_observations_csv", "PortalDetections.csv"),
+            (".dmt_intrinsics_csv", "CameraIntrinsics.csv"),
+            (".dmt_cameraintrinsics_csv", "CameraIntrinsics.csv"),
+            (".dmt_frames_csv", "Frames.csv"),
+            (".dmt_recording_mp4", "Frames.mp4"),
+            (".dmt_featurepoints_ply", "FeaturePoints.ply"),
+            (".dmt_pointcloud_ply", "FeaturePoints.ply"),
+            (".dmt_gyro_csv", "Gyro.csv"),
+            (".dmt_accel_csv", "Accel.csv"),
+            (".dmt_gyroaccel_csv", "gyro_accel.csv"),
+        ];
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let fname = match path.file_name().and_then(|s| s.to_str()) {
+                    Some(f) => f,
+                    None => continue,
+                };
+                for (suffix, target_name) in renames.iter() {
+                    if fname.ends_with(suffix) {
+                        let dest = root.join(target_name);
+                        if dest.exists() {
+                            // Avoid overwriting if multiple matches; prefer first.
+                            break;
+                        }
+                        std::fs::rename(&path, &dest)
+                            .or_else(|_| std::fs::copy(&path, &dest).map(|_| ()))
+                            .with_context(|| {
+                                format!("normalize {} -> {}", path.display(), dest.display())
+                            })?;
+                        break;
                     }
                 }
             }
