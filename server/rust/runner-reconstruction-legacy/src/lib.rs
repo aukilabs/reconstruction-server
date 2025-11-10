@@ -1074,13 +1074,21 @@ async fn stage_from_domain(
     let client_id = get_client_id();
     let token = ctx.access_token.get();
 
+    let input_ids: Vec<String> = job_ctx
+        .metadata
+        .data_ids
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
+        .collect();
+
     let metas: Vec<DomainDataMetadata> = download_metadata_v1(
         &domain_url,
         &client_id,
         &token,
         &domain_id,
         &DownloadQuery {
-            ids: vec![],
+            ids: input_ids,
             name: None,
             data_type: None,
         },
