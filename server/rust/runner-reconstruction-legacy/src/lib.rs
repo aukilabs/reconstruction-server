@@ -437,6 +437,14 @@ impl Runner for RunnerReconstructionLegacy {
         let task_id = lease.task.id.to_string();
 
         let workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
+        // Ensure stateless behavior: schedule workspace cleanup on function exit (success or error).
+        struct WorkspaceCleanup(std::path::PathBuf);
+        impl Drop for WorkspaceCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _workspace_cleanup = WorkspaceCleanup(workspace.root().to_path_buf());
         let job_ctx = JobContext::from_lease(lease)?;
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
