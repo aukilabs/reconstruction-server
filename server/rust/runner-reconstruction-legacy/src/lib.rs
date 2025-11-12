@@ -35,9 +35,7 @@ pub mod workspace;
 
 use crate::strategy::unzip_refined_scan;
 use manifest::{ManifestState, ProgressListener};
-use posemesh_domain_http::domain_data::{
-    download_by_id, download_metadata_v1, DomainDataMetadata, DownloadQuery,
-};
+use posemesh_domain_http::domain_data::download_by_id;
 use uuid::Uuid;
 use workspace::Workspace;
 
@@ -1074,76 +1072,6 @@ async fn stage_from_domain(
 
     let client_id = get_client_id();
     let token = ctx.access_token.get();
-
-    let input_ids: Vec<String> = job_ctx
-        .metadata
-        .data_ids
-        .iter()
-        .filter(|s| !s.trim().is_empty())
-        .cloned()
-        .collect();
-
-    let metas: Vec<DomainDataMetadata> = download_metadata_v1(
-        &domain_url,
-        &client_id,
-        &token,
-        &domain_id,
-        &DownloadQuery {
-            ids: input_ids,
-            name: None,
-            data_type: None,
-        },
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("download metadata failed: {}", e))?;
-
-    use std::collections::HashMap;
-    let mut manifests: HashMap<String, String> = HashMap::new();
-    let mut refined: HashMap<String, String> = HashMap::new();
-
-    for m in metas.iter() {
-        let name = m.name.as_str();
-        if name.starts_with("dmt_manifest_") && m.data_type == "dmt_manifest_json" {
-            let scan = name.trim_start_matches("dmt_manifest_").to_string();
-            manifests.insert(scan, m.id.clone());
-        } else if name.starts_with("refined_scan_") && m.data_type == "refined_scan_zip" {
-            let scan = name.trim_start_matches("refined_scan_").to_string();
-            refined.insert(scan, m.id.clone());
-        }
-    }
-
-    for scan in manifests.keys().chain(refined.keys()) {
-        let dir = workspace.datasets().join(scan);
-        if !dir.exists() {
-            let _ = std::fs::create_dir_all(&dir);
-        }
-    }
-
-    for (scan, data_id) in refined.iter() {
-        if is_refined_complete(workspace, scan) {
-            continue;
-        }
-        let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, data_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("download refined zip {} failed: {}", data_id, e))?;
-        let unzip_root = workspace.refined_local().join(scan).join("sfm");
-        let _ = unzip_refined_scan(bytes, &unzip_root).await?;
-    }
-
-    for (scan, manifest_id) in manifests.iter() {
-        let mpath = workspace.datasets().join(scan).join("Manifest.json");
-        if mpath.exists() {
-            continue;
-        }
-        if let Ok(bytes) =
-            download_by_id(&domain_url, &client_id, &token, &domain_id, manifest_id).await
-        {
-            if let Some(parent) = mpath.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&mpath, &bytes);
-        }
-    }
 
     // Scheduler-style skip: for each local dataset scan that isn't already refined locally,
     // check if a refined zip exists in Domain by name (refined_scan_{scan}). If present,
