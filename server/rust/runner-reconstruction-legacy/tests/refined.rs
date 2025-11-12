@@ -18,7 +18,11 @@ type UploadLog = Arc<Mutex<Vec<UploadEntry>>>;
 #[derive(Default)]
 struct RecordingSink {
     uploads: UploadLog,
+    fail_conflict_once_for: Option<String>,
+    attempts: Arc<Mutex<HashMap<String, usize>>>,
 }
+
+// Default derived above
 
 #[async_trait]
 impl ArtifactSink for RecordingSink {
@@ -39,6 +43,18 @@ impl ArtifactSink for RecordingSink {
         &self,
         request: DomainArtifactRequest<'_>,
     ) -> anyhow::Result<Option<String>> {
+        // Simulate a 409 Conflict for a specific scan name on first attempt
+        if let Some(scan) = &self.fail_conflict_once_for {
+            let want_name = format!("refined_scan_{}", scan);
+            if request.data_type == "refined_scan_zip" && request.name == want_name {
+                let mut map = self.attempts.lock().unwrap();
+                let n = map.entry(want_name.clone()).or_insert(0);
+                *n += 1;
+                if *n == 1 {
+                    return Err(anyhow::anyhow!("HTTP 409 Conflict: already exists"));
+                }
+            }
+        }
         match request.content {
             DomainArtifactContent::Bytes(bytes) => {
                 self.put_bytes(request.rel_path, bytes).await?;
@@ -98,7 +114,11 @@ fn uploader_zips_and_uploads_new_scans_once() {
             ],
         );
 
-        let sink = RecordingSink::default();
+        let sink = RecordingSink {
+            uploads: Default::default(),
+            fail_conflict_once_for: None,
+            attempts: Default::default(),
+        };
         let mut uploader = RefinedUploader::new();
 
         let uploaded = uploader
@@ -200,7 +220,11 @@ fn uploader_respects_upload_toggle() {
             ],
         );
 
-        let sink = RecordingSink::default();
+        let sink = RecordingSink {
+            uploads: Default::default(),
+            fail_conflict_once_for: None,
+            attempts: Default::default(),
+        };
         let mut uploader = RefinedUploader::new();
         let uploaded = uploader
             .process(&workspace, &sink, false)
@@ -208,5 +232,44 @@ fn uploader_respects_upload_toggle() {
             .expect("process scans");
         assert!(uploaded.is_empty());
         assert!(sink.uploads.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn uploader_treats_409_conflict_as_skip() {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        let workspace = create_workspace();
+        populate_scan(
+            &workspace,
+            "scan_conflict",
+            &[
+                ("images.bin", "img"),
+                ("cameras.bin", "cam"),
+                ("points3D.bin", "pts"),
+                ("portals.csv", "1,2"),
+            ],
+        );
+
+        let sink = RecordingSink {
+            uploads: Default::default(),
+            fail_conflict_once_for: Some("scan_conflict".into()),
+            attempts: Default::default(),
+        };
+        let mut uploader = RefinedUploader::new();
+
+        // Should not error despite the sink returning a 409 once.
+        let uploaded = uploader
+            .process(&workspace, &sink, true)
+            .await
+            .expect("process scans with 409");
+        assert_eq!(uploaded.len(), 1);
+
+        // Second run should see in-memory completed set and do nothing.
+        let second = uploader
+            .process(&workspace, &sink, true)
+            .await
+            .expect("second run");
+        assert!(second.is_empty());
     });
 }

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use tokio::task;
+use tracing::info;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -71,15 +72,28 @@ impl RefinedUploader {
             }
 
             let artifact_path = format!("refined/local/{}/RefinedScan.zip", scan_id);
-            sink.put_domain_artifact(DomainArtifactRequest {
+            let req = DomainArtifactRequest {
                 rel_path: &artifact_path,
                 name: &format!("refined_scan_{}", scan_id),
                 data_type: "refined_scan_zip",
-                existing_id: None,
+                existing_id: None, // always POST; treat 409 Conflict as "already exists" and skip
                 content: DomainArtifactContent::Bytes(&zip_bytes),
-            })
-            .await
-            .with_context(|| format!("upload refined scan {}", scan_id))?;
+            };
+
+            match sink.put_domain_artifact(req).await {
+                Ok(_) => {}
+                Err(err) => {
+                    if is_conflict_err(&err) {
+                        info!(
+                            scan = %scan_id,
+                            "refined scan already exists in domain (409); skipping upload"
+                        );
+                    } else {
+                        return Err(err)
+                            .with_context(|| format!("upload refined scan {}", scan_id));
+                    }
+                }
+            }
 
             self.completed.insert(scan_id.clone());
             uploaded.push(scan_id);
@@ -154,6 +168,20 @@ fn has_required_sfm_files(sfm: &Path) -> bool {
     REQUIRED_SFM_FILES
         .iter()
         .all(|name| sfm.join(name).exists())
+}
+
+fn is_conflict_err(err: &anyhow::Error) -> bool {
+    // Prefer robust downcasts if the sink exposes typed HTTP errors in the future.
+    // For now, conservatively inspect the error chain for HTTP 409 markers.
+    let needle1 = "409";
+    let needle2 = "conflict"; // case-insensitive
+    for cause in err.chain() {
+        let s = cause.to_string();
+        if s.contains(needle1) || s.to_ascii_lowercase().contains(needle2) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

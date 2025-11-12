@@ -23,6 +23,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+mod domain_lookup;
 pub mod input;
 pub mod manifest;
 pub mod output;
@@ -1141,6 +1142,57 @@ async fn stage_from_domain(
                 let _ = std::fs::create_dir_all(parent);
             }
             let _ = std::fs::write(&mpath, &bytes);
+        }
+    }
+
+    // Scheduler-style skip: for each local dataset scan that isn't already refined locally,
+    // check if a refined zip exists in Domain by name (refined_scan_{scan}). If present,
+    // download and unzip so local refinement can be skipped for that scan.
+    let local_scans = collect_scan_names(workspace.datasets())?;
+    for scan in local_scans {
+        if is_refined_complete(workspace, &scan) {
+            continue;
+        }
+
+        let refined_name = format!("refined_scan_{}", scan);
+        match crate::domain_lookup::resolve_domain_data_id(
+            &domain_url,
+            &client_id,
+            &token,
+            &domain_id,
+            &refined_name,
+            "refined_scan_zip",
+        )
+        .await
+        {
+            Ok(Some(existing_id)) => {
+                // Ensure dataset directory exists
+                let ds_dir = workspace.datasets().join(&scan);
+                if !ds_dir.exists() {
+                    let _ = std::fs::create_dir_all(&ds_dir);
+                }
+                if let Ok(bytes) =
+                    download_by_id(&domain_url, &client_id, &token, &domain_id, &existing_id).await
+                {
+                    let unzip_root = workspace.refined_local().join(&scan).join("sfm");
+                    let _ = unzip_refined_scan(bytes, &unzip_root).await?;
+                    tracing::info!(
+                        target = "runner_reconstruction_legacy",
+                        scan = %scan,
+                        refined_id = %existing_id,
+                        "staged refined zip from domain; will skip local refinement for this scan"
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::info!(
+                    target = "runner_reconstruction_legacy",
+                    scan = %scan,
+                    error = %err,
+                    "refined zip lookup by name failed; continuing without domain-side skip"
+                );
+            }
         }
     }
 
