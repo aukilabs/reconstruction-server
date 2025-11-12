@@ -555,6 +555,40 @@ impl Runner for RunnerReconstructionLegacy {
             collect_scan_names(workspace.datasets()).context("collect scan names")?;
         let (pending_scans, refined_scans) = classify_scans(&workspace, &all_scan_names)?;
 
+        // Pre-credit progress like Go: show how many scans are already refined.
+        let total_scans = all_scan_names.len();
+        let baseline_done = refined_scans.len();
+        let initial_pending = pending_scans.len();
+        let total_tasks = initial_pending + 1; // +1 for global step
+        let current_pending = initial_pending;
+        let pre_local_progress = if total_tasks > 0 {
+            // Scheduler formula: 100 - round(100 * (currentPending + 1) / (initialPending + 1))
+            100_i32
+                - (((100.0 * ((current_pending + 1) as f64) / (total_tasks as f64)).round()) as i32)
+        } else {
+            100
+        };
+
+        // Update manifest before starting local: credit already-done scans in status.
+        update_progress(
+            &state,
+            &progress_tx,
+            pre_local_progress.clamp(0, 100),
+            format!(
+                "Refining scans: {}/{} done. (total scans: {})",
+                baseline_done, total_scans, total_scans
+            ),
+        );
+        // Upload the snapshot immediately so users see pre-credited status before local starts.
+        let _ = upload_manifest_artifact(
+            ctx.output,
+            "job_manifest.json",
+            workspace.job_manifest_path(),
+            &name_suffix,
+            override_manifest_id,
+        )
+        .await;
+
         // Execute stages according to processing type
         match job_ctx.processing_type() {
             "local_refinement" => {
@@ -576,6 +610,9 @@ impl Runner for RunnerReconstructionLegacy {
                         "local_refinement",
                         &pending_scans,
                         &refined_scans,
+                        baseline_done as i32,
+                        initial_pending as i32,
+                        total_scans as i32,
                     )
                     .await?;
                 }
@@ -605,7 +642,13 @@ impl Runner for RunnerReconstructionLegacy {
                     .await?;
                     return Err(anyhow!("missing refined outputs for some scans"));
                 }
-                update_progress(&state, &progress_tx, 0, "Running global refinement");
+                // No local stage: keep progress at scheduler semantics (<100) and announce global.
+                update_progress(
+                    &state,
+                    &progress_tx,
+                    pre_local_progress.clamp(0, 100),
+                    "Running global refinement",
+                );
                 execute_python_stage(
                     &self.config,
                     &job_ctx,
@@ -621,6 +664,9 @@ impl Runner for RunnerReconstructionLegacy {
                     "global_refinement",
                     &[],
                     &[],
+                    baseline_done as i32,
+                    initial_pending as i32,
+                    total_scans as i32,
                 )
                 .await?;
             }
@@ -628,13 +674,13 @@ impl Runner for RunnerReconstructionLegacy {
                 // local_and_global_refinement
                 if pending_scans.is_empty() {
                     info!("no pending scans; running only global refinement");
-                } else {
                     update_progress(
                         &state,
                         &progress_tx,
-                        0,
-                        format!("Refining {} pending scans", pending_scans.len()),
+                        pre_local_progress.clamp(0, 100),
+                        "Running global refinement",
                     );
+                } else {
                     execute_python_stage(
                         &self.config,
                         &job_ctx,
@@ -650,10 +696,18 @@ impl Runner for RunnerReconstructionLegacy {
                         "local_refinement",
                         &pending_scans,
                         &refined_scans,
+                        baseline_done as i32,
+                        initial_pending as i32,
+                        total_scans as i32,
                     )
                     .await?;
                 }
-                update_progress(&state, &progress_tx, 0, "Running global refinement");
+                update_progress(
+                    &state,
+                    &progress_tx,
+                    pre_local_progress.clamp(0, 100),
+                    "Running global refinement",
+                );
                 execute_python_stage(
                     &self.config,
                     &job_ctx,
@@ -669,6 +723,9 @@ impl Runner for RunnerReconstructionLegacy {
                     "global_refinement",
                     &[],
                     &[],
+                    baseline_done as i32,
+                    initial_pending as i32,
+                    total_scans as i32,
                 )
                 .await?;
             }
@@ -873,6 +930,9 @@ async fn execute_python_stage(
     mode: &'static str,
     progress_scans: &[String],
     hide: &[String],
+    baseline_done: i32,
+    initial_pending: i32,
+    total_scans: i32,
 ) -> Result<()> {
     // Temporarily hide selected dataset folders to prevent Python local from processing them.
     let mut hidden = false;
@@ -946,11 +1006,16 @@ async fn execute_python_stage(
 
                 // Progress parity with Go: compute N/M completed scans (only for local stages)
                 if mode != "global_refinement" {
-                    let (done, total) = scan_completion(workspace, progress_scans)?;
-                    if total > 0 {
-                        let pct = ((done as f64 / total as f64) * 100.0).round() as i32;
-                        update_progress(state, progress_tx, pct.clamp(0, 100), format!("Processed {} of {} scans", done, total));
-                    }
+                    let (done_local, _total_local) = scan_completion(workspace, progress_scans)?;
+                    let total_tasks = (initial_pending + 1).max(1);
+                    let current_pending = (initial_pending - (done_local as i32)).max(0);
+                    let pct = 100_i32 - (((100.0 * ((current_pending + 1) as f64) / (total_tasks as f64)).round()) as i32);
+                    let done_total = (baseline_done + done_local as i32).min(total_scans);
+                    let status_text = format!(
+                        "Refining scans: {}/{} done. (total scans: {})",
+                        done_total, total_scans, total_scans
+                    );
+                    update_progress(state, progress_tx, pct.clamp(0, 100), status_text);
                 }
             }
             cancelled_now = ctx.ctrl.is_cancelled() => {
