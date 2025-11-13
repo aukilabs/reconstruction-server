@@ -1,5 +1,5 @@
 reconstruction-server:
-  containerImage:
+  image:
     tag: v0.2.0
     pullPolicy: IfNotPresent
   replicaCount: 2
