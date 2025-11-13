@@ -1,4 +1,4 @@
-k8s-service:
+reconstruction-server:
   containerImage:
     tag: v0.2.0
     pullPolicy: IfNotPresent
