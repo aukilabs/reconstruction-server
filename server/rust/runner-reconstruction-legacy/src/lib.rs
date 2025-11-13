@@ -494,8 +494,24 @@ impl Runner for RunnerReconstructionLegacy {
             override_manifest_id,
         )
         .await?;
-
-        input::materialize_datasets(&ctx, &workspace).await?;
+        if let Err(err) = input::materialize_datasets(&ctx, &workspace).await {
+            let _ = manifest::write_failed_manifest_python(
+                workspace.job_manifest_path(),
+                workspace.root(),
+                &self.config.python_bin,
+                &format!("materialize datasets error: {}", err),
+            )
+            .await;
+            let _ = upload_manifest_artifact(
+                ctx.output,
+                "job_manifest.json",
+                workspace.job_manifest_path(),
+                &name_suffix,
+                override_manifest_id,
+            )
+            .await;
+            return Err(err);
+        }
 
         // Stage any pre-existing refined scan zip(s) so global can reuse them without re-running local.
         if let Err(err) = stage_existing_refined_outputs(&workspace).await {
@@ -594,27 +610,30 @@ impl Runner for RunnerReconstructionLegacy {
             "local_refinement" => {
                 if pending_scans.is_empty() {
                     info!("no pending scans for local_refinement; skipping local stage");
-                } else {
-                    execute_python_stage(
-                        &self.config,
-                        &job_ctx,
-                        &workspace,
-                        &ctx,
-                        &cancel_token,
-                        &mut progress_rx,
-                        &mut refined_uploader,
-                        &state,
-                        &progress_tx,
-                        &name_suffix,
-                        override_manifest_id,
-                        "local_refinement",
-                        &pending_scans,
-                        &refined_scans,
-                        baseline_done as i32,
-                        initial_pending as i32,
-                        total_scans as i32,
-                    )
-                    .await?;
+                } else if let Err(err) = execute_python_stage(
+                    &self.config,
+                    &job_ctx,
+                    &workspace,
+                    &ctx,
+                    &cancel_token,
+                    &mut progress_rx,
+                    &mut refined_uploader,
+                    &state,
+                    &progress_tx,
+                    &name_suffix,
+                    override_manifest_id,
+                    "local_refinement",
+                    &pending_scans,
+                    &refined_scans,
+                    baseline_done as i32,
+                    initial_pending as i32,
+                    total_scans as i32,
+                )
+                .await
+                {
+                    cancel_token.cancel();
+                    manifest_task.stop().await;
+                    return Err(err);
                 }
             }
             "global_refinement" => {
@@ -649,7 +668,7 @@ impl Runner for RunnerReconstructionLegacy {
                     pre_local_progress.clamp(0, 100),
                     "Running global refinement",
                 );
-                execute_python_stage(
+                if let Err(err) = execute_python_stage(
                     &self.config,
                     &job_ctx,
                     &workspace,
@@ -668,7 +687,12 @@ impl Runner for RunnerReconstructionLegacy {
                     initial_pending as i32,
                     total_scans as i32,
                 )
-                .await?;
+                .await
+                {
+                    cancel_token.cancel();
+                    manifest_task.stop().await;
+                    return Err(err);
+                }
             }
             _ => {
                 // local_and_global_refinement
@@ -680,27 +704,30 @@ impl Runner for RunnerReconstructionLegacy {
                         pre_local_progress.clamp(0, 100),
                         "Running global refinement",
                     );
-                } else {
-                    execute_python_stage(
-                        &self.config,
-                        &job_ctx,
-                        &workspace,
-                        &ctx,
-                        &cancel_token,
-                        &mut progress_rx,
-                        &mut refined_uploader,
-                        &state,
-                        &progress_tx,
-                        &name_suffix,
-                        override_manifest_id,
-                        "local_refinement",
-                        &pending_scans,
-                        &refined_scans,
-                        baseline_done as i32,
-                        initial_pending as i32,
-                        total_scans as i32,
-                    )
-                    .await?;
+                } else if let Err(err) = execute_python_stage(
+                    &self.config,
+                    &job_ctx,
+                    &workspace,
+                    &ctx,
+                    &cancel_token,
+                    &mut progress_rx,
+                    &mut refined_uploader,
+                    &state,
+                    &progress_tx,
+                    &name_suffix,
+                    override_manifest_id,
+                    "local_refinement",
+                    &pending_scans,
+                    &refined_scans,
+                    baseline_done as i32,
+                    initial_pending as i32,
+                    total_scans as i32,
+                )
+                .await
+                {
+                    cancel_token.cancel();
+                    manifest_task.stop().await;
+                    return Err(err);
                 }
                 update_progress(
                     &state,
@@ -708,7 +735,7 @@ impl Runner for RunnerReconstructionLegacy {
                     pre_local_progress.clamp(0, 100),
                     "Running global refinement",
                 );
-                execute_python_stage(
+                if let Err(err) = execute_python_stage(
                     &self.config,
                     &job_ctx,
                     &workspace,
@@ -727,7 +754,12 @@ impl Runner for RunnerReconstructionLegacy {
                     initial_pending as i32,
                     total_scans as i32,
                 )
-                .await?;
+                .await
+                {
+                    cancel_token.cancel();
+                    manifest_task.stop().await;
+                    return Err(err);
+                }
             }
         }
 
@@ -741,14 +773,31 @@ impl Runner for RunnerReconstructionLegacy {
             job_ctx.processing_type(),
             "global_refinement" | "local_and_global_refinement"
         ) {
-            output::upload_final_outputs(
+            if let Err(err) = output::upload_final_outputs(
                 &workspace,
                 ctx.output,
                 &name_suffix,
                 override_manifest_id,
             )
             .await
-            .context("upload refined outputs")?;
+            {
+                let _ = manifest::write_failed_manifest_python(
+                    workspace.job_manifest_path(),
+                    workspace.root(),
+                    &self.config.python_bin,
+                    &format!("upload refined outputs error: {}", err),
+                )
+                .await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    &name_suffix,
+                    override_manifest_id,
+                )
+                .await;
+                return Err(err);
+            }
             if !workspace.job_manifest_path().exists() {
                 warn!(
                     capability = self.capability,
@@ -1001,6 +1050,20 @@ async fn execute_python_stage(
                 {
                     cancel_token.cancel();
                     if hidden { let _ = restore_scans(workspace, hide); }
+                    // Best-effort: write and upload a failed manifest before returning
+                    let _ = manifest::write_failed_manifest_python(
+                        workspace.job_manifest_path(),
+                        workspace.root(),
+                        &config.python_bin,
+                        &format!("refined outputs upload error: {}", err),
+                    ).await;
+                    let _ = upload_manifest_artifact(
+                        ctx.output,
+                        "job_manifest.json",
+                        workspace.job_manifest_path(),
+                        name_suffix,
+                        override_manifest_id,
+                    ).await;
                     return Err(err);
                 }
 
@@ -1035,7 +1098,26 @@ async fn execute_python_stage(
     }
 
     let python_result = python_result.unwrap_or(Ok(()));
-    python_result?;
+    if let Err(err) = python_result {
+        cancel_token.cancel();
+        // Best-effort: write and upload a failed manifest before returning
+        let _ = manifest::write_failed_manifest_python(
+            workspace.job_manifest_path(),
+            workspace.root(),
+            &config.python_bin,
+            &format!("python stage error: {}", err),
+        )
+        .await;
+        let _ = upload_manifest_artifact(
+            ctx.output,
+            "job_manifest.json",
+            workspace.job_manifest_path(),
+            name_suffix,
+            override_manifest_id,
+        )
+        .await;
+        return Err(err);
+    }
     Ok(())
 }
 
