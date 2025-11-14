@@ -21,7 +21,7 @@ use tokio::{
     time::{interval, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 mod domain_lookup;
 pub mod input;
@@ -898,58 +898,19 @@ impl Runner for RunnerReconstructionLegacy {
                 .await;
                 return Err(err);
             }
-            // Write and upload a final 100% succeeded job manifest for visibility in DS.
-            let success_msg = if baseline_done > 0 {
-                format!(
-                    "Tasks {}/{} — succeeded ({} skipped)",
-                    denom_tasks, denom_tasks, baseline_done
-                )
-            } else {
-                format!("Tasks {}/{} — succeeded", denom_tasks, denom_tasks)
-            };
-            let _ = manifest::write_succeeded_manifest_python(
-                workspace.job_manifest_path(),
-                workspace.root(),
-                &self.config.python_bin,
-                &success_msg,
-            )
-            .await;
-            let _ = upload_manifest_artifact(
-                ctx.output,
-                "job_manifest.json",
-                workspace.job_manifest_path(),
-                &name_suffix,
-                override_manifest_id,
-            )
-            .await;
+            if !workspace.job_manifest_path().exists() {
+                warn!(
+                    capability = self.capability,
+                    domain_id = %job_ctx.metadata.domain_id,
+                    job_name = %job_ctx.metadata.name,
+                    manifest = %workspace.job_manifest_path().display(),
+                    "python pipeline did not produce job manifest; skipping upload"
+                );
+            }
+            // Do not upload job_manifest.json here; refined_manifest.json carries final state.
         } else {
             // Final sweep for local-only runs
             let _ = refined_uploader.process(&workspace, ctx.output, true).await;
-            // Write and upload a final 100% succeeded job manifest for local-only.
-            let denom_local = total_scans; // no global step in denominator
-            let success_msg = if baseline_done > 0 {
-                format!(
-                    "Tasks {}/{} — succeeded ({} skipped)",
-                    denom_local, denom_local, baseline_done
-                )
-            } else {
-                format!("Tasks {}/{} — succeeded", denom_local, denom_local)
-            };
-            let _ = manifest::write_succeeded_manifest_python(
-                workspace.job_manifest_path(),
-                workspace.root(),
-                &self.config.python_bin,
-                &success_msg,
-            )
-            .await;
-            let _ = upload_manifest_artifact(
-                ctx.output,
-                "job_manifest.json",
-                workspace.job_manifest_path(),
-                &name_suffix,
-                override_manifest_id,
-            )
-            .await;
         }
 
         ctx.ctrl

@@ -110,16 +110,6 @@ pub async fn write_processing_manifest(path: &Path, progress: i32, status: &str)
     atomic_write_bytes(path, &bytes).context("write processing manifest")
 }
 
-pub async fn write_succeeded_manifest(path: &Path, message: &str) -> Result<()> {
-    let snapshot = ManifestJson {
-        job_status: "succeeded",
-        job_progress: 100,
-        job_status_details: message.to_string(),
-    };
-    let bytes = serde_json::to_vec_pretty(&snapshot).context("serialize succeeded manifest")?;
-    atomic_write_bytes(path, &bytes).context("write succeeded manifest")
-}
-
 /// Write a richer processing manifest using the Python helper `save_manifest_json`, mirroring
 /// the legacy Go server behaviour. This includes job metadata, server details and, when present,
 /// the scan data summary so downstream UIs see parity even mid-job.
@@ -156,30 +146,6 @@ pub async fn write_processing_manifest_python(
         return write_processing_manifest(manifest_path, progress, status)
             .await
             .context("python manifest snapshot failed; wrote minimal manifest instead");
-    }
-}
-
-/// Write a richer succeeded manifest using the Python helper `save_manifest_json`.
-pub async fn write_succeeded_manifest_python(
-    manifest_path: &Path,
-    job_root_path: &Path,
-    python_bin: &Path,
-    message: &str,
-) -> Result<()> {
-    let script = format!(
-        "from utils.data_utils import save_manifest_json; save_manifest_json({{}}, r'{manifest}', r'{root}', job_status='succeeded', job_progress=100, job_status_details=r'{status}')",
-        manifest = manifest_path.display(),
-        root = job_root_path.display(),
-        status = escape_py_single_quoted(message),
-    );
-    let out = Command::new(python_bin)
-        .arg("-c")
-        .arg(script)
-        .output()
-        .await;
-    match out {
-        Ok(o) if o.status.success() => Ok(()),
-        _ => write_succeeded_manifest(manifest_path, message).await,
     }
 }
 
