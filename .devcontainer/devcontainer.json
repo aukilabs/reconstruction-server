@@ -15,7 +15,7 @@
             ]
         }
     },
-    "appPort": [8080],
+    "forwardPorts": [8080],
     "runArgs": [
         "--gpus", "all",
         "--shm-size", "512m"
@@ -33,11 +33,9 @@
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
     "postCreateCommand": [
-        "pwd",
-        "ls -la",
-        "sudo .devcontainer/build_golang_server.sh",
+        ".devcontainer/build_golang_server.sh",
         "mkdir -p build",
-        "sudo (cd build && pwd && ls -la && cmake -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON .. && make all)",
+        "cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && cmake --build build",
         "echo 'Done!'"
     ]
 }

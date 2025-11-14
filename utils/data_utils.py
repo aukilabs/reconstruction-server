@@ -365,7 +365,7 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
         corresponding_image_ids = image_ids_per_qr[qr_id]
 
         for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
-            cam_pose = reconstruction.images[image_id].cam_from_world.inverse()
+            cam_pose = reconstruction.images[image_id].frame.rig_from_world.inverse()
             qr_world_pose = cam_pose * qr_pose_in_cam
             qr_world_detections[qr_id].append(qr_world_pose)
 
@@ -912,7 +912,7 @@ def load_scan_summary(scan_folder_path, logger):
     return portal_sizes
 
 
-def load_dataset_metadata(
+def load_scan(
     paths,
     use_frames_from_video,
     original_image_count,

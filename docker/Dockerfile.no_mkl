@@ -1,11 +1,14 @@
 ##
-## Rust build for server
+## Go build for server
 ##
-FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
+FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
+RUN mkdir -p /app
 WORKDIR /app
-ADD server/rust /app
-# Build release binary for the compute-node crate
-RUN cargo build --release -p bin
+ADD server /app
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
 
 
 FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu22.04
@@ -48,7 +51,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-tk
 
-RUN apt-get install -y libmkl-full-dev
+# RUN apt-get install -y libmkl-full-dev
 
 RUN apt-get install -y --no-install-recommends \
     ssh \
@@ -90,7 +93,7 @@ RUN git clone https://github.com/NVIDIA/libglvnd && \
 
 # Workaround for runtime error when loading Intel MKL libraries
 # See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
+# ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
 # Ceres
 RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
@@ -98,7 +101,7 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && git checkout tags/2.2.0 \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Intel10_64lp \
+    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Generic \
     && ninja -j$(nproc) \
     && ninja install
 
@@ -106,7 +109,7 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
 RUN git clone https://github.com/cvg/pyceres.git \
     && cd pyceres \
     && git checkout tags/v2.5 \
-    && python3 -m pip install .
+    && CMAKE_ARGS="-DBLA_VENDOR=Generic" python3 -m pip install .
 
 # COLMAP
 RUN git clone https://github.com/colmap/colmap.git && \
@@ -114,11 +117,11 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && git checkout 20b2777186654f20745f6c57974924d145bbbd6f \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
+    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Generic -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
     && ninja -j$(nproc) \
     && ninja install \
     && cd .. \
-    && python3 -m pip install .
+    && CMAKE_ARGS="-DBLA_VENDOR=Generic" python3 -m pip install .
 
 # Hloc
 RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
@@ -166,5 +169,10 @@ RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /
 
 USER $USERNAME
 
-COPY --from=rust-build /app/target/release/compute-node ./compute-node
-ENTRYPOINT ["./compute-node"]
+COPY --from=go-build /app/reconstruction ./reconstruction
+
+ENTRYPOINT ["./reconstruction"]
+
+# Overridable using 'docker run ... image_name -api-key <your-api-key>'
+# TODO: we probably don't need api key, or make it optional. Just check domain token.
+CMD ["-api-key", "aukilabs123"]

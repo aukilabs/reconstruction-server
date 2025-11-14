@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.0.3-base-ubuntu20.04
+FROM nvidia/cuda:12.8.1-base-ubuntu22.04
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
@@ -38,6 +38,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-tk
 
+RUN apt-get install -y libmkl-full-dev
+
 RUN apt-get install -y --no-install-recommends \
     ssh \
     netcat-openbsd \
@@ -63,7 +65,7 @@ RUN git clone https://github.com/google/glog.git && cd glog && \
     cmake -S . -B build -G "Unix Makefiles" && \
     cmake --build build --target install
 
-RUN pip install "pybind11[global]==2.12.0"
+RUN pip install "pybind11[global]==3.0.1"
 
 RUN pip install psutil gputil
 
@@ -73,8 +75,12 @@ RUN git clone https://github.com/NVIDIA/libglvnd && \
     cd libglvnd && \
     ./autogen.sh && \
     ./configure && \
-    make -j4 && \
+    make -j$(nproc) && \
     make install
+
+# Workaround for runtime error when loading Intel MKL libraries
+# See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
+RUN export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
 # Ceres
 RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
@@ -82,40 +88,36 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && git checkout tags/2.2.0 \
     && mkdir build \
     && cd build \
-    && cmake .. -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
-    && make -j4 \
-    && make install
+    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Intel10_64lp \
+    && ninja -j$(nproc) \
+    && ninja install
 
 # pyCeres
 RUN git clone https://github.com/cvg/pyceres.git \
     && cd pyceres \
-    && git checkout tags/v2.3 \
-    && python3 -m pip install -e .
+    && git checkout tags/v2.5 \
+    && python3 -m pip install .
 
 # COLMAP
 RUN git clone https://github.com/colmap/colmap.git && \
     cd colmap \
-    && git checkout release/3.10 \
+    && git checkout 20b2777186654f20745f6c57974924d145bbbd6f \
     && mkdir build \
     && cd build \
-    && cmake -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89" .. \
-    && make -j 4 \
-    && make install \
-    && cd ../pycolmap \
-    && python3 -m pip install -e .
+    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
+    && ninja -j$(nproc) \
+    && ninja install \
+    && cd .. \
+    && python3 -m pip install .
 
 # Hloc
 RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
-    git checkout --recurse-submodules 6dc1714ba1b8df653ac973abf2779a718b7634c9 && \
-    python3 -m pip install -e . --config-settings editable_mode=compat && \
-    python3 -m pip install --upgrade plotly
+    git checkout --recurse-submodules a698de1a09604b31a42ec21c95419018430a5db4 && \
+    python3 -m pip install .
 
-# Hloc installs latest opencv-python as dependency,
-# but the latest opencv 4.11.0.86 introduced a bug
-# causing unpacked mp4 frames to be rotated wrong.
-# For now we need to downgrade opencv (after hloc).
-RUN python3 -m pip install opencv-python==4.10.0.84
+# ONLY NEEDED FOR VISUALIZATION TOOLS (OPTIONAL)
+# RUN python3 -m pip install --upgrade plotly
 
 RUN python3 -m pip install enlighten
 
@@ -125,8 +127,8 @@ RUN git clone https://github.com/google/draco.git && \
     cd draco && \
     mkdir build && \
     cd build && \
-    cmake .. && \
-    make
+    cmake .. -GNinja && \
+    ninja -j$(nproc)
 
 # Server Stuff
 COPY --from=golang:1.21 /usr/local/go/ /usr/local/go/
