@@ -21,7 +21,7 @@ use tokio::{
     time::{interval, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 
 mod domain_lookup;
 pub mod input;
@@ -571,30 +571,41 @@ impl Runner for RunnerReconstructionLegacy {
             collect_scan_names(workspace.datasets()).context("collect scan names")?;
         let (pending_scans, refined_scans) = classify_scans(&workspace, &all_scan_names)?;
 
-        // Pre-credit progress like Go: show how many scans are already refined.
+        // Progress parity (revised): treat each local scan as 1 task and add 1 task for global when applicable.
         let total_scans = all_scan_names.len();
         let baseline_done = refined_scans.len();
         let initial_pending = pending_scans.len();
-        let total_tasks = initial_pending + 1; // +1 for global step
-        let current_pending = initial_pending;
-        let pre_local_progress = if total_tasks > 0 {
-            // Scheduler formula: 100 - round(100 * (currentPending + 1) / (initialPending + 1))
-            100_i32
-                - (((100.0 * ((current_pending + 1) as f64) / (total_tasks as f64)).round()) as i32)
+        let includes_global = matches!(
+            job_ctx.processing_type(),
+            "global_refinement" | "local_and_global_refinement"
+        );
+        let denom_tasks = total_scans + if includes_global { 1 } else { 0 };
+        let pre_progress = if denom_tasks > 0 {
+            ((100.0 * (baseline_done as f64) / (denom_tasks as f64)).round()) as i32
         } else {
             100
         };
 
         // Update manifest before starting local: credit already-done scans in status.
+        let pre_status = format!(
+            "Local refinement {}/{} | total {}/{}",
+            0, initial_pending, baseline_done, total_scans
+        );
         update_progress(
             &state,
             &progress_tx,
-            pre_local_progress.clamp(0, 100),
-            format!(
-                "Refining scans: {}/{} done. (total scans: {})",
-                baseline_done, total_scans, total_scans
-            ),
+            pre_progress.clamp(0, 100),
+            pre_status.clone(),
         );
+        // Write first so uploaded snapshot reflects the latest status.
+        let _ = manifest::write_processing_manifest_python(
+            workspace.job_manifest_path(),
+            workspace.root(),
+            &self.config.python_bin,
+            pre_progress.clamp(0, 100),
+            &pre_status,
+        )
+        .await;
         // Upload the snapshot immediately so users see pre-credited status before local starts.
         let _ = upload_manifest_artifact(
             ctx.output,
@@ -628,6 +639,7 @@ impl Runner for RunnerReconstructionLegacy {
                     baseline_done as i32,
                     initial_pending as i32,
                     total_scans as i32,
+                    includes_global,
                 )
                 .await
                 {
@@ -661,13 +673,31 @@ impl Runner for RunnerReconstructionLegacy {
                     .await?;
                     return Err(anyhow!("missing refined outputs for some scans"));
                 }
-                // No local stage: keep progress at scheduler semantics (<100) and announce global.
+                // No local stage: revised semantics (N/(total+1)) and announce global running.
+                let status_global_running =
+                    format!("Tasks {}/{} — global running", baseline_done, denom_tasks);
                 update_progress(
                     &state,
                     &progress_tx,
-                    pre_local_progress.clamp(0, 100),
-                    "Running global refinement",
+                    pre_progress.clamp(0, 100),
+                    status_global_running.clone(),
                 );
+                let _ = manifest::write_processing_manifest_python(
+                    workspace.job_manifest_path(),
+                    workspace.root(),
+                    &self.config.python_bin,
+                    pre_progress.clamp(0, 100),
+                    &status_global_running,
+                )
+                .await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    &name_suffix,
+                    override_manifest_id,
+                )
+                .await;
                 if let Err(err) = execute_python_stage(
                     &self.config,
                     &job_ctx,
@@ -686,6 +716,7 @@ impl Runner for RunnerReconstructionLegacy {
                     baseline_done as i32,
                     initial_pending as i32,
                     total_scans as i32,
+                    includes_global,
                 )
                 .await
                 {
@@ -698,12 +729,30 @@ impl Runner for RunnerReconstructionLegacy {
                 // local_and_global_refinement
                 if pending_scans.is_empty() {
                     info!("no pending scans; running only global refinement");
+                    let status_global_running =
+                        format!("Tasks {}/{} — global running", baseline_done, denom_tasks);
                     update_progress(
                         &state,
                         &progress_tx,
-                        pre_local_progress.clamp(0, 100),
-                        "Running global refinement",
+                        pre_progress.clamp(0, 100),
+                        status_global_running.clone(),
                     );
+                    let _ = manifest::write_processing_manifest_python(
+                        workspace.job_manifest_path(),
+                        workspace.root(),
+                        &self.config.python_bin,
+                        pre_progress.clamp(0, 100),
+                        &status_global_running,
+                    )
+                    .await;
+                    let _ = upload_manifest_artifact(
+                        ctx.output,
+                        "job_manifest.json",
+                        workspace.job_manifest_path(),
+                        &name_suffix,
+                        override_manifest_id,
+                    )
+                    .await;
                 } else if let Err(err) = execute_python_stage(
                     &self.config,
                     &job_ctx,
@@ -722,6 +771,7 @@ impl Runner for RunnerReconstructionLegacy {
                     baseline_done as i32,
                     initial_pending as i32,
                     total_scans as i32,
+                    includes_global,
                 )
                 .await
                 {
@@ -729,12 +779,61 @@ impl Runner for RunnerReconstructionLegacy {
                     manifest_task.stop().await;
                     return Err(err);
                 }
+                // After local completion, show progress as total_scans / (total_scans + 1) when global will run.
+                let post_local_progress = if includes_global && total_scans > 0 {
+                    ((100.0 * (total_scans as f64) / ((total_scans + 1) as f64)).round()) as i32
+                } else {
+                    100
+                };
+                // Announce global pending, then running, with explicit write+upload
+                let status_global_pending =
+                    format!("Tasks {}/{} — global pending", total_scans, denom_tasks);
                 update_progress(
                     &state,
                     &progress_tx,
-                    pre_local_progress.clamp(0, 100),
-                    "Running global refinement",
+                    post_local_progress.clamp(0, 100),
+                    status_global_pending.clone(),
                 );
+                let _ = manifest::write_processing_manifest_python(
+                    workspace.job_manifest_path(),
+                    workspace.root(),
+                    &self.config.python_bin,
+                    post_local_progress.clamp(0, 100),
+                    &status_global_pending,
+                )
+                .await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    &name_suffix,
+                    override_manifest_id,
+                )
+                .await;
+                let status_global_running =
+                    format!("Tasks {}/{} — global running", total_scans, denom_tasks);
+                update_progress(
+                    &state,
+                    &progress_tx,
+                    post_local_progress.clamp(0, 100),
+                    status_global_running.clone(),
+                );
+                let _ = manifest::write_processing_manifest_python(
+                    workspace.job_manifest_path(),
+                    workspace.root(),
+                    &self.config.python_bin,
+                    post_local_progress.clamp(0, 100),
+                    &status_global_running,
+                )
+                .await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    &name_suffix,
+                    override_manifest_id,
+                )
+                .await;
                 if let Err(err) = execute_python_stage(
                     &self.config,
                     &job_ctx,
@@ -753,6 +852,7 @@ impl Runner for RunnerReconstructionLegacy {
                     baseline_done as i32,
                     initial_pending as i32,
                     total_scans as i32,
+                    includes_global,
                 )
                 .await
                 {
@@ -798,19 +898,58 @@ impl Runner for RunnerReconstructionLegacy {
                 .await;
                 return Err(err);
             }
-            if !workspace.job_manifest_path().exists() {
-                warn!(
-                    capability = self.capability,
-                    domain_id = %job_ctx.metadata.domain_id,
-                    job_name = %job_ctx.metadata.name,
-                    manifest = %workspace.job_manifest_path().display(),
-                    "python pipeline did not produce job manifest; skipping upload"
-                );
-            }
-            // Do not upload job_manifest.json here; refined_manifest.json carries final state.
+            // Write and upload a final 100% succeeded job manifest for visibility in DS.
+            let success_msg = if baseline_done > 0 {
+                format!(
+                    "Tasks {}/{} — succeeded ({} skipped)",
+                    denom_tasks, denom_tasks, baseline_done
+                )
+            } else {
+                format!("Tasks {}/{} — succeeded", denom_tasks, denom_tasks)
+            };
+            let _ = manifest::write_succeeded_manifest_python(
+                workspace.job_manifest_path(),
+                workspace.root(),
+                &self.config.python_bin,
+                &success_msg,
+            )
+            .await;
+            let _ = upload_manifest_artifact(
+                ctx.output,
+                "job_manifest.json",
+                workspace.job_manifest_path(),
+                &name_suffix,
+                override_manifest_id,
+            )
+            .await;
         } else {
             // Final sweep for local-only runs
             let _ = refined_uploader.process(&workspace, ctx.output, true).await;
+            // Write and upload a final 100% succeeded job manifest for local-only.
+            let denom_local = total_scans; // no global step in denominator
+            let success_msg = if baseline_done > 0 {
+                format!(
+                    "Tasks {}/{} — succeeded ({} skipped)",
+                    denom_local, denom_local, baseline_done
+                )
+            } else {
+                format!("Tasks {}/{} — succeeded", denom_local, denom_local)
+            };
+            let _ = manifest::write_succeeded_manifest_python(
+                workspace.job_manifest_path(),
+                workspace.root(),
+                &self.config.python_bin,
+                &success_msg,
+            )
+            .await;
+            let _ = upload_manifest_artifact(
+                ctx.output,
+                "job_manifest.json",
+                workspace.job_manifest_path(),
+                &name_suffix,
+                override_manifest_id,
+            )
+            .await;
         }
 
         ctx.ctrl
@@ -980,8 +1119,9 @@ async fn execute_python_stage(
     progress_scans: &[String],
     hide: &[String],
     baseline_done: i32,
-    initial_pending: i32,
+    _initial_pending: i32,
     total_scans: i32,
+    has_global: bool,
 ) -> Result<()> {
     // Temporarily hide selected dataset folders to prevent Python local from processing them.
     let mut hidden = false;
@@ -1067,18 +1207,18 @@ async fn execute_python_stage(
                     return Err(err);
                 }
 
-                // Progress parity with Go: compute N/M completed scans (only for local stages)
+                // Revised progress: (baseline + local_done) / (total_scans + (has_global?1:0))
                 if mode != "global_refinement" {
                     let (done_local, _total_local) = scan_completion(workspace, progress_scans)?;
-                    let total_tasks = (initial_pending + 1).max(1);
-                    let current_pending = (initial_pending - (done_local as i32)).max(0);
-                    let pct = 100_i32 - (((100.0 * ((current_pending + 1) as f64) / (total_tasks as f64)).round()) as i32);
-                    let done_total = (baseline_done + done_local as i32).min(total_scans);
+                    let denom = (total_scans + if has_global { 1 } else { 0 }).max(1);
+                    let done_total = (baseline_done + done_local as i32).clamp(0, total_scans);
+                    let pct = (((100.0 * (done_total as f64) / (denom as f64)).round()) as i32).clamp(0, 100);
                     let status_text = format!(
-                        "Refining scans: {}/{} done. (total scans: {})",
-                        done_total, total_scans, total_scans
+                        "Tasks {}/{} — refining local",
+                        done_total,
+                        denom
                     );
-                    update_progress(state, progress_tx, pct.clamp(0, 100), status_text);
+                    update_progress(state, progress_tx, pct, status_text);
                 }
             }
             cancelled_now = ctx.ctrl.is_cancelled() => {
