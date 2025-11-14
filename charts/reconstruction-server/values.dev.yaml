@@ -1,4 +1,4 @@
-k8s-service:
+reconstruction-server:
   extraEnv:
     - name: DMS_BASE_URL
       value: "https://dms.dev.aukiverse.com"
