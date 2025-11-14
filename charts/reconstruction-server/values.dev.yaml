@@ -1,0 +1,6 @@
+k8s-service:
+  extraEnv:
+    - name: DDS_BASE_URL
+      value: "https://dds.dev.aukiverse.com"
+    - name: NODE_URL
+      value: "https://reconstruction-dev.dev.aukiverse.com"

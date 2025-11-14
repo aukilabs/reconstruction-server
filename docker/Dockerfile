@@ -1,14 +1,11 @@
 ##
-## Go build for server
+## Rust build for server
 ##
-FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
-RUN mkdir -p /app
+FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 WORKDIR /app
-ADD server /app
-ARG TARGETOS
-ARG TARGETARCH
-ARG VERSION
-RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
+ADD server/rust /app
+# Build release binary for the server-bin crate
+RUN cargo build --release -p server-bin
 
 
 FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu22.04
@@ -169,10 +166,9 @@ RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /
 
 USER $USERNAME
 
-COPY --from=go-build /app/reconstruction ./reconstruction
-
+COPY --from=rust-build /app/target/release/server-bin ./reconstruction
 ENTRYPOINT ["./reconstruction"]
 
 # Overridable using 'docker run ... image_name -api-key <your-api-key>'
 # TODO: we probably don't need api key, or make it optional. Just check domain token.
-CMD ["-api-key", "aukilabs123"]
+CMD ["--api-key", "aukilabs123"]
