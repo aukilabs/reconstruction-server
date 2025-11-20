@@ -1,6 +1,6 @@
 module github.com/aukilabs/reconstruction
 
-go 1.21.5
+go 1.24.0
 
 require (
 	github.com/go-chi/chi v1.5.5
@@ -23,5 +23,5 @@ require (
 	github.com/lestrrat-go/iter v1.0.2 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
 )
