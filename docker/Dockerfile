@@ -22,7 +22,7 @@ ENV PIP_NO_CACHE_DIR=1
 # Core system + build deps + runtime tools in ONE layer
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends \
+    apt-get install -y \
       wget \
       curl \
       vim \
@@ -62,9 +62,6 @@ RUN set -eux; \
       iproute2 \
       iputils-ping \
       bind9-dnsutils \
-      libblas-dev \
-      libsuitesparse-dev \
-      libiomp-dev \
     ; \
     rm -rf /var/lib/apt/lists/*
 
