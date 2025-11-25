@@ -9,7 +9,8 @@ on:
       - "chore/**"
       - "hotfix/**"
     paths-ignore:
-      - "docker/Dockerfile.base"
+      - docker/Dockerfile.base
+      - .github/workflows/build-base-image.yml
 
 jobs:
   rust-ci:
