@@ -1,5 +1,6 @@
 FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu22.04 AS dependencies
 
+ARG DEBIAN_FRONTEND=noninteractive
 ENV PIP_NO_CACHE_DIR=1
 
 # Core system + build deps + runtime tools in ONE layer
