@@ -64,6 +64,7 @@ RUN set -eux; \
       bind9-dnsutils \
       libblas-dev \
       libsuitesparse-dev \
+      libiomp-dev \
     ; \
     rm -rf /var/lib/apt/lists/*
 
