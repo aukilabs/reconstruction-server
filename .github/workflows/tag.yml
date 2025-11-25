@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: [ubuntu-latest]
+    runs-on: [ubuntu-latest-2c8g75g]
     steps:
       - name: Check out code
         uses: actions/checkout@v4
