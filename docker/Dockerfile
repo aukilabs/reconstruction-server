@@ -62,6 +62,8 @@ RUN set -eux; \
       iproute2 \
       iputils-ping \
       bind9-dnsutils \
+      libblas-dev \
+      libsuitesparse-dev \
     ; \
     rm -rf /var/lib/apt/lists/*
 
