@@ -15,7 +15,6 @@ FROM ghcr.io/aukilabs/reconstruction-server-base:latest AS final
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
-ARG DEBIAN_FRONTEND=noninteractive
 
 # Application code
 WORKDIR /app
