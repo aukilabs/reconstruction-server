@@ -8,6 +8,8 @@ on:
       - "bug/**"
       - "chore/**"
       - "hotfix/**"
+    paths-ignore:
+      - "docker/Dockerfile.base"
 
 jobs:
   rust-ci:

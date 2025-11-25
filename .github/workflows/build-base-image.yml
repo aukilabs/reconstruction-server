@@ -1,0 +1,33 @@
+on:
+  push:
+    branches:
+      - main
+      - feature/poll-dms
+    paths:
+      - docker/Dockerfile.base
+
+jobs:
+  build-base-image:
+    name: Build Base Image
+    runs-on: [ubuntu-latest-4c16g150g]
+    permissions:
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker build and push base image
+        run: |
+          docker build \
+            -t "aukilabs/reconstruction-server-base:latest" \
+            -t "aukilabs/reconstruction-server-base:${{ github.sha }}" \
+            --push \
+            -f docker/Dockerfile.base \
+            .
