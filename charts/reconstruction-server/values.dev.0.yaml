@@ -2,4 +2,4 @@ reconstruction-server:
   image:
     tag: v0.1.35
     pullPolicy: IfNotPresent
-  replicaCount: 2
+  apiKey: "kaffekopp123"
