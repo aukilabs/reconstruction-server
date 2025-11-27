@@ -1,6 +1,6 @@
 reconstruction-server:
   image:
     repository: aukibot/reconstruction-server
-    tag: 410f377411eea4546b6b902c4e0d4d3121e23440
+    tag: 025d4610a239fe2396e2666f65e0af704a81095f
   extraEnvMap:
     RUST_LOG: "debug"
