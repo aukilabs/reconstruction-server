@@ -23,7 +23,7 @@ COPY scripts /app/scripts
 COPY src /app/src
 COPY config /app/config
 COPY utils /app/utils
-COPY local_main.py global_main.py occlusion_box.py topology_main.py main.py /app/
+COPY local_main.py global_main.py occlusion_box.py topology_main.py main.py CMakeLists.txt /app/
 
 RUN chmod -R 755 /app/scripts /app/src /app/utils /app/*.py
 
