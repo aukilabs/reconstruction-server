@@ -27,6 +27,10 @@ COPY local_main.py global_main.py occlusion_box.py topology_main.py main.py /app
 
 RUN chmod -R 755 /app/scripts /app/src /app/utils /app/*.py
 
+RUN cd src/ && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && \
+    cmake --build build
+
 # Run reconstruction server as separate user, not root
 RUN set -eux; \
     groupadd --gid "$USER_GID" "$USERNAME"; \
