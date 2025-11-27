@@ -1,20 +1,18 @@
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, process::Stdio};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::{
-    fs::File,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, BufReader},
     process::Command,
-    sync::Mutex,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Level;
 
 /// Run the given python script with provided arguments, streaming stdout/stderr to the log file.
 pub async fn run_script(
     python_bin: &Path,
     script_path: &Path,
     args: &[String],
-    log_path: &Path,
     cancel: &CancellationToken,
 ) -> Result<()> {
     let mut cmd = Command::new(python_bin);
@@ -31,28 +29,12 @@ pub async fn run_script(
         )
     })?;
 
-    let log_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .await
-        .with_context(|| format!("open log file {}", log_path.display()))?;
-    let log = Arc::new(Mutex::new(log_file));
-
     let mut tasks = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        tasks.push(tokio::spawn(forward_stream(
-            BufReader::new(stdout),
-            log.clone(),
-            false,
-        )));
+        tasks.push(tokio::spawn(forward_stream(BufReader::new(stdout), false)));
     }
     if let Some(stderr) = child.stderr.take() {
-        tasks.push(tokio::spawn(forward_stream(
-            BufReader::new(stderr),
-            log.clone(),
-            true,
-        )));
+        tasks.push(tokio::spawn(forward_stream(BufReader::new(stderr), true)));
     }
 
     let exit_status = tokio::select! {
@@ -79,27 +61,26 @@ pub async fn run_script(
     }
 }
 
-async fn forward_stream<R>(
-    mut reader: BufReader<R>,
-    log: Arc<Mutex<File>>,
-    is_stderr: bool,
-) -> Result<()>
+async fn forward_stream<R>(mut reader: BufReader<R>, is_stderr: bool) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut line = String::new();
     while reader.read_line(&mut line).await? != 0 {
-        let mut writer = log.lock().await;
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
         if is_stderr {
-            writer
-                .write_all(format!("ERR: {}", line).as_bytes())
-                .await?;
+            tracing::event!(
+                Level::ERROR,
+                stream = "stderr",
+                message = %trimmed
+            );
         } else {
-            writer
-                .write_all(format!("OUT: {}", line).as_bytes())
-                .await?;
+            tracing::event!(
+                Level::INFO,
+                stream = "stdout",
+                message = %trimmed
+            );
         }
-        writer.flush().await?;
         line.clear();
     }
     Ok(())

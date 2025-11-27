@@ -1105,19 +1105,11 @@ async fn execute_python_stage(
 
     let python_bin = config.python_bin.clone();
     let python_script = config.python_script.clone();
-    let log_path = workspace.root().join("python.log");
     let cancel = cancel_token.clone();
     let mut python_future: Pin<
         Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
     > = Box::pin(async move {
-        python::run_script(
-            &python_bin,
-            &python_script,
-            &python_args,
-            &log_path,
-            &cancel,
-        )
-        .await
+        python::run_script(&python_bin, &python_script, &python_args, &cancel).await
     });
     let mut python_result: Option<Result<(), anyhow::Error>> = None;
     let mut refined_interval = interval(Duration::from_secs(LEGACY_PROGRESS_INTERVAL_SECS));

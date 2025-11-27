@@ -26,7 +26,7 @@ offline smoke tests.
    declared CIDs using the `InputSource`, unpacks refined zips when present, and
    prepares the on-disk layout expected by the Python tooling.
 5. **Python control loop** — The runner launches the configured Python script
-   and streams its stdout/stderr into `python.log`. Cancellation is observed
+   and streams stdout as INFO and stderr as ERROR via `tracing` (respecting `LOG_FORMAT`). Cancellation is observed
    through a `CancellationToken`.
 6. **Refined artifact uploads** — `refined::RefinedUploader` periodically scans
    the workspace and uploads new or updated refined outputs via the `ArtifactSink`.
@@ -67,7 +67,6 @@ payload:
 The workspace modules ensure interoperability with the legacy stack:
 - `datasets/` — materialized inputs grouped by scan folder.
 - `refined/` — refined outputs (`global`, `local`) ready for upload.
-- `python.log` — captured Python pipeline output.
 - `result.json` / `outputs_index.json` — final payloads shipped back to DMS via
   the artifact sink.
 

@@ -26,6 +26,7 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 uuid = { version = "1", features = ["serde", "v4"] }
 hyper = { version = "0.14", default-features = false, features = ["server", "http1", "tcp"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
 
 [package.metadata]
 description = "Reconstruction-specific runner (legacy), no HTTP wiring."
