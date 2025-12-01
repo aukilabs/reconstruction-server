@@ -6,6 +6,7 @@ from local_main import main as local_main
 from global_main import main as global_main
 from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
+from utils.densification import robin_hardcoded_test
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
 
@@ -253,5 +254,6 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    #args = parse_args()
+    #main(args)
+    robin_hardcoded_test()
