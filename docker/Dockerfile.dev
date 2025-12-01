@@ -78,10 +78,6 @@ RUN git clone https://github.com/NVIDIA/libglvnd && \
     make -j$(nproc) && \
     make install
 
-# Workaround for runtime error when loading Intel MKL libraries
-# See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
-RUN export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
-
 # Ceres
 RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && cd ceres-solver \

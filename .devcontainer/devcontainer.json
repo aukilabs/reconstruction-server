@@ -20,11 +20,14 @@
         "--gpus", "all",
         "--shm-size", "512m"
     ],
+    "containerEnv": {
+        // Uncomment if you want display forward
+        // "DISPLAY": "unix:0",
 
-    // Uncomment if you want display forward
-    // "containerEnv": {
-    //     "DISPLAY": "unix:0"
-    // },
+        // Workaround for runtime error when loading Intel MKL libraries
+        // See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
+        "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so"
+    },
     "mounts": [
         // Modify this to your own data folder
         // "source=/path/to/data,target=/data,type=bind",
