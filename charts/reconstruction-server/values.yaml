@@ -10,7 +10,6 @@ reconstruction-server:
       alb.ingress.kubernetes.io/group.name: default
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-      alb.ingress.kubernetes.io/target-group-attributes: load_balancing.algorithm.type=least_outstanding_requests
   resources:
     limits:
       cpu: 8

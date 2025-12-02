@@ -17,6 +17,3 @@ log.txt
 **/target/**
 server/rust/server-bin/jobs
 server/rust/data
-TODO.md
-AUDIT.md
-SPECS.md
