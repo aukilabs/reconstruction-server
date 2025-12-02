@@ -58,7 +58,7 @@ jobs:
       - name: Docker build and push
         id: docker-build-and-push
         run: |
-          IMAGE="aukilabs/reconstruction-server:${{ github.sha }}"
+          IMAGE="aukilabs/reconstruction-node:${{ github.sha }}"
           echo "Building $IMAGE"
           docker build -t "$IMAGE" -f docker/Dockerfile .
           echo "Pushing $IMAGE"
