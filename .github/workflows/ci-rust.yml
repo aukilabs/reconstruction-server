@@ -12,6 +12,10 @@ on:
       - docker/Dockerfile.base
       - .github/workflows/build-base-image.yml
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-ci:
     name: CI
