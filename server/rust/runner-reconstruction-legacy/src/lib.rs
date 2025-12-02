@@ -1,6 +1,7 @@
 //! runner-reconstruction-legacy: skeleton runner for legacy reconstruction.
 
 use std::{
+    collections::HashSet,
     env,
     path::{Path, PathBuf},
     pin::Pin,
@@ -191,6 +192,18 @@ impl JobContext {
             .await
             .with_context(|| format!("write job metadata to {}", path.display()))?;
         Ok(())
+    }
+
+    /// Overwrite the job_metadata.json with an updated, de-duplicated list of data IDs.
+    async fn update_and_persist_data_ids(
+        &mut self,
+        data_ids: HashSet<String>,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        let mut merged: Vec<String> = data_ids.into_iter().collect();
+        merged.sort();
+        self.metadata.data_ids = merged;
+        self.persist_metadata(path).await
     }
 
     async fn persist_job_request(&self, path: &std::path::Path) -> Result<()> {
@@ -445,7 +458,7 @@ impl Runner for RunnerReconstructionLegacy {
             }
         }
         let _workspace_cleanup = WorkspaceCleanup(workspace.root().to_path_buf());
-        let job_ctx = JobContext::from_lease(lease)?;
+        let mut job_ctx = JobContext::from_lease(lease)?;
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
             .await?;
@@ -471,7 +484,8 @@ impl Runner for RunnerReconstructionLegacy {
         );
 
         let name_suffix = job_ctx.domain_data_name_suffix();
-        let override_manifest_id = job_ctx.metadata.override_manifest_id.as_deref();
+        // Take an owned copy so we can later mutate job_ctx without borrow conflicts.
+        let override_manifest_id = job_ctx.metadata.override_manifest_id.clone();
 
         let (progress_tx, mut progress_rx) = unbounded_channel::<(i32, String)>();
         let state = ManifestState::default();
@@ -491,27 +505,42 @@ impl Runner for RunnerReconstructionLegacy {
             "job_manifest.json",
             workspace.job_manifest_path(),
             &name_suffix,
-            override_manifest_id,
+            override_manifest_id.as_deref(),
         )
         .await?;
-        if let Err(err) = input::materialize_datasets(&ctx, &workspace).await {
-            let _ = manifest::write_failed_manifest_python(
-                workspace.job_manifest_path(),
-                workspace.root(),
-                &self.config.python_bin,
-                &format!("materialize datasets error: {}", err),
-            )
-            .await;
-            let _ = upload_manifest_artifact(
-                ctx.output,
-                "job_manifest.json",
-                workspace.job_manifest_path(),
-                &name_suffix,
-                override_manifest_id,
-            )
-            .await;
-            return Err(err);
+        let datasets = match input::materialize_datasets(&ctx, &workspace).await {
+            Ok(ds) => ds,
+            Err(err) => {
+                let _ = manifest::write_failed_manifest_python(
+                    workspace.job_manifest_path(),
+                    workspace.root(),
+                    &self.config.python_bin,
+                    &format!("materialize datasets error: {}", err),
+                )
+                .await;
+                let _ = upload_manifest_artifact(
+                    ctx.output,
+                    "job_manifest.json",
+                    workspace.job_manifest_path(),
+                    &name_suffix,
+                    override_manifest_id.as_deref(),
+                )
+                .await;
+                return Err(err);
+            }
+        };
+
+        // Build a union of data IDs from (a) initial lease inputs and (b) materialized datasets.
+        let mut data_ids: HashSet<String> = job_ctx.metadata.data_ids.iter().cloned().collect();
+        for ds in &datasets {
+            if let Some(id) = ds.data_id.as_ref() {
+                data_ids.insert(id.clone());
+            }
         }
+        let should_persist_data_ids = matches!(
+            job_ctx.processing_type(),
+            "global_refinement" | "local_and_global_refinement"
+        );
 
         // Stage any pre-existing refined scan zip(s) so global can reuse them without re-running local.
         if let Err(err) = stage_existing_refined_outputs(&workspace).await {
@@ -523,12 +552,26 @@ impl Runner for RunnerReconstructionLegacy {
         }
 
         // Try to stage refined outputs using Domain metadata (fallback silently to local-only if this fails)
-        if let Err(err) = stage_from_domain(&workspace, &job_ctx, &ctx).await {
+        if let Err(err) = stage_from_domain(&workspace, &job_ctx, &ctx, &mut data_ids).await {
             tracing::info!(
                 target: "runner_reconstruction_legacy",
                 error = %err,
                 "domain-driven staging failed; continuing with local-only classification"
             );
+        }
+
+        // Persist the merged data IDs so the Python manifest writer can include all inputs used.
+        if should_persist_data_ids {
+            if let Err(err) = job_ctx
+                .update_and_persist_data_ids(data_ids.clone(), workspace.job_metadata_path())
+                .await
+            {
+                tracing::warn!(
+                    target: "runner_reconstruction_legacy",
+                    error = %err,
+                    "failed to update job metadata with merged data_ids"
+                );
+            }
         }
 
         // mock mode removed; rely on runner-reconstruction-legacy-noop for smoke tests.
@@ -612,7 +655,7 @@ impl Runner for RunnerReconstructionLegacy {
             "job_manifest.json",
             workspace.job_manifest_path(),
             &name_suffix,
-            override_manifest_id,
+            override_manifest_id.as_deref(),
         )
         .await;
 
@@ -632,7 +675,7 @@ impl Runner for RunnerReconstructionLegacy {
                     &state,
                     &progress_tx,
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                     "local_refinement",
                     &pending_scans,
                     &refined_scans,
@@ -668,7 +711,7 @@ impl Runner for RunnerReconstructionLegacy {
                         "job_manifest.json",
                         workspace.job_manifest_path(),
                         &name_suffix,
-                        override_manifest_id,
+                        override_manifest_id.as_deref(),
                     )
                     .await?;
                     return Err(anyhow!("missing refined outputs for some scans"));
@@ -695,7 +738,7 @@ impl Runner for RunnerReconstructionLegacy {
                     "job_manifest.json",
                     workspace.job_manifest_path(),
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                 )
                 .await;
                 if let Err(err) = execute_python_stage(
@@ -709,7 +752,7 @@ impl Runner for RunnerReconstructionLegacy {
                     &state,
                     &progress_tx,
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                     "global_refinement",
                     &[],
                     &[],
@@ -750,7 +793,7 @@ impl Runner for RunnerReconstructionLegacy {
                         "job_manifest.json",
                         workspace.job_manifest_path(),
                         &name_suffix,
-                        override_manifest_id,
+                        override_manifest_id.as_deref(),
                     )
                     .await;
                 } else if let Err(err) = execute_python_stage(
@@ -764,7 +807,7 @@ impl Runner for RunnerReconstructionLegacy {
                     &state,
                     &progress_tx,
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                     "local_refinement",
                     &pending_scans,
                     &refined_scans,
@@ -807,7 +850,7 @@ impl Runner for RunnerReconstructionLegacy {
                     "job_manifest.json",
                     workspace.job_manifest_path(),
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                 )
                 .await;
                 let status_global_running =
@@ -831,7 +874,7 @@ impl Runner for RunnerReconstructionLegacy {
                     "job_manifest.json",
                     workspace.job_manifest_path(),
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                 )
                 .await;
                 if let Err(err) = execute_python_stage(
@@ -845,7 +888,7 @@ impl Runner for RunnerReconstructionLegacy {
                     &state,
                     &progress_tx,
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                     "global_refinement",
                     &[],
                     &[],
@@ -877,7 +920,7 @@ impl Runner for RunnerReconstructionLegacy {
                 &workspace,
                 ctx.output,
                 &name_suffix,
-                override_manifest_id,
+                override_manifest_id.as_deref(),
             )
             .await
             {
@@ -893,7 +936,7 @@ impl Runner for RunnerReconstructionLegacy {
                     "job_manifest.json",
                     workspace.job_manifest_path(),
                     &name_suffix,
-                    override_manifest_id,
+                    override_manifest_id.as_deref(),
                 )
                 .await;
                 return Err(err);
@@ -1311,6 +1354,7 @@ async fn stage_from_domain(
     workspace: &Workspace,
     job_ctx: &JobContext,
     ctx: &TaskCtx<'_>,
+    data_ids: &mut HashSet<String>,
 ) -> Result<()> {
     let domain_url = job_ctx.metadata.domain_server_url.trim().to_string();
     let domain_id = job_ctx.metadata.domain_id.trim().to_string();
@@ -1342,6 +1386,7 @@ async fn stage_from_domain(
         .await
         {
             Ok(Some(existing_id)) => {
+                data_ids.insert(existing_id.clone());
                 // Ensure dataset directory exists
                 let ds_dir = workspace.datasets().join(&scan);
                 if !ds_dir.exists() {
