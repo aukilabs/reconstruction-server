@@ -10,7 +10,6 @@ reconstruction-server:
       alb.ingress.kubernetes.io/group.name: default
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-      alb.ingress.kuberetes.io/target-group-attributes: load_balancing.algorithm.type=least_outstanding_requests
   resources:
     limits:
       cpu: 8
@@ -22,4 +21,8 @@ reconstruction-server:
     - key: "dedicated"
       value: "gpuGroup"
       effect: "NoSchedule"
-  apiKey: "kaffekopp123"
+  extraEnvMap:
+    REQUEST_TIMEOUT_SECS: "30"
+    POLL_BACKOFF_MS_MIN: "15000"
+    RUST_LOG: "info"
+    LEGACY_RUNNER_WORKSPACE_ROOT: "/app"
