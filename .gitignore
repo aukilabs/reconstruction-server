@@ -17,3 +17,4 @@ log.txt
 **/target/**
 server/rust/server-bin/jobs
 server/rust/data
+*.so
