@@ -6,10 +6,9 @@ from local_main import main as local_main
 from global_main import main as global_main
 from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
-from utils.densification import robin_hardcoded_test
+from utils.splatter import main as splatter_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
-
 
 def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
     """Run occlusion box extraction on the given point cloud.
@@ -252,8 +251,59 @@ def parse_args():
     parser.add_argument("--scans", nargs="+", default=[], help="List of scans to process")
     return parser.parse_args()
 
+from utils.splatter import preprocess
+import pycolmap
+import shutil
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
-    #robin_hardcoded_test()
+    #args = parse_args()
+    #main(args)
+    #exit()
+
+    args = argparse.ArgumentParser()
+    args.add_argument("--job-root", type=Path, required=True)
+    args.add_argument("--scan-id", type=str, default=None)
+    args.add_argument("--use-global", type=bool, default=False)
+    args.add_argument("--reduce-colmap", type=bool, default=False)
+    args = args.parse_args()
+    
+    if args.scan_id is None:
+        if args.use_global:
+            colmap_dir = args.job_root / "refined" / "global" / "refined_sfm_combined"
+            if args.reduce_colmap:
+                rec = pycolmap.Reconstruction()
+                rec.read(str(colmap_dir))
+                print(rec.summary())
+                for image in rec.images.values():
+                    image.points2D.clear()
+                for point in rec.points3D.values():
+                    point.track = pycolmap.Track()
+                out_dir = args.job_root / "refined" / "global" / "reduced_sfm"
+                if not out_dir.exists():
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                rec.write(str(out_dir))
+                print("Reduced reconstruction:")
+                print(rec.summary())
+                exit()
+            dense_dir = args.job_root / "refined" / "global" / "dense"
+            if not dense_dir.exists():
+                dense_dir.mkdir(parents=True, exist_ok=True)
+            
+            scan_ids = [f.name for f in (args.job_root / "datasets").iterdir() if f.is_dir()]
+            combined_images_dir = dense_dir / "images"
+            if not combined_images_dir.exists():
+                combined_images_dir.mkdir(parents=True, exist_ok=True)
+            for scan_id in scan_ids:
+                dataset_dir = args.job_root / "datasets" / scan_id
+                shutil.copytree(dataset_dir / "Frames", combined_images_dir, dirs_exist_ok=True)
+            #preprocess(colmap_dir, dense_dir)
+            exit(0)
+
+        scan_ids = [f.name for f in (args.job_root / "datasets").iterdir() if f.is_dir()]
+        print(f"--scan-ids not provided, processing all {len(scan_ids)} scans in the dataset directory")
+        for scan_id in scan_ids:
+            print(f"Processing scan {scan_id}...")
+            splatter_main(args.job_root, scan_id)
+    else:
+        print(f"Processing scan {args.scan_id}...")
+        splatter_main(args.job_root, args.scan_id)

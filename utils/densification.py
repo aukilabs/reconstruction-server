@@ -7,10 +7,9 @@ import shutil
 from hloc.utils.database import COLMAPDatabase
 import open3d as o3d
 import numpy as np
+import utils.pairs_from_voxelized_covisibility as pairs_from_voxelized_covisibility
 
 def filter_reconstruction(reconstruction, image_names):
-
-
     rigs = reconstruction.rigs
     frames = reconstruction.frames
     imgs = reconstruction.images
@@ -86,35 +85,50 @@ def filter_reconstruction(reconstruction, image_names):
     return filtered_rec
 
 """
-Input global reconstruction and output dense reconstruction
+Input colmap reconstruction and output dense reconstruction
 Extracts and matches dense features, saves as colmap format.
 """
-def densify_global_reconstruction(job_root_path, global_refinement_path, output_path):
-    global_rec = pycolmap.Reconstruction()
-    global_rec.read(str(global_refinement_path / "refined_sfm_combined"))
+def densify_reconstruction(job_root_path, colmap_path, output_path):
+    colmap_rec = pycolmap.Reconstruction()
+    colmap_rec.read(str(colmap_path))
 
-    print("Loaded global refinement colmap")
-
-    images_path = output_path / "images"
-    images_path.mkdir(parents=True, exist_ok=True)
+    print("Loaded colmap reconstruction")
+    print(colmap_rec.summary())
     image_name_to_path = {}
     for dataset in (job_root_path / "datasets").iterdir():
         for image in (dataset / "Frames").iterdir():
             image_name_to_path[image.name] = image
     
     image_names = list(image_name_to_path.keys())
+    image_names = sorted(image_names)
     print(f"Found {len(image_name_to_path)} images")
 
-    use_every_nth_image = 1
+    use_every_nth_image = 2
     image_names = image_names[::use_every_nth_image]
-    #for name in image_names:
-    #    image_path = image_name_to_path[name]
-    #    shutil.copy(str(image_path), str(images_path / name))
-    print(f"Using every {use_every_nth_image}th image, total {len(image_names)} images")
+    
+    images_path = output_path / "images"
+    skip_image_copying = images_path.exists() and len(list(images_path.iterdir())) == len(image_names)
+    if skip_image_copying:
+        for existing_image in list(images_path.iterdir()):
+            if existing_image.name not in image_names:
+                skip_image_copying = False
+                break
 
+    if skip_image_copying:
+        print("Skipping image copying since all images already exist in combined images folder")
+    else:
+        if images_path.exists():
+            shutil.rmtree(images_path) # Do a clean new copy of all images
+        images_path.mkdir(parents=True, exist_ok=True)
+        for image_name in image_names:
+            image_path = image_name_to_path[image_name]
+            shutil.copy(str(image_path), str(images_path / image_path.name))
+        print(f"Using every {use_every_nth_image}th image, total {len(image_names)} images")
+    
+    """
     feature_conf = deepcopy(extract_features.confs["aliked-n16"])
     feature_conf["output"] = str(output_path / "aliked-n16-feats")
-    feature_conf["model"]["max_keypoints"] = 1024
+    feature_conf["model"]["max_keypoints"] = 2048
     feature_conf["model"]["detection_threshold"] = 0.3
     feature_conf["model"]["nms_radius"] = 4
     feature_conf["preprocessing"]["resize_max"] = 1024
@@ -122,6 +136,7 @@ def densify_global_reconstruction(job_root_path, global_refinement_path, output_
         feature_conf, images_path,
         output_path, image_list=image_names
     )
+    """
 
     #retrieval_conf = deepcopy(extract_features.confs["megaloc"])
     #retrieval_conf["output"] = str(output_path / "megaloc_features")
@@ -136,18 +151,24 @@ def densify_global_reconstruction(job_root_path, global_refinement_path, output_
     #    str(pairs_path),
     #    num_matched=5
     #)
-    pairs_from_poses.main(
-        global_refinement_path / "refined_sfm_combined",
+    #pairs_from_poses.main(
+    #    global_refinement_path / "refined_sfm_combined",
+    #    str(pairs_path),
+    #    num_matched=5
+    #)
+    pairs_from_voxelized_covisibility.main(
+        colmap_path,
         str(pairs_path),
-        num_matched=5
+        num_matched=2,
+        image_names=image_names
     )
 
-    #_dense_conf = deepcopy(match_dense.confs["loftr_aachen"])
-    #_, dense_matches = match_dense.main(
-    #    dense_conf, pairs_path, images_path,
-    #    output_path, features=str(output_path / "xfeat_features"),
-    #    max_kps=2048
-    #)
+    dense_conf = deepcopy(match_dense.confs["loftr_aachen"])
+    feats, matches = match_dense.main(
+        dense_conf, pairs_path, images_path, output_path,
+        max_kps=4096
+    )
+    """
     match_conf = deepcopy(match_features.confs["aliked+lightglue"])
     match_conf["output"] = str(output_path / "aliked-n16-matches")
     match_conf["model"]["compile_network"] = True
@@ -155,23 +176,48 @@ def densify_global_reconstruction(job_root_path, global_refinement_path, output_
         match_conf, pairs_path, features=output_path / "aliked-n16-feats.h5",
         matches=output_path / "aliked-n16-matches"
     )
+    """
 
     # Fewer images
-    filtered_rec = filter_reconstruction(global_rec, image_names)
+    filtered_rec = filter_reconstruction(colmap_rec, image_names)
     filtered_rec_path = output_path / "filtered_global"
-    database_path = filtered_rec_path / "colmap.db"
     filtered_rec_path.mkdir(parents=True, exist_ok=True)
     filtered_rec.write(str(filtered_rec_path))
-    #image_names_to_ids = create_db_from_model(filtered_rec, database_path)
-    dense_path = output_path / "dense"
+
+    dense_path = output_path
     triangulation.main(
         dense_path, filtered_rec_path, images_path, pairs_path, feats, matches,
         skip_geometric_verification=True,
         estimate_two_view_geometries=False,
-        verbose=True
+        verbose=True,
+        mapper_options={
+            "fix_existing_frames": True,
+            "ba_refine_focal_length": True,
+            "ba_refine_extra_params": False,
+            "ba_global_max_num_iterations": 5,
+            "triangulation": {
+                "min_angle": 4.0
+            }
+        }
     )
+
+    # Remove outlier points
+    print("Removing outlier points...")
+    dense_rec = pycolmap.Reconstruction()
+    dense_rec.read(str(dense_path))
+    old_count = len(dense_rec.points3D)
+    pointcloud = colmap_to_o3d_pointcloud(dense_rec)
+    pointcloud, _ = pointcloud.remove_radius_outlier(20, 0.5)
+    set_colmap_points_from_pointcloud(dense_rec, pointcloud)
+    dense_rec.write(str(dense_path))
+    new_count = len(dense_rec.points3D)
+    print(f"Removed {old_count - new_count} outlier points")
+
     return
 
+
+    #database_path = filtered_rec_path / "colmap.db"
+    #image_names_to_ids = create_db_from_model(filtered_rec, database_path)
     import_features(image_names_to_ids, database_path, dense_feats)
     import_matches(
         image_names_to_ids,
@@ -289,9 +335,9 @@ def densify_rec_points(rec, debug_save_name=None):
     original_pointcloud = colmap_to_o3d_pointcloud(rec)
 
     levels = [
-        (0.3, 0.09),
+        #(0.3, 0.09),
         (0.2, 0.07),
-        (0.1, 0.05),
+        #(0.1, 0.05),
     ]
 
     densified_pointcloud = o3d.geometry.PointCloud()
@@ -312,7 +358,8 @@ def densify_rec_points(rec, debug_save_name=None):
         densified_pointcloud.points.extend(dense.points)
         densified_pointcloud.colors.extend(dense.colors)
 
-    densified_pointcloud.voxel_down_sample(0.02)
+    densified_pointcloud.voxel_down_sample(0.03)
+    densified_pointcloud, _ = densified_pointcloud.remove_radius_outlier(30, 0.5)
 
     densified_rec = deepcopy(rec)
     set_colmap_points_from_pointcloud(densified_rec, densified_pointcloud)
@@ -320,12 +367,15 @@ def densify_rec_points(rec, debug_save_name=None):
     return densified_rec
 
 def robin_hardcoded_test():
-    job_root_path = Path("/app/jobs/faa6d299-2989-461e-8c1e-aff4ceb9f645/job_909e7021-95ed-4cc2-ac47-0ca1fee49708")
+    #job_root_path = Path("/app/jobs/faa6d299-2989-461e-8c1e-aff4ceb9f645/job_909e7021-95ed-4cc2-ac47-0ca1fee49708")
+    job_root_path = Path("/app/jobs/b57a2941-a323-4146-9870-90c53ec7f47a/job_bae87519-eb81-4444-842a-94c556c3b79a")
     global_refinement_path = job_root_path / "refined" / "global"
-    output_path = job_root_path / "global_dense"
+    output_path = job_root_path / "global_dense_voxpairs"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    densify_global_reconstruction(job_root_path, global_refinement_path, output_path)
+    colmap_path = global_refinement_path / "refined_sfm_combined"
+
+    densify_reconstruction(job_root_path, global_refinement_path, output_path)
     return
 
     rec = pycolmap.Reconstruction()
