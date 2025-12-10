@@ -61,6 +61,32 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
         display_name: "topologymesh_v1_highpoly_glb",
         mandatory: false,
     },
+    // COLMAP refined bundle (large; upload via multipart)
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/cameras.bin",
+        display_name: "colmap_cameras_bin",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/frames.bin",
+        display_name: "colmap_frames_bin",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/images.bin",
+        display_name: "colmap_images_bin",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/points3D.bin",
+        display_name: "colmap_points3d_bin",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/rigs.bin",
+        display_name: "colmap_rigs_bin",
+        mandatory: false,
+    },
 ];
 
 /// Upload the final global outputs expected by downstream systems.
@@ -183,6 +209,11 @@ fn data_type_for_display(display: &str) -> &str {
         "topologymesh_v1_midpoly_glb" => "glb",
         "topologymesh_v1_highpoly_obj" => "obj",
         "topologymesh_v1_highpoly_glb" => "glb",
+        "colmap_cameras_bin" => "colmap_cameras_bin",
+        "colmap_frames_bin" => "colmap_frames_bin",
+        "colmap_images_bin" => "colmap_images_bin",
+        "colmap_points3d_bin" => "colmap_points3d_bin",
+        "colmap_rigs_bin" => "colmap_rigs_bin",
         _ => "binary",
     }
 }
