@@ -1076,9 +1076,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "posemesh-compute-node"
-version = "0.1.16"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "782d2e92ab694c5e6c594f97da4f4d020a48ada8f1f2aafdf58fa9a7228138d5"
+checksum = "2a18edada63915be894f6f6848487f4b254d12b74894ad62011d37b8b15cfe9d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1170,12 +1170,13 @@ dependencies = [
 
 [[package]]
 name = "posemesh-utils"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "123f865f23fb89eca6e2e60eba99b7dd6af4d88dff1abed4a808b6a8b95a81ea"
+checksum = "8f64a8e8e1ac045081603dfec4a88969faa4eef5e9662473b863c4301479ae22"
 dependencies = [
  "futures",
  "gloo-timers",
+ "once_cell",
  "tokio",
  "tracing",
  "wasm-bindgen",
