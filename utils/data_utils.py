@@ -3,6 +3,7 @@ import json
 import numpy as np
 import csv
 import os
+import sys
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
@@ -852,11 +853,19 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     if log_file:
         logger, _ = add_file_handler(logger, log_file)
 
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
-        domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
+    json_formatter = JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
+        domain_id=domain_id, job_id=job_id, dataset_id=dataset_id)
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO) 
+    console_handler.addFilter(lambda record: record.levelno <= logging.INFO)  # ≤ INFO
+    console_handler.setFormatter(json_formatter)
     logger.addHandler(console_handler)
 
+    console_err_handler = logging.StreamHandler(sys.stderr)
+    console_err_handler.setLevel(logging.WARNING)
+    console_err_handler.setFormatter(json_formatter)
+    logger.addHandler(console_err_handler)
     return logger
 
 
