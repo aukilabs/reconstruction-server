@@ -862,7 +862,7 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
     logger.addHandler(console_handler)
 
     console_err_handler = logging.StreamHandler(sys.stderr)
-    console_err_handler.setLevel(logging.WARNING)
+    console_err_handler.setLevel(logging.ERROR)
     console_err_handler.setFormatter(json_formatter)
     logger.addHandler(console_err_handler)
     return logger
