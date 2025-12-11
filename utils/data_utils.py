@@ -857,7 +857,6 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
         domain_id=domain_id, job_id=job_id, dataset_id=dataset_id)
 
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO) 
     console_handler.addFilter(lambda record: record.levelno <= logging.INFO)  # ≤ INFO
     console_handler.setFormatter(json_formatter)
     logger.addHandler(console_handler)
