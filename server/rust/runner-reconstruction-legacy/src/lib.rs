@@ -120,6 +120,7 @@ impl JobContext {
                     .map(|s| s.to_string())
             })
             .unwrap_or_default();
+        let domain_server_url = domain_server_url.trim_end_matches('/').to_string();
 
         // Attempt to capture the externally advertised node URL so Python can include
         // it in the final manifest (reconstructionServerURL). This mirrors legacy Go.
@@ -1312,7 +1313,12 @@ async fn stage_from_domain(
     job_ctx: &JobContext,
     ctx: &TaskCtx<'_>,
 ) -> Result<()> {
-    let domain_url = job_ctx.metadata.domain_server_url.trim().to_string();
+    let domain_url = job_ctx
+        .metadata
+        .domain_server_url
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
     let domain_id = job_ctx.metadata.domain_id.trim().to_string();
     if domain_url.is_empty() || domain_id.is_empty() {
         return Ok(());
