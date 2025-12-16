@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
-posemesh-compute-node = { version = "0.2.0" }
+posemesh-compute-node = { version = "0.2.1" }
 runner-reconstruction-legacy-noop = { path = "../runner-reconstruction-legacy-noop" }
 runner-reconstruction-legacy = { path = "../runner-reconstruction-legacy" }
 anyhow = "1"
