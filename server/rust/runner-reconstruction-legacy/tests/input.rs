@@ -87,7 +87,8 @@ async fn materialize_copies_into_workspace() {
     };
     let workspace = Workspace::create(None, "dom-123", Some("job-abc"), "task-xyz").unwrap();
 
-    let lease = lease_with_inputs(vec!["cid1"]);
+    // Use a URL-formatted CID to trigger standard materialization (not name-based lookup)
+    let lease = lease_with_inputs(vec!["https://domain.example/api/v1/data/cid1"]);
     let ctrl = NullCtrl;
     let sink = NullSink;
 
