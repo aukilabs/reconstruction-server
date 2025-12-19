@@ -3,22 +3,27 @@ import argparse
 import shutil
 from subprocess import run
 
-from sympy.matrices import dense
 from utils.densification import densify_rec_points, densify_reconstruction
 import pycolmap
-LICHTFELD_BIN = "./lichtfeld"
+LICHTFELD_BIN = "D:/gaussian-splatting-cuda/build/LichtFeld-Studio.exe"
 
-def train_splat(dataset_dir: Path, output_dir: Path):
+def format_path(path: Path):
+    return "D:\\rec-server-new\\" + str(path).replace('/', '\\')
+
+def train_splat(colmap_dir: Path, output_dir: Path, images_dir: Path = None):
+    
     cmd = [
         LICHTFELD_BIN,
-        "-d", str(dataset_dir),
-        "-o", str(output_dir),
-        "--config", "lichtfelt_optimization_params.json",
-        "--gut",
-        "-r", "4"
+        "-d", format_path(colmap_dir),
+        "-o", format_path(output_dir),
+        "-r", "2",
+        "--images", format_path(images_dir) if images_dir else str(colmap_dir / "images"),
+        "--config", f"D:\gaussian-splatting-cuda\parameter\DMT_mcmc_optimization_params.json",
+        "--headless"
     ]
-    print(f"Running command: {' '.join(cmd)}")
-    run(cmd)
+    #print(f"Running command: {' '.join(cmd)}")
+    #run(cmd)
+    return cmd
 
 def preprocess(colmap_dir: Path, processed_dir: Path):
     rec = pycolmap.Reconstruction()
@@ -30,7 +35,8 @@ def preprocess(colmap_dir: Path, processed_dir: Path):
     print(f"Densified colmap reconstruction written to: {processed_dir}")
     print(densified_rec.summary())
 
-def main(job_root: Path, scan_id: str):
+def scan_main(job_root: Path, scan_id: str):
+    print(f"Processing scan {scan_id}...")
 
     frames_dir = job_root / "datasets" / scan_id / "Frames"
     if not frames_dir.exists():
@@ -63,7 +69,27 @@ def main(job_root: Path, scan_id: str):
         image_path=str(frames_dir)
     )
     #densify_reconstruction(job_root, colmap_dir, dense_dir)
-    #train_splat(dense_dir, output_dir)
+    
+    train_cmd = train_splat(dense_dir, output_dir, dense_dir / "images")
+    with open(str(job_root / "train_splats.bat"), "a") as f:
+        f.write(" ".join(train_cmd) + "\n")
+
+def main(job_root: Path, scan_id: str = None):
+
+    cmd_file = job_root / "train_splats.bat"
+    if cmd_file.exists():
+        print("Removing old existing train_splats.bat file from job root dir")
+        cmd_file.unlink()
+    with open(str(cmd_file), "w") as f:
+        f.write("")
+
+    if scan_id is None:
+        scan_ids = [f.name for f in (job_root / "datasets").iterdir() if f.is_dir()]
+        print(f"--scan-ids not provided, processing all {len(scan_ids)} scans in the dataset directory")
+        for scan_id in scan_ids:
+            scan_main(job_root, scan_id)
+    else:
+        scan_main(job_root, scan_id)
 
 if __name__ == "__main__":
     args = argparse.ArgumentParser()
@@ -72,12 +98,3 @@ if __name__ == "__main__":
 
     args = args.parse_args()
 
-    if args.scan_id is None:
-        scan_ids = [f.name for f in (args.job_root / "datasets").iterdir() if f.is_dir()]
-        print(f"--scan-ids not provided, processing all {len(scan_ids)} scans in the dataset directory")
-        for scan_id in scan_ids:
-            print(f"Processing scan {scan_id}...")
-            main(args.job_root, scan_id)
-    else:
-        print(f"Processing scan {args.scan_id}...")
-        main(args.job_root, args.scan_id)

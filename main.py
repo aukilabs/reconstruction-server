@@ -256,9 +256,9 @@ import pycolmap
 import shutil
 
 if __name__ == "__main__":
-    #args = parse_args()
-    #main(args)
-    #exit()
+    args = parse_args()
+    main(args)
+    exit()
 
     args = argparse.ArgumentParser()
     args.add_argument("--job-root", type=Path, required=True)
