@@ -1,8 +1,4 @@
 //! Reconstruction-specific strategies for artifact naming and input handling.
-//!
-//! This module centralizes the mapping and behaviors that used to live in the
-//! shared compute-node storage layer, keeping reconstruction concerns scoped to
-//! the reconstruction server crates.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -11,13 +7,9 @@ use zip::ZipArchive;
 
 /// Map a well-known reconstruction output path to a preferred (name, data_type)
 /// pair used when uploading artifacts to Domain.
-///
-/// Returns None when the path is not recognized; callers may fall back to a
-/// generic naming scheme.
 pub fn describe_known_output(rel_path: &str, suffix: &str) -> Option<(String, String)> {
     let name = |base: &str| format!("{}_{}", base, suffix);
     match rel_path.trim_start_matches('/') {
-        // Final global outputs
         "refined/global/refined_manifest.json" => {
             Some((name("refined_manifest"), "refined_manifest_json".into()))
         }
@@ -47,29 +39,15 @@ pub fn describe_known_output(rel_path: &str, suffix: &str) -> Option<(String, St
         "refined/global/topology/topology.glb" => {
             Some((name("topologymesh_v1_highpoly_glb"), "glb".into()))
         }
-
-        // Occasional JSON sidecars uploaded by legacy flows
         "outputs_index.json" => Some((name("outputs_index"), "json".into())),
         "result.json" => Some((name("result"), "json".into())),
         "scan_data_summary.json" => Some((name("scan_data_summary"), "json".into())),
-
-        // Refined local scan zip naming
-        p if p.starts_with("refined/local/") && p.ends_with("/RefinedScan.zip") => {
-            let scan = p
-                .trim_start_matches("refined/local/")
-                .trim_end_matches("/RefinedScan.zip");
-            let safe_scan = sanitize_component(scan);
-            Some((
-                name(&format!("refined_scan_{}", safe_scan)),
-                "refined_scan_zip".into(),
-            ))
-        }
         _ => None,
     }
 }
 
 /// Unzip a refined scan zip (bytes) into `unzip_root`, returning the list of
-/// extracted file paths. This mirrors the previous compute-node behavior.
+/// extracted file paths.
 pub async fn unzip_refined_scan(zip_bytes: Vec<u8>, unzip_root: &Path) -> Result<Vec<PathBuf>> {
     let unzip_root = unzip_root.to_path_buf();
     let result = task::spawn_blocking(move || {
@@ -95,22 +73,4 @@ pub async fn unzip_refined_scan(zip_bytes: Vec<u8>, unzip_root: &Path) -> Result
     })
     .await?;
     result
-}
-
-fn sanitize_component(value: &str) -> String {
-    let sanitized: String = value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if sanitized.is_empty() {
-        "artifact".into()
-    } else {
-        sanitized
-    }
 }

@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "runner-reconstruction-legacy",
-    "runner-reconstruction-legacy-noop",
+    "runner-reconstruction-global",
+    "runner-reconstruction-local",
     "bin",
 ]
 resolver = "2"

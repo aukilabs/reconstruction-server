@@ -12,11 +12,7 @@ crate so we can reuse it in other front-ends or integration tests.
   - `GET /health` — liveness check for probes.
   - `POST /internal/v1/registrations` — DDS callback that persists the
     registration secret in memory.
-- Load `NodeConfig` and wire runners based on feature flags:
-  - With `ENABLE_NOOP=true`, register the noop legacy reconstruction runners for
-    all advertised capabilities.
-  - Otherwise, load `RunnerConfig` from `runner-reconstruction-legacy` and
-    register the real reconstruction runners for each capability string.
+- Load `NodeConfig` and wire the local + global scaffold runners.
 - Spawn DDS registration if fully configured, and kick off the engine loop via
   `posemesh_compute_node::engine::run_node`.
 
@@ -26,13 +22,13 @@ The binary defers to the configuration code in
 so see that README for exhaustive documentation. At a minimum you will need:
 - DDS + DMS URLs and credentials (SIWE private key, registration secret).
 - `REQUEST_TIMEOUT_SECS` tuned to your environment (defaults matter if omitted).
-- Either `ENABLE_NOOP=true` for local smoke tests or valid paths to the Python
-  pipeline controlled via the legacy runner’s env variables (see that crate).
+- The local/global runners are currently scaffolds; ensure your downstream
+  pipeline expectations match the minimal runner behavior.
 
 ## Running locally
 - `make run`, or
 - Build the workspace: `cargo build -p bin`.
-- Provide required env vars and launch: `LOG_FORMAT=text ENABLE_NOOP=true cargo run -p bin`.
+- Provide required env vars and launch: `LOG_FORMAT=text cargo run -p bin`.
 - Hit `http://localhost:8080/health` to confirm the health endpoint responds.
 - The process will log the derived capability list and registration activity;
   set `RUST_LOG=debug` for verbose diagnostics.

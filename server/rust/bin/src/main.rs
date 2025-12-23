@@ -13,36 +13,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Load config and wire runners
     let cfg = posemesh_compute_node::config::NodeConfig::from_env()?;
-    let legacy_runner_cfg = runner_reconstruction_legacy::RunnerConfig::from_env()?;
-    // Stateless node: clear any leftover job workspaces at startup when a fixed
-    // workspace root is configured.
-    if let Some(root) = legacy_runner_cfg.workspace_root.as_ref() {
-        let jobs = root.join("jobs");
-        if jobs.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&jobs) {
-                eprintln!(
-                    "warning: failed to clear workspace jobs directory {}: {}",
-                    jobs.display(),
-                    e
-                );
-            }
-        }
-    }
     let mut reg = posemesh_compute_node::engine::RunnerRegistry::new();
-    if cfg.enable_noop {
-        for runner in
-            runner_reconstruction_legacy_noop::RunnerReconstructionLegacyNoop::for_all_capabilities(
-                cfg.noop_sleep_secs,
-            )
-        {
-            reg = reg.register(runner);
-        }
-    } else {
-        for runner in runner_reconstruction_legacy::RunnerReconstructionLegacy::for_all_capabilities(
-            legacy_runner_cfg.clone(),
-        ) {
-            reg = reg.register(runner);
-        }
+    for runner in runner_reconstruction_local::RunnerReconstructionLocal::for_all_capabilities() {
+        reg = reg.register(runner);
+    }
+    for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
+        reg = reg.register(runner);
     }
 
     let capabilities = reg.capabilities();

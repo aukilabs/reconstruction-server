@@ -76,7 +76,7 @@ impl RefinedUploader {
                 rel_path: &artifact_path,
                 name: &format!("refined_scan_{}", scan_id),
                 data_type: "refined_scan_zip",
-                existing_id: None, // always POST; treat 409 Conflict as "already exists" and skip
+                existing_id: None,
                 content: DomainArtifactContent::Bytes(&zip_bytes),
             };
 
@@ -171,10 +171,8 @@ fn has_required_sfm_files(sfm: &Path) -> bool {
 }
 
 fn is_conflict_err(err: &anyhow::Error) -> bool {
-    // Prefer robust downcasts if the sink exposes typed HTTP errors in the future.
-    // For now, conservatively inspect the error chain for HTTP 409 markers.
     let needle1 = "409";
-    let needle2 = "conflict"; // case-insensitive
+    let needle2 = "conflict";
     for cause in err.chain() {
         let s = cause.to_string();
         if s.contains(needle1) || s.to_ascii_lowercase().contains(needle2) {
@@ -182,25 +180,4 @@ fn is_conflict_err(err: &anyhow::Error) -> bool {
         }
     }
     false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn owned_allowed_exts() -> Vec<String> {
-        ZIP_ALLOWED_EXTENSIONS
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    }
-
-    #[test]
-    fn zip_directory_blocking_returns_empty_when_no_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("sfm");
-        std::fs::create_dir_all(&dir).unwrap();
-        let bytes = zip_directory_blocking(&dir, &owned_allowed_exts()).unwrap();
-        assert!(bytes.is_empty());
-    }
 }

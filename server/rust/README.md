@@ -13,12 +13,10 @@ stateless, fail-fast, and observable.
 - [`posemesh-compute-node`](../../posemesh/core/posemesh-compute-node/README.md) —
   engine + shared infrastructure: config, SIWE auth, DDS registration, DMS
   client, heartbeat loop, storage facade, HTTP router, telemetry helpers.
-- [`runner-reconstruction-legacy`](runner-reconstruction-legacy/README.md) —
-  production runner that shells out to the legacy Python refinement stack while
-  streaming manifests and refined artifacts back to domain storage.
-- [`runner-reconstruction-legacy-noop`](runner-reconstruction-legacy-noop/README.md) —
-  capability-compatible noop runner for dev/CI that produces placeholder
-  artifacts.
+- [`runner-reconstruction-local`](runner-reconstruction-local/README.md) —
+  scaffold runner for local refinement pipeline integration.
+- [`runner-reconstruction-global`](runner-reconstruction-global/README.md) —
+  scaffold runner for global refinement pipeline integration.
 - [`bin`](bin/README.md) — CLI binary
   that loads configuration, selects runners, exposes the registration callback,
   and drives the engine loop.
@@ -52,7 +50,6 @@ Supporting directories:
    export NODE_URL=https://node.example
    export REG_SECRET=replace-me
    export SECP256K1_PRIVHEX=32-byte-hex-string
-   export ENABLE_NOOP=true           # optional for local smoke tests
    export LOG_FORMAT=text            # optional for readable logs
    ```
 3. Build and run the node:
@@ -60,8 +57,7 @@ Supporting directories:
    cargo run -p bin
    ```
 4. Hit `http://localhost:8080/health` to verify liveness. Watch the logs for DDS
-   registration and leasing activity. With noop runners enabled the node will
-   produce placeholder outputs without launching the Python stack.
+   registration and leasing activity.
 
 ## Development tooling
 - `cargo fmt --all` (or `make fmt`) keeps formatting consistent.

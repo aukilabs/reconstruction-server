@@ -7,8 +7,8 @@ publish = false
 [dependencies]
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
 posemesh-compute-node = { version = "0.2.3" }
-runner-reconstruction-legacy-noop = { path = "../runner-reconstruction-legacy-noop" }
-runner-reconstruction-legacy = { path = "../runner-reconstruction-legacy" }
+runner-reconstruction-local = { path = "../runner-reconstruction-local" }
+runner-reconstruction-global = { path = "../runner-reconstruction-global" }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 axum = { version = "0.7" }

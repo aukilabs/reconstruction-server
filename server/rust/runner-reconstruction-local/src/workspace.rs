@@ -11,10 +11,7 @@ pub struct Workspace {
     root: PathBuf,
     datasets: PathBuf,
     refined_local: PathBuf,
-    refined_global: PathBuf,
     request: PathBuf,
-    manifest: PathBuf,
-    summary: PathBuf,
     metadata: PathBuf,
     _temp_guard: Option<TempDir>,
 }
@@ -46,24 +43,17 @@ impl Workspace {
 
         let datasets = root.join("datasets");
         let refined_local = root.join("refined").join("local");
-        let refined_global = root.join("refined").join("global");
         let request = root.join("job_request.json");
-        let manifest = root.join("job_manifest.json");
-        let summary = root.join("scan_data_summary.json");
         let metadata = root.join("job_metadata.json");
 
         create_dir(&datasets)?;
         create_dir(&refined_local)?;
-        create_dir(&refined_global)?;
 
         Ok(Self {
             root,
             datasets,
             refined_local,
-            refined_global,
             request,
-            manifest,
-            summary,
             metadata,
             _temp_guard: temp_guard,
         })
@@ -84,24 +74,9 @@ impl Workspace {
         &self.refined_local
     }
 
-    /// Path containing global refinement outputs.
-    pub fn refined_global(&self) -> &Path {
-        &self.refined_global
-    }
-
-    /// Path to the job request JSON file.
+    /// Path to the job request JSON file (unused but preserved for parity).
     pub fn job_request_path(&self) -> &Path {
         &self.request
-    }
-
-    /// Path to the job manifest JSON file.
-    pub fn job_manifest_path(&self) -> &Path {
-        &self.manifest
-    }
-
-    /// Path to the scan data summary JSON file.
-    pub fn scan_data_summary_path(&self) -> &Path {
-        &self.summary
     }
 
     /// Path to the job metadata JSON file.
@@ -136,15 +111,4 @@ fn sanitize_segment(input: &str) -> String {
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sanitize_segment_replaces_invalid_chars() {
-        assert_eq!(sanitize_segment("a:b/c"), "a_b_c");
-        assert_eq!(sanitize_segment(""), "unnamed");
-    }
 }

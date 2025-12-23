@@ -1,14 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::{env, fs, io};
+use std::{fs, io};
 
 use anyhow::{anyhow, Context, Result};
 use compute_runner_api::{MaterializedInput, TaskCtx};
-use posemesh_domain_http::domain_data::{download_by_id, download_metadata_v1, DownloadQuery};
-use uuid::Uuid;
 
 use crate::workspace::Workspace;
 
 /// Data captured for each materialized dataset.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MaterializedDataset {
     pub cid: String,
@@ -22,29 +21,17 @@ pub struct MaterializedDataset {
 
 /// Materialize each CID into the workspace datasets directory, copying the
 /// downloaded content onto disk and returning metadata for later processing.
-///
-/// CIDs can be either:
-/// - Full URLs (e.g., `https://domain-server/api/v1/domains/{domain_id}/data/{data_id}`)
-/// - Artifact names (e.g., `refined_scan_2025-12-12_14-56-20`) which will be resolved via Domain API
 pub async fn materialize_datasets(
     ctx: &TaskCtx<'_>,
     workspace: &Workspace,
 ) -> Result<Vec<MaterializedDataset>> {
     let mut datasets = Vec::new();
     for cid in &ctx.lease.task.inputs_cids {
-        // Check if this is a URL or a name-based reference
-        let materialized = if is_url(cid) {
-            // Standard URL-based CID materialization
-            ctx.input
-                .materialize_cid_with_meta(cid)
-                .await
-                .with_context(|| format!("materialize input CID {}", cid))?
-        } else {
-            // Name-based lookup: resolve via Domain API
-            materialize_by_name(ctx, workspace, cid)
-                .await
-                .with_context(|| format!("materialize input by name {}", cid))?
-        };
+        let materialized = ctx
+            .input
+            .materialize_cid_with_meta(cid)
+            .await
+            .with_context(|| format!("materialize input CID {}", cid))?;
 
         let copied_paths = copy_materialized_to_workspace(&materialized, workspace)
             .with_context(|| format!("copy dataset for CID {}", cid))?;
@@ -67,138 +54,6 @@ pub async fn materialize_datasets(
         });
     }
     Ok(datasets)
-}
-
-/// Check if a CID string looks like a URL
-fn is_url(cid: &str) -> bool {
-    cid.starts_with("http://") || cid.starts_with("https://")
-}
-
-/// Generate a client ID for Domain API calls
-fn get_client_id() -> String {
-    if let Ok(id) = env::var("CLIENT_ID") {
-        if !id.trim().is_empty() {
-            return id;
-        }
-    }
-    format!("posemesh-compute-node/{}", Uuid::new_v4())
-}
-
-/// Materialize an artifact by looking it up by name in the Domain API.
-///
-/// This supports the workflow where `inputs_cids` contains artifact names like
-/// `refined_scan_2025-12-12_14-56-20` instead of full URLs. The function will:
-/// 1. Query the Domain API to find the data ID for the given name
-/// 2. Download the artifact bytes
-/// 3. Extract the contents to a temporary directory structured like a standard materialization
-async fn materialize_by_name(
-    ctx: &TaskCtx<'_>,
-    workspace: &Workspace,
-    name: &str,
-) -> Result<MaterializedInput> {
-    let domain_url = ctx
-        .lease
-        .domain_server_url
-        .as_ref()
-        .map(|u| u.to_string())
-        .unwrap_or_default();
-    let domain_url = domain_url.trim().trim_end_matches('/');
-
-    let domain_id = ctx
-        .lease
-        .domain_id
-        .map(|id| id.to_string())
-        .unwrap_or_default();
-
-    if domain_url.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve artifact by name '{}': no domain_server_url in lease",
-            name
-        ));
-    }
-    if domain_id.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve artifact by name '{}': no domain_id in lease",
-            name
-        ));
-    }
-
-    let client_id = get_client_id();
-    let token = ctx.access_token.get();
-
-    // Query Domain API to find the data by name
-    // Try with refined_scan_zip data_type first (most common for global refinement inputs)
-    let metas = download_metadata_v1(
-        domain_url,
-        &client_id,
-        &token,
-        &domain_id,
-        &DownloadQuery {
-            ids: Vec::new(),
-            name: Some(name.to_string()),
-            data_type: None, // Don't filter by type to be more flexible
-        },
-    )
-    .await
-    .map_err(|e| anyhow!("failed to query Domain for artifact '{}': {}", name, e))?;
-
-    let meta = metas
-        .into_iter()
-        .find(|m| m.name == name)
-        .ok_or_else(|| anyhow!("artifact '{}' not found in domain {}", name, domain_id))?;
-
-    tracing::info!(
-        target: "runner_reconstruction_legacy",
-        name = %name,
-        data_id = %meta.id,
-        data_type = %meta.data_type,
-        "resolved artifact name to domain data ID"
-    );
-
-    // Download the artifact bytes
-    let bytes = download_by_id(domain_url, &client_id, &token, &domain_id, &meta.id)
-        .await
-        .map_err(|e| anyhow!("failed to download artifact '{}' (id={}): {}", name, meta.id, e))?;
-
-    // Create a temporary directory structure that matches what materialize_cid_with_meta produces
-    let temp_root = workspace.root().join("_materialize_temp").join(&meta.id);
-    let datasets_dir = temp_root.join("datasets");
-
-    // Extract scan name from the artifact name (e.g., "refined_scan_2025-12-12_14-56-20" -> "2025-12-12_14-56-20")
-    let scan_name = name
-        .strip_prefix("refined_scan_")
-        .unwrap_or(name)
-        .to_string();
-    let scan_dir = datasets_dir.join(&scan_name);
-    fs::create_dir_all(&scan_dir)
-        .with_context(|| format!("create dataset directory {}", scan_dir.display()))?;
-
-    // Write the artifact - for refined_scan_zip, write as RefinedScan.zip
-    let artifact_path = if meta.data_type == "refined_scan_zip" {
-        let path = scan_dir.join("RefinedScan.zip");
-        fs::write(&path, &bytes)
-            .with_context(|| format!("write artifact to {}", path.display()))?;
-        path
-    } else {
-        // For other types, use the original name or a generic filename
-        let filename = format!("{}.{}", name, meta.data_type.replace('_', "."));
-        let path = scan_dir.join(&filename);
-        fs::write(&path, &bytes)
-            .with_context(|| format!("write artifact to {}", path.display()))?;
-        path
-    };
-
-    Ok(MaterializedInput {
-        cid: name.to_string(),
-        path: artifact_path,
-        data_id: Some(meta.id),
-        name: Some(name.to_string()),
-        data_type: Some(meta.data_type),
-        domain_id: Some(domain_id),
-        root_dir: temp_root,
-        related_files: vec![],
-        extracted_paths: vec![],
-    })
 }
 
 struct CopyResult {
@@ -250,8 +105,6 @@ fn copy_materialized_to_workspace(
         if candidate.exists() {
             manifest_path = Some(candidate);
         } else {
-            // Fallback: if compute-node saved DMT manifest without renaming,
-            // normalize it to Manifest.json for downstream expectations.
             let mut found = None;
             if let Ok(entries) = std::fs::read_dir(root) {
                 for entry in entries.flatten() {
@@ -283,7 +136,6 @@ fn copy_materialized_to_workspace(
                 for entry in entries.flatten() {
                     if let Some(fname) = entry.file_name().to_str() {
                         if fname.ends_with(".refined_scan_zip") {
-                            // Best-effort rename; fallback to copy on cross-device moves.
                             std::fs::rename(entry.path(), &refined_zip_target)
                                 .or_else(|_| {
                                     std::fs::copy(entry.path(), &refined_zip_target).map(|_| ())
@@ -296,8 +148,7 @@ fn copy_materialized_to_workspace(
             }
         }
 
-        // 3) Normalize DMT input artifacts to legacy-friendly filenames expected by Python
-        //    This matches legacy Go helper.go mapping.
+        // 3) Normalize DMT input artifacts to legacy-friendly filenames expected by Python.
         let renames: &[(&str, &str)] = &[
             (".dmt_arposes_csv", "ARposes.csv"),
             (".dmt_portal_detections_csv", "PortalDetections.csv"),
@@ -326,7 +177,6 @@ fn copy_materialized_to_workspace(
                     if fname.ends_with(suffix) {
                         let dest = root.join(target_name);
                         if dest.exists() {
-                            // Avoid overwriting if multiple matches; prefer first.
                             break;
                         }
                         std::fs::rename(&path, &dest)

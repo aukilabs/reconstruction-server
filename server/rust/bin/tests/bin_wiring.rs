@@ -2,7 +2,7 @@ use posemesh_compute_node::{config::NodeConfig, dds::persist, engine::RunnerRegi
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
-async fn registry_contains_noop_when_enabled_and_run_node_ok() {
+async fn registry_contains_scaffold_runners_and_run_node_ok() {
     // Build a minimal NodeConfig
     persist::clear_node_secret().unwrap();
 
@@ -26,30 +26,22 @@ async fn registry_contains_noop_when_enabled_and_run_node_ok() {
         register_max_retry: None,
         max_concurrency: 1,
         log_format: posemesh_compute_node::config::LogFormat::Json,
-        enable_noop: true,
-        noop_sleep_secs: 1,
+        enable_noop: false,
+        noop_sleep_secs: 0,
     };
 
     let mut reg = RunnerRegistry::new();
-    for runner in runner_reconstruction_legacy::RunnerReconstructionLegacy::for_all_capabilities(
-        runner_reconstruction_legacy::RunnerConfig::default(),
-    ) {
+    for runner in runner_reconstruction_local::RunnerReconstructionLocal::for_all_capabilities() {
         reg = reg.register(runner);
     }
-    if cfg.enable_noop {
-        for runner in
-            runner_reconstruction_legacy_noop::RunnerReconstructionLegacyNoop::for_all_capabilities(
-                cfg.noop_sleep_secs,
-            )
-        {
-            reg = reg.register(runner);
-        }
+    for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
+        reg = reg.register(runner);
     }
 
-    for cap in runner_reconstruction_legacy::RunnerReconstructionLegacy::SUPPORTED_CAPABILITIES {
+    for cap in runner_reconstruction_local::CAPABILITIES {
         assert!(reg.get(cap).is_some());
     }
-    for cap in runner_reconstruction_legacy_noop::CAPABILITIES {
+    for cap in runner_reconstruction_global::CAPABILITIES {
         assert!(reg.get(cap).is_some());
     }
 

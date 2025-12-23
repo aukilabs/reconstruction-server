@@ -61,7 +61,6 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
         display_name: "topologymesh_v1_highpoly_glb",
         mandatory: false,
     },
-    // COLMAP refined bundle (large; upload via multipart)
     OutputSpec {
         relative_path: "refined/global/refined_sfm_combined/cameras.bin",
         display_name: "colmap_cameras_bin",
