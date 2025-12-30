@@ -128,8 +128,7 @@ def run_triangulation(
         ba_options.refine_rig_from_world = True
         ba_options.solver_options.max_num_iterations = 100
         ba_options.solver_options.gradient_tolerance = 1.0
-        ba_options.solver_options.logging_type = pyceres.LoggingType.PER_MINIMIZER_ITERATION
-        ba_options.solver_options.minimizer_progress_to_stdout = True
+        ba_options.solver_options.logging_type = pyceres.LoggingType.SILENT
 
         num_ba_iterations_total = 4
 
