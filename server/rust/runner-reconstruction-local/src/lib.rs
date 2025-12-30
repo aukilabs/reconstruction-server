@@ -146,10 +146,18 @@ impl Runner for RunnerReconstructionLocal {
         let python_script = self.config.python_script.clone();
         let python_args_clone = python_args.clone();
         let cancel = cancel_token.clone();
+        let job_root = workspace.root().to_path_buf();
         let mut python_future: Pin<
             Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
         > = Box::pin(async move {
-            python::run_script(&python_bin, &python_script, &python_args_clone, &cancel).await
+            python::run_script(
+                &python_bin,
+                &python_script,
+                &python_args_clone,
+                &cancel,
+                Some(&job_root),
+            )
+            .await
         });
 
         let python_result = loop {

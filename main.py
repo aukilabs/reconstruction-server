@@ -204,6 +204,17 @@ def handle_refinement_error(error, args, logger):
         logger: Logger instance
     """
     logger.error(f"Refinement failed with exception: {error}")
+    
+    # Write error to fail_reason.txt for the Rust runner to read
+    fail_reason_path = args.job_root_path / "fail_reason.txt"
+    try:
+        import traceback
+        error_detail = f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"
+        fail_reason_path.write_text(error_detail, encoding="utf-8")
+        logger.info(f"Saved fail reason to: {fail_reason_path}")
+    except Exception as write_err:
+        logger.warning(f"Failed to write fail_reason.txt: {write_err}")
+    
     manifest_out_path = args.job_root_path / "job_manifest.json"
     logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
     save_failed_manifest_json(manifest_out_path, args.job_root_path, str(error))
