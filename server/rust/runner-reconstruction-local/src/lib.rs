@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use compute_runner_api::{Runner, TaskCtx};
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
+use compute_runner_api::{ArtifactSink, Runner, TaskCtx};
 use serde::Serialize;
 use serde_json::json;
 use tokio::fs;
@@ -170,6 +171,9 @@ impl Runner for RunnerReconstructionLocal {
                 }
             }
         };
+        if let Err(err) = upload_task_log(ctx.output, &workspace, &task_id).await {
+            warn!(error = %err, task_id = %task_id, "failed to upload task log");
+        }
         python_result?;
 
         let mut refined_uploader = refined::RefinedUploader::new();
@@ -183,6 +187,31 @@ impl Runner for RunnerReconstructionLocal {
 
         Ok(())
     }
+}
+
+async fn upload_task_log(
+    sink: &dyn ArtifactSink,
+    workspace: &workspace::Workspace,
+    task_id: &str,
+) -> Result<()> {
+    let log_path = workspace.root().join("log.txt");
+    if !log_path.exists() {
+        warn!(task_id = %task_id, path = %log_path.display(), "task log missing");
+        return Ok(());
+    }
+
+    let rel_path = format!("logs/{task_id}.txt");
+    let name = format!("task_log_{task_id}");
+    sink.put_domain_artifact(DomainArtifactRequest {
+        rel_path: &rel_path,
+        name: &name,
+        data_type: "task_log_txt",
+        existing_id: None,
+        content: DomainArtifactContent::File(&log_path),
+    })
+    .await
+    .with_context(|| format!("upload task log {}", log_path.display()))?;
+    Ok(())
 }
 
 #[derive(Serialize)]
