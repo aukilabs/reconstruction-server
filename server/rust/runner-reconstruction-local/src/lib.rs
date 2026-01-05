@@ -136,11 +136,57 @@ impl Runner for RunnerReconstructionLocal {
                 .unwrap_or_else(|| "<temp>".into()),
             "workspace prepared"
         );
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 5, "stage": "workspace", "status": "prepared"}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "workspace",
+                "message": "workspace prepared",
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
-        input::materialize_datasets(&ctx, &workspace).await?;
+        let datasets = input::materialize_datasets(&ctx, &workspace).await?;
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 15, "stage": "inputs", "datasets": datasets.len()}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "inputs",
+                "message": "inputs materialized",
+                "count": datasets.len(),
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         let scan_names = collect_scan_names(workspace.datasets())?;
         let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 20, "stage": "python", "status": "starting"}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "python",
+                "message": "python pipeline starting",
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         let cancel_token = CancellationToken::new();
         let python_bin = self.config.python_bin.clone();
@@ -171,15 +217,67 @@ impl Runner for RunnerReconstructionLocal {
                 }
             }
         };
+        match &python_result {
+            Ok(()) => {
+                let _ = ctx
+                    .ctrl
+                    .progress(json!({"pct": 85, "stage": "python", "status": "completed"}))
+                    .await;
+                let _ = ctx
+                    .ctrl
+                    .log_event(json!({
+                        "level": "info",
+                        "stage": "python",
+                        "message": "python pipeline completed",
+                        "task_id": task_id,
+                        "job_id": job_ctx.metadata.name,
+                        "timestamp": Utc::now().to_rfc3339(),
+                    }))
+                    .await;
+            }
+            Err(err) => {
+                let _ = ctx
+                    .ctrl
+                    .progress(json!({"pct": 20, "stage": "python", "status": "failed"}))
+                    .await;
+                let _ = ctx
+                    .ctrl
+                    .log_event(json!({
+                        "level": "error",
+                        "stage": "python",
+                        "message": err.to_string(),
+                        "task_id": task_id,
+                        "job_id": job_ctx.metadata.name,
+                        "timestamp": Utc::now().to_rfc3339(),
+                    }))
+                    .await;
+            }
+        }
         if let Err(err) = upload_task_log(ctx.output, &workspace, &task_id).await {
             warn!(error = %err, task_id = %task_id, "failed to upload task log");
         }
         python_result?;
 
         let mut refined_uploader = refined::RefinedUploader::new();
-        refined_uploader
+        let uploaded = refined_uploader
             .process(&workspace, ctx.output, true)
             .await?;
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 95, "stage": "upload", "uploaded_scans": uploaded.len()}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "upload",
+                "message": "outputs uploaded",
+                "uploaded_scans": uploaded.len(),
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         ctx.ctrl
             .progress(json!({"progress": 100, "status": "succeeded"}))
