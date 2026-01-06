@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use compute_runner_api::{Runner, TaskCtx};
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
+use compute_runner_api::{ArtifactSink, Runner, TaskCtx};
 use serde::Serialize;
 use serde_json::json;
 use tokio::fs;
@@ -128,14 +129,60 @@ impl Runner for RunnerReconstructionGlobal {
                 .unwrap_or_else(|| "<temp>".into()),
             "workspace prepared"
         );
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 5, "stage": "workspace", "status": "prepared"}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "workspace",
+                "message": "workspace prepared",
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         let materialized = input::materialize_refined_scans(&ctx, &workspace).await?;
         let scan_names: Vec<String> = materialized
             .iter()
             .map(|scan| scan.scan_name.clone())
             .collect();
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 15, "stage": "inputs", "scans": scan_names.len()}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "inputs",
+                "message": "inputs materialized",
+                "count": scan_names.len(),
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 20, "stage": "python", "status": "starting"}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "python",
+                "message": "python pipeline starting",
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         let cancel_token = CancellationToken::new();
         let python_bin = self.config.python_bin.clone();
@@ -166,10 +213,64 @@ impl Runner for RunnerReconstructionGlobal {
                 }
             }
         };
+        match &python_result {
+            Ok(()) => {
+                let _ = ctx
+                    .ctrl
+                    .progress(json!({"pct": 85, "stage": "python", "status": "completed"}))
+                    .await;
+                let _ = ctx
+                    .ctrl
+                    .log_event(json!({
+                        "level": "info",
+                        "stage": "python",
+                        "message": "python pipeline completed",
+                        "task_id": task_id,
+                        "job_id": job_ctx.metadata.name,
+                        "timestamp": Utc::now().to_rfc3339(),
+                    }))
+                    .await;
+            }
+            Err(err) => {
+                let _ = ctx
+                    .ctrl
+                    .progress(json!({"pct": 20, "stage": "python", "status": "failed"}))
+                    .await;
+                let _ = ctx
+                    .ctrl
+                    .log_event(json!({
+                        "level": "error",
+                        "stage": "python",
+                        "message": err.to_string(),
+                        "task_id": task_id,
+                        "job_id": job_ctx.metadata.name,
+                        "timestamp": Utc::now().to_rfc3339(),
+                    }))
+                    .await;
+            }
+        }
+        if let Err(err) = upload_task_log(ctx.output, &workspace, &task_id).await {
+            warn!(error = %err, task_id = %task_id, "failed to upload task log");
+        }
         python_result?;
 
         let name_suffix = job_ctx.domain_data_name_suffix();
         output::upload_final_outputs(&workspace, ctx.output, &name_suffix, None).await?;
+        let _ = ctx
+            .ctrl
+            .progress(json!({"pct": 95, "stage": "upload"}))
+            .await;
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "upload",
+                "message": "outputs uploaded",
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
 
         ctx.ctrl
             .progress(json!({"progress": 100, "status": "succeeded"}))
@@ -177,6 +278,31 @@ impl Runner for RunnerReconstructionGlobal {
 
         Ok(())
     }
+}
+
+async fn upload_task_log(
+    sink: &dyn ArtifactSink,
+    workspace: &workspace::Workspace,
+    task_id: &str,
+) -> Result<()> {
+    let log_path = workspace.root().join("log.txt");
+    if !log_path.exists() {
+        warn!(task_id = %task_id, path = %log_path.display(), "task log missing");
+        return Ok(());
+    }
+
+    let rel_path = format!("logs/{task_id}.txt");
+    let name = format!("task_log_{task_id}");
+    sink.put_domain_artifact(DomainArtifactRequest {
+        rel_path: &rel_path,
+        name: &name,
+        data_type: "task_log_txt",
+        existing_id: None,
+        content: DomainArtifactContent::File(&log_path),
+    })
+    .await
+    .with_context(|| format!("upload task log {}", log_path.display()))?;
+    Ok(())
 }
 
 #[derive(Serialize)]

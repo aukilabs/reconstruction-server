@@ -96,10 +96,7 @@ struct ParsedLogInfo {
 /// If JSON is valid but no log level, the "message" is logged as INFO.
 fn parse_log_line(line: &str) -> ParsedLogInfo {
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-        let level_str = json
-            .get("level")
-            .and_then(|v| v.as_str())
-            .unwrap_or("INFO");
+        let level_str = json.get("level").and_then(|v| v.as_str()).unwrap_or("INFO");
         let level = match level_str.to_uppercase().as_str() {
             "ERROR" => Level::ERROR,
             "WARN" | "WARNING" => Level::WARN,
