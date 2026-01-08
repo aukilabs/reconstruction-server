@@ -1,6 +1,6 @@
 # Deployment
 
-The Reconstruction server is available on [Docker Hub](https://hub.docker.com/r/aukilabs/reconstruction-node). Both deployment options are Docker-based.
+The Reconstruction compute node (Rust) is available on [Docker Hub](https://hub.docker.com/r/aukilabs/reconstruction-node). Both deployment options are Docker-based and still run the same Python reconstruction pipeline under the hood.
 
 ## Initial Setup
 
@@ -30,6 +30,7 @@ The Reconstruction server is available on [Docker Hub](https://hub.docker.com/r/
       ```shell
       ngrok http --url my-cool-address.ngrok-free.app 8080
       ```
+      Then set `NODE_URL` in your `.env` to the HTTPS ngrok URL.
 
    <br/>
 
@@ -39,16 +40,54 @@ The Reconstruction server is available on [Docker Hub](https://hub.docker.com/r/
 
 3. Disable power-saving settings like automatic sleep or standby mode, to keep your computer on and able to receive jobs.
 
+4. Make sure the node is reachable from the public internet on port 8080. The compute node exposes:
+   - `GET /health` (liveness)
+   - `POST /internal/v1/registrations` (DDS registration callback)
+
+## Prepare credentials + env file
+
+Before you run the container, create a `.env` file with the required credentials:
+```shell
+DMS_BASE_URL=https://dms.auki.network
+DDS_BASE_URL=https://dds.auki.network
+NODE_URL=https://your-public-url
+REG_SECRET=your-registration-secret
+SECP256K1_PRIVHEX=your-evm-private-key
+LOG_FORMAT=text
+REQUEST_TIMEOUT_SECS=10
+REGISTER_INTERVAL_SECS=120
+REGISTER_MAX_RETRY=-1
+```
+
+Notes:
+- `REG_SECRET` comes from registering a **compute node** in the Posemesh Console.
+- `SECP256K1_PRIVHEX` is the hex-encoded private key of the **staked** EVM wallet for that node.
+- `NODE_URL` must be publicly reachable (include scheme + port, e.g. `https://example.com:8080`).
+- Optional runner tuning:
+  - `LOCAL_RUNNER_CPU_WORKERS` (default `2`)
+  - `GLOBAL_RUNNER_CPU_WORKERS` (default `2`)
+
+How to get the registration secret + wallet key:
+1. Log into the Posemesh Console at `https://console.auki.network/`.
+2. Open the **Manage Nodes** page and create a node (choose the appropriate operation mode).
+3. Copy the registration credentials shown — you will use these as `REG_SECRET`.
+4. Go to **Staking**, connect your wallet, and stake the required amount of $AUKI for that node.
+5. Export the wallet private key (hex) and set it as `SECP256K1_PRIVHEX`.
+
 ## Option 1 — Use the prebuilt image (recommended)
 
 Start Docker using the below command, ❗**including all flags**❗
 ```shell
-docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-node:stable -cpu-workers 2 -port :8080 -api-key aukilabs123
+docker run \
+  --gpus all \
+  --shm-size 512m \
+  -p 8080:8080 \
+  --env-file .env \
+  --name reconstruction-node \
+  -d \
+  aukilabs/reconstruction-node:latest
 ```
-
-💡 **NOTE 1:** Leave the -api-key as is, or use any non-sensitive phrase. During the community beta, you will need to provide this key to Auki Labs. This key is just an extra gate for incoming jobs, not used to access any user data.
-
-💡 **NOTE 2:** if your system has an older CPU or less RAM and you notice any issues, you may try to reduce the `-cpu-workers` to 1, or even 0 (to run only on the main thread).
+You can also pin a specific release tag, for example `aukilabs/reconstruction-node:vX.Y.Z`.
 
 ### Verification ✅
 
@@ -61,18 +100,23 @@ docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-no
    ```shell
    docker logs <container_id>
    ```
-   You should see something like `{"time": ..... , "[Server running on  :8080]"}`.
+   You should see logs indicating the HTTP server is listening and the node is registering with DDS.
 
 2. Ensure your GPU and CUDA works correctly (using the container ID from above):
    ```shell
+   docker exec <container_id> nvidia-smi
+   ```
+   This should show your GPU and driver information. If not, please double-check your setup, or see **Troubleshooting**.
+
+   If your image includes PyTorch, you can also run:
+   ```shell
    docker exec <container_id> python3 -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA not found')"
    ```
-   This should output the name of your main CUDA-supported GPU. If not, please double-check your setup, or see **Troubleshooting**.
 
 3. Make sure the server is reachable on a public IP or URL.
-   Open your browser and navigate to your URL + /jobs,
-   e.g. `https://my_amazing_node.ngrok.com/jobs` or `http://162.88.88.88:8080/jobs` \
-   This should show a list of reconstruction jobs, initially just `[]` (an empty list).
+   Open your browser and navigate to your URL + `/health`,
+   e.g. `https://my_amazing_node.ngrok.com/health` or `http://162.88.88.88:8080/health` \
+   This should return a 200 response.
 
 
 ## Option 2 — Build Docker image from source
@@ -86,7 +130,7 @@ docker run --gpus all --shm-size 512m -p 8080:8080 -d aukilabs/reconstruction-no
 docker buildx build --platform linux/amd64 -t {/your/docker/repo}:latest --load -f docker/Dockerfile .
 
 # Jetson Device
-DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo}:latest -f Dockerfile.jetson .
+DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/arm64 -t {/your/docker/repo}:latest -f docker/Dockerfile.jetson .
 ```
 
 Run the image as described in Option 1, and follow the same verification steps.
@@ -119,7 +163,7 @@ Here are some common issues you may encounter, with suggested fixes:
 - **Symptom:** Server stops or computer restarts during job processing
 - **Fix:**  
   - Monitor system RAM and temperatures, and check for overheating or insufficient resources.  
-  - Try lowering `-cpu-workers` to `1` or `0` in the `docker run` command.
+  - Try lowering `LOCAL_RUNNER_CPU_WORKERS` / `GLOBAL_RUNNER_CPU_WORKERS` in your `.env`.
 
 ### “out of shm” error
 - **Symptom:** Job fails with “out of shared memory.”  
