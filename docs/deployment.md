@@ -68,7 +68,7 @@ Notes:
   - `GLOBAL_RUNNER_CPU_WORKERS` (default `2`)
 
 How to get the registration secret + wallet key:
-1. Log into the Posemesh Console at `https://console.auki.network/`.
+1. Log in to the Posemesh Console at `https://console.auki.network/`.
 2. Open the **Manage Nodes** page and create a node (choose the appropriate operation mode).
 3. Copy the registration credentials shown — you will use these as `REG_SECRET`.
 4. Go to **Staking**, connect your wallet, and stake the required amount of $AUKI for that node.
