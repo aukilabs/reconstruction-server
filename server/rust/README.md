@@ -44,12 +44,15 @@ Supporting directories:
    workspace ships with `rust-toolchain.toml`).
 2. Export configuration:
    ```sh
-   export DMS_BASE_URL=https://dms.example
-   export REQUEST_TIMEOUT_SECS=10
-   export DDS_BASE_URL=https://dds.example
    export NODE_URL=https://node.example
    export REG_SECRET=replace-me
    export SECP256K1_PRIVHEX=32-byte-hex-string
+   ```
+   Optional overrides (defaults shown):
+   ```sh
+   export DMS_BASE_URL=https://dms.auki.network/v1
+   export DDS_BASE_URL=https://dds.auki.network
+   export REQUEST_TIMEOUT_SECS=60
    export LOG_FORMAT=text            # optional for readable logs
    ```
 3. Build and run the node:

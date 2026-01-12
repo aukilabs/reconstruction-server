@@ -48,15 +48,18 @@ The Reconstruction compute node (Rust) is available on [Docker Hub](https://hub.
 
 Before you run the container, create a `.env` file with the required credentials:
 ```shell
-DMS_BASE_URL=https://dms.auki.network
-DDS_BASE_URL=https://dds.auki.network
 NODE_URL=https://your-public-url
 REG_SECRET=your-registration-secret
 SECP256K1_PRIVHEX=your-evm-private-key
-LOG_FORMAT=text
-REQUEST_TIMEOUT_SECS=10
+```
+Optional overrides (defaults shown):
+```shell
+DMS_BASE_URL=https://dms.auki.network/v1
+DDS_BASE_URL=https://dds.auki.network
+REQUEST_TIMEOUT_SECS=60
 REGISTER_INTERVAL_SECS=120
 REGISTER_MAX_RETRY=-1
+LOG_FORMAT=text
 ```
 
 Notes:
