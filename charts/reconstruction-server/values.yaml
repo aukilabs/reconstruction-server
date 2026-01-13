@@ -21,8 +21,3 @@ reconstruction-server:
     - key: "dedicated"
       value: "gpuGroup"
       effect: "NoSchedule"
-  extraEnvMap:
-    REQUEST_TIMEOUT_SECS: "30"
-    POLL_BACKOFF_MS_MIN: "15000"
-    RUST_LOG: "info"
-    LEGACY_RUNNER_WORKSPACE_ROOT: "/app"
