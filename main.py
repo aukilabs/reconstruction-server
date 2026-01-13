@@ -208,7 +208,7 @@ def handle_refinement_error(error, args, logger):
     # Write error to fail_reason.txt for the Rust runner to read
     fail_reason_path = args.job_root_path / "fail_reason.txt"
     try:
-        fail_reason_path.write_text(error, encoding="utf-8")
+        fail_reason_path.write_text(str(error), encoding="utf-8")
         logger.info(f"Saved fail reason to: {fail_reason_path}")
     except Exception as write_err:
         logger.warning(f"Failed to write fail_reason.txt: {write_err}")
