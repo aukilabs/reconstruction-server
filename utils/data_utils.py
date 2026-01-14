@@ -423,8 +423,14 @@ def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corn
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
-
-def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None):
+def save_manifest_json(portal_poses,
+                       json_path,
+                       job_root_path,
+                       job_status=None,
+                       job_progress=None,
+                       job_status_details=None,
+                       portal_sizes=None,
+                       aligned_scans=None):
 
     job_root_path = Path(job_root_path)
 
@@ -611,6 +617,30 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         })
 
     #-------------------------
+
+    #-------------------------
+    # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
+    #-------------------------
+    if aligned_scans:
+        manifest_data["alignedScans"] = {}
+        for scan_id, sim3 in aligned_scans.items():
+            pos, quat = convert_pose_colmap_to_opengl(sim3.translation, sim3.rotation.quat)
+            manifest_data["alignedScans"][scan_id] = {
+                "localToDomain": {
+                    "scale": str(float(sim3.scale)),
+                    "position": {
+                        "x": str(float(pos[0])),
+                        "y": str(float(pos[1])),
+                        "z": str(float(pos[2])),
+                    },
+                    "rotation": {
+                        "x": str(float(quat[0])),
+                        "y": str(float(quat[1])),
+                        "z": str(float(quat[2])),
+                        "w": str(float(quat[3])),
+                    }
+                } 
+            }
 
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)

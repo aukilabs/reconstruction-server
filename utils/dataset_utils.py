@@ -46,6 +46,8 @@ class StitchingData:
     combined_rec: pycolmap.Reconstruction = None
     next_image_id: int = 1
     portal_sizes: Dict[str, float] = None
+    scan_ids: List[str] = None
+    alignment_transforms: Dict[str, pycolmap.Sim3d] = None
 
     def __post_init__(self):
         self.detections_per_qr = self.detections_per_qr or {}
@@ -56,6 +58,8 @@ class StitchingData:
         self.chunks_image_ids = self.chunks_image_ids or []
         self.combined_rec = self.combined_rec or pycolmap.Reconstruction()
         self.portal_sizes = self.portal_sizes or {}
+        self.scan_ids = self.scan_ids or []
+        self.alignment_transforms = self.alignment_transforms or {}
 
 @dataclass
 class StitchingResult:
@@ -113,6 +117,8 @@ def stitching_helper(
     # Initialize paths and data
     paths = _initialize_paths(group_folder)
     stitch_data = StitchingData()
+
+    stitch_data.scan_ids = [dataset_path.stem for dataset_path in dataset_paths]
 
     # Process datasets
     aligned_datasets = _process_datasets(
@@ -175,7 +181,7 @@ def stitching_helper(
 
 
 def load_partial(
-    unzip_folder: Path,
+    scan_dataset_folder: Path,
     truth_portal_poses: Dict[str, pycolmap.Rigid3d],
     stitch_data: StitchingData,
     partial_rec_dir: Optional[Path],
@@ -186,7 +192,7 @@ def load_partial(
     """Load and process a partial reconstruction for stitching.
     
     Args:
-        unzip_folder: Path to the unzipped dataset folder
+        scan_dataset_folder: Path to the scan dataset folder
         dataset_dir: Path to the datasets directory
         dataset_group: Name of the dataset group
         truth_portal_poses: Ground truth portal poses if available
@@ -218,6 +224,7 @@ def load_partial(
         truth_portal_poses if gt_observations else None
     )
 
+    scan_id = scan_dataset_folder.stem
 
     # Find overlapping portals and calculate alignment
     rigid_alignment_transform = _calculate_alignment_transform(
@@ -231,6 +238,8 @@ def load_partial(
         rigid_alignment_transform.rotation.quat,
         rigid_alignment_transform.translation
     )
+
+    stitch_data.alignment_transforms[scan_id] = alignment_transform
 
     # Update placed portals
     _update_placed_portals(
@@ -249,6 +258,7 @@ def load_partial(
         with_3dpoints,
         logger
     )
+
 
     return stitch_data
 
@@ -505,7 +515,7 @@ def _process_datasets(
         scan_name = dataset_path.stem
 
         try:
-            unzip_folder = _prepare_dataset(dataset_path, paths.dataset_dir, logger)
+            scan_dataset_folder = _prepare_dataset(dataset_path, paths.dataset_dir, logger)
             partial_rec_dir = _get_refined_rec_dir(
                 use_refined_outputs,
                 paths.refined_group_dir,
@@ -533,7 +543,7 @@ def _process_datasets(
                 raise NoOverlapException()
 
             stitch_data = load_partial(
-                unzip_folder,
+                scan_dataset_folder,
                 truth_portal_poses,
                 stitch_data,
                 partial_rec_dir,
@@ -542,7 +552,7 @@ def _process_datasets(
             )
 
             consecutive_alignment_fails = 0
-            datasets_already_aligned.add(unzip_folder)
+            datasets_already_aligned.add(scan_dataset_folder)
             logger.info(f"Aligned {len(datasets_already_aligned)} datasets, {len(datasets_to_align)} remaining")
 
         except NoOverlapException:
@@ -601,7 +611,6 @@ def _get_basic_stitch_results(
         stitch_data.detections_per_qr,
         stitch_data.image_ids_per_qr
     )
-    
 
     mean_qr_poses = {qr_id: mean_pose(poses) 
                     for qr_id, poses in qr_detections.items()}
@@ -615,6 +624,7 @@ def _get_basic_stitch_results(
         detections=qr_detections,
         poses=mean_qr_poses
     )
+
 
 def _handle_basic_stitch(
     basic_results: StitchResults,
@@ -653,7 +663,8 @@ def _handle_basic_stitch(
         paths.parent_dir,
         job_status="refined",
         job_progress=100,
-        portal_sizes=stitch_data.portal_sizes
+        portal_sizes=stitch_data.portal_sizes,
+        aligned_scans=stitch_data.alignment_transforms
     )
 
     return StitchingResult(
@@ -677,13 +688,19 @@ def _get_refined_results(
 ) -> StitchResults:
     """Get results from refined stitching."""
     # Align reconstruction chunks
-    align_reconstruction_chunks(
+    alignment_transforms = align_reconstruction_chunks(
         stitch_data.combined_rec,
         stitch_data.chunks_image_ids,
         stitch_data.detections_per_qr,
         stitch_data.image_ids_per_qr,
         with_scale=True
     )
+    
+    # align_reconstruction_chunks returns the alignment transform relative to the basic stitch
+    scan_alignment_transforms = {
+        scan_name: sim3 * stitch_data.alignment_transforms[scan_name]
+        for scan_name, sim3 in zip (stitch_data.scan_ids, alignment_transforms)
+    }
     
     # World space QR detections using globally refined camera poses
     refined_detections = get_world_space_qr_codes(
@@ -704,8 +721,11 @@ def _get_refined_results(
         paths.parent_dir,
         job_status="refined",
         job_progress=100,
-        portal_sizes=stitch_data.portal_sizes
+        portal_sizes=stitch_data.portal_sizes,
+        aligned_scans=scan_alignment_transforms
     )
+
+   
 
     if with_3dpoints:
         sfm_dir = paths.output_path / "refined_sfm_combined"
@@ -725,5 +745,9 @@ def _get_refined_results(
     #        correct_scale=True
     #    )
 
-    return StitchResults(rec=stitch_data.combined_rec, detections=refined_detections, poses=mean_poses)
+    return StitchResults(
+        rec=stitch_data.combined_rec,
+        detections=refined_detections,
+        poses=mean_poses
+    )
 

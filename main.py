@@ -105,6 +105,38 @@ def local_main_wrapper(args, logger):
         process_all()
 
 
+import requests
+import json
+def train_splat(job_root, logger):
+    """
+    Makes a blocking POST request to /train_splat, waiting as long as needed.
+    Prints the HTTP status code and response body upon completion.
+    
+    Args:
+        job_root: Path to the root of the job (string or Path)
+        logger: Logger instance (optional)
+    """
+    url = "http://host.docker.internal:8082/train_splat"
+    headers = {"Content-Type": "application/json"}
+
+    # Build the request data
+    payload = {
+        "job_root": "D:/rec-server-new/" + str(job_root),
+        "use_filtered": True,
+        #"iterations": 20000
+        #"convert_to_sog": True,
+        "convert_to_splat": True,
+    }
+
+    try:
+        # stream=True disables read timeout; timeout=None disables both connect/read timeout
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=None)
+        print(f"HTTP status code: {response.status_code}")
+        print(f"Response body:\n{response.text}")
+    except Exception as e:
+        print(f"Exception occurred during train_splat request: {e}")
+
+
 def global_main_wrapper(args, logger):
     """Run global refinement process.
     
@@ -158,6 +190,10 @@ def local_and_global_main_wrapper(args, logger):
     local_main_wrapper(local_args, logger)
     global_main_wrapper(args, logger)
 
+    logger.info("Starting train_splat...")
+    train_splat(args.job_root_path, logger)
+    logger.info("DONE with train_splat")
+
 
 def get_available_scans(datasets_path):
     """Get list of available scans in the datasets directory.
@@ -184,6 +220,15 @@ def process_refinement(args, logger):
     # Set default output path if not specified
     if not args.output_path:
         args.output_path = args.job_root_path / "refined"
+
+    """
+    #global_main_wrapper(args, logger)
+
+    logger.info("Starting train_splat...")
+    #train_splat(args.job_root_path, logger)
+    logger.info("DONE with train_splat")
+    return
+    """
 
     # Map refinement modes to their respective functions
     refinement_functions = {

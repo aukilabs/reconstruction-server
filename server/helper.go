@@ -419,31 +419,43 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 			Name:     "topologymesh_v1_lowpoly_glb",
 			DataType: "glb",
 			Optional: true,
-		},
-		{
-			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.obj"),
-			Name:     "topologymesh_v1_midpoly_obj",
-			DataType: "obj",
-			Optional: true,
-		},
-		{
-			FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.glb"),
-			Name:     "topologymesh_v1_midpoly_glb",
-			DataType: "glb",
-			Optional: true,
-		},
-		{
-			FilePath: path.Join(refinedOutput, "topology", "topology.obj"),
-			Name:     "topologymesh_v1_highpoly_obj",
-			DataType: "obj",
-			Optional: true,
-		},
-		{
-			FilePath: path.Join(refinedOutput, "topology", "topology.glb"),
-			Name:     "topologymesh_v1_highpoly_glb",
-			DataType: "glb",
-			Optional: true,
-		},
+		}, /*
+				{
+					FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.obj"),
+					Name:     "topologymesh_v1_midpoly_obj",
+					DataType: "obj",
+					Optional: true,
+				},
+				{
+					FilePath: path.Join(refinedOutput, "topology", "topology_downsampled_0.333.glb"),
+					Name:     "topologymesh_v1_midpoly_glb",
+					DataType: "glb",
+					Optional: true,
+				},
+				{
+					FilePath: path.Join(refinedOutput, "topology", "topology.obj"),
+					Name:     "topologymesh_v1_highpoly_obj",
+					DataType: "obj",
+					Optional: true,
+				},
+				{
+					FilePath: path.Join(refinedOutput, "topology", "topology.glb"),
+					Name:     "topologymesh_v1_highpoly_glb",
+					DataType: "glb",
+					Optional: true,
+				},
+			{
+				FilePath: path.Join(refinedOutput, "combined_splat.splat"),
+				Name:     "refined_splat",
+				DataType: "refined_splat",
+				Optional: true,
+			},
+			{
+				FilePath: path.Join(refinedOutput, "combined_splat.sog"),
+				Name:     "refined_splat_sog",
+				DataType: "refined_splat_sog",
+				Optional: true,
+			},*/
 	}
 
 	outputCount := 0
@@ -463,7 +475,90 @@ func UploadRefinedOutputsToDomain(j *job) (int, error) {
 		return outputCount, errors.New("failed to upload refined outputs to domain").Wrap(err)
 	}
 
+	// Upload partitioned splat files (combined_splat_partition_*.splat and combined_splat_partition_*.sog)
+	partitionedSplatCount, err := UploadPartitionedSplatFiles(j, refinedOutput)
+	if err != nil {
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Failed to upload partitioned splat files (non-fatal): %s", err.Error())
+	}
+	outputCount += partitionedSplatCount
+
 	return outputCount, nil
+}
+
+// UploadPartitionedSplatFiles uploads all partitioned splat files matching
+// combined_splat_partition_*.splat and combined_splat_partition_*.sog patterns.
+// Returns the count of files uploaded.
+func UploadPartitionedSplatFiles(j *job, refinedOutput string) (int, error) {
+	uploadCount := 0
+	refinedOutputPath := path.Join(j.JobPath, refinedOutput)
+
+	// Upload combined_splat_partition_*.splat files as refined_splat_partition_*
+	splatPattern := path.Join(refinedOutputPath, "combined_splat_partition_*.splat")
+	splatFiles, err := filepath.Glob(splatPattern)
+	if err != nil {
+		return uploadCount, errors.New("failed to glob splat partition files").Wrap(err)
+	}
+
+	for _, splatFile := range splatFiles {
+		// Extract partition suffix from filename (e.g., "0" from "combined_splat_partition_0.splat")
+		baseName := filepath.Base(splatFile)
+		suffix := strings.TrimSuffix(strings.TrimPrefix(baseName, "combined_splat_partition_"), ".splat")
+
+		relPath, _ := filepath.Rel(path.Join(j.JobPath), splatFile)
+		output := ExpectedOutput{
+			FilePath: relPath,
+			Name:     "refined_splat_partition_" + suffix,
+			DataType: "refined_splat",
+			Optional: true,
+		}
+
+		if err := UploadOutputToDomain(j, output); err != nil {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("Failed to upload partitioned splat %s: %s", baseName, err.Error())
+		} else {
+			uploadCount++
+		}
+	}
+
+	// Upload combined_splat_partition_*.sog files as refined_splat_sog_partition_*
+	sogPattern := path.Join(refinedOutputPath, "combined_splat_partition_*.sog")
+	sogFiles, err := filepath.Glob(sogPattern)
+	if err != nil {
+		return uploadCount, errors.New("failed to glob sog partition files").Wrap(err)
+	}
+
+	for _, sogFile := range sogFiles {
+		// Extract partition suffix from filename (e.g., "0" from "combined_splat_partition_0.sog")
+		baseName := filepath.Base(sogFile)
+		suffix := strings.TrimSuffix(strings.TrimPrefix(baseName, "combined_splat_partition_"), ".sog")
+
+		relPath, _ := filepath.Rel(path.Join(j.JobPath), sogFile)
+		output := ExpectedOutput{
+			FilePath: relPath,
+			Name:     "refined_splat_sog_partition_" + suffix,
+			DataType: "refined_splat_sog",
+			Optional: true,
+		}
+
+		if err := UploadOutputToDomain(j, output); err != nil {
+			logs.WithTag("job_id", j.ID).
+				WithTag("domain_id", j.DomainID).
+				Infof("Failed to upload partitioned sog %s: %s", baseName, err.Error())
+		} else {
+			uploadCount++
+		}
+	}
+
+	if uploadCount > 0 {
+		logs.WithTag("job_id", j.ID).
+			WithTag("domain_id", j.DomainID).
+			Infof("Uploaded %d partitioned splat/sog files", uploadCount)
+	}
+
+	return uploadCount, nil
 }
 
 func UploadOutputsToDomain(j *job, expectedOutputs []ExpectedOutput) error {

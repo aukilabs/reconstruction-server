@@ -262,7 +262,7 @@ def run_triangulation(
                 num_ba_iterations_total += additional_iterations
                 ba_iterations_remaining += additional_iterations
             
-            if ba_iterations_remaining == 1:
+            if ba_iterations_remaining == 1 and retriangulated:
                 ba_options.refine_focal_length = True
                 ba_options.refine_extra_params = True
 
@@ -340,6 +340,7 @@ def process_features_and_matching(
     # Feature extraction for loop closure
     if use_loop_closure:
         global_feature_conf = extract_features.confs["eigenplaces"]
+        global_feature_conf["model"]["variant"] = "EigenPlaces:main"
         global_feature_conf["output"] = paths.global_features
         extract_features.main(
             global_feature_conf,
@@ -375,7 +376,7 @@ def process_features_and_matching(
     # Feature extraction
     feature_conf = extract_features.confs["aliked-n16"]
     feature_conf["model"]["max_num_keypoints"] = 1024
-    feature_conf["model"]["detection_threshold"] = 0.3
+    feature_conf["model"]["detection_threshold"] = 0.4
     feature_conf["model"]["nms_radius"] = 4
     feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = paths.features

@@ -48,7 +48,7 @@ def align_reconstruction_chunks(
         detections_per_qr: Dict[str, List[pycolmap.Rigid3d]],
         image_ids_per_qr: Dict[str, List[int]],
         with_scale: bool = True
-    ):
+    ) -> List[pycolmap.Sim3d]:
 
     print("Going to optimize chunk alignment...")
 
@@ -179,4 +179,4 @@ def align_reconstruction_chunks(
 
     print("Chunk alignment optimization DONE\n")
 
-    return
+    return t_local_chunks
