@@ -19,7 +19,7 @@ from utils.data_utils import (
     save_manifest_json,
     export_rec_as_ply
 )
-from utils.geometry_utils import align_reconstruction_chunks, run_stitching
+from utils.geometry_utils import align_reconstruction_chunks
 from utils.io import Model, read_portal_csv
 
 
@@ -241,7 +241,7 @@ def load_partial(
     )
 
     # Process reconstruction
-    _process_reconstruction_optimized(
+    _process_reconstruction(
         loaded_rec,
         alignment_transform,
         qr_detections,
@@ -370,7 +370,7 @@ def transform_with_scale(alignment_transform: pycolmap.Sim3d, pose: pycolmap.Rig
     pose = alignment_transform * pose
     return pycolmap.Rigid3d(pose.rotation, pose.translation)
 
-def _process_reconstruction_optimized(
+def _process_reconstruction(
     loaded_rec: Model,
     alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
@@ -393,31 +393,48 @@ def _process_reconstruction_optimized(
         old_cam_id = old_img.camera_id
         old_cam = pycolmap_rec.cameras[old_cam_id]
 
-        new_img_id = stitch_data.next_image_id
-        new_camera_id = new_img_id
-
-        list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in old_img.points2D]
-        new_img = pycolmap.Image(
-            old_img.name,
-            pycolmap.ListPoint2D(list_point_2d),
-            old_img.cam_from_world,
-            new_camera_id,
-            new_img_id
-        )
+        new_id = stitch_data.next_image_id
         
-        image_id_old_to_new[old_img_id] = new_img_id
-
         new_cam = pycolmap.Camera(
             model=old_cam.model,
             width=old_cam.width,
             height=old_cam.height,
             params=old_cam.params,
-            camera_id=new_camera_id
+            camera_id=new_id
         )
         stitch_data.combined_rec.add_camera(new_cam)
 
+        new_rig = pycolmap.Rig()
+        new_rig.rig_id = new_id
+
+        sensor = pycolmap.sensor_t(type=pycolmap.SensorType.CAMERA, id=new_id)
+        new_rig.add_ref_sensor(sensor)
+        stitch_data.combined_rec.add_rig(new_rig)
+
+        new_frame = pycolmap.Frame(
+            rig_id = new_id,
+            rig_from_world = old_img.frame.rig_from_world,
+            frame_id = new_id
+        )
+        new_frame.add_data_id(pycolmap.data_t(
+            sensor_id=sensor,
+            id=new_id
+        ))
+        stitch_data.combined_rec.add_frame(new_frame)
+
+        list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in old_img.points2D]
+        new_img = pycolmap.Image(
+            old_img.name,
+            pycolmap.Point2DList(list_point_2d),
+            new_id,
+            new_id
+        )
+        new_img.frame_id = new_id
+        
+        image_id_old_to_new[old_img_id] = new_id
+
         stitch_data.combined_rec.add_image(new_img)
-        stitch_data.combined_rec.register_image(new_img_id)
+        stitch_data.combined_rec.register_frame(new_id)
         stitch_data.next_image_id += 1
 
     # Step 3: Copy 3D points if requested
@@ -446,114 +463,7 @@ def _process_reconstruction_optimized(
             stitch_data.image_ids_per_qr[qr_id] = []
 
         cam_space_qr_pose = (
-            pycolmap_rec.images[detection["image_id"]].cam_from_world * 
-            detection["pose"]
-        )
-        stitch_data.detections_per_qr[qr_id].append(cam_space_qr_pose)
-        stitch_data.image_ids_per_qr[qr_id].append(
-            image_id_old_to_new[detection["image_id"]]
-        )
-
-def _process_reconstruction(
-    loaded_rec: Model,
-    alignment_transform: Optional[pycolmap.Sim3d],
-    qr_detections: List[Dict],
-    timestamp_chunk: Dict[str, int],
-    stitch_data: StitchingData,
-    with_3dpoints: bool,
-    logger
-) -> None:
-    """Process and combine reconstructions."""
-    pycolmap_rec = pycolmap.Reconstruction()
-    pycolmap_rec.read(loaded_rec.get_path())
-    if alignment_transform is not None:
-        pycolmap_rec.transform(alignment_transform)
-        for detection in qr_detections:
-            detection["pose"] = transform_with_scale(alignment_transform, detection["pose"])
-
-    image_id_old_to_new = {}
-    arkit_cam_from_world_transforms = {}
-    rec2 = pycolmap.Reconstruction()
-
-    # Process images
-    measure_start = time.time()
-    for old_img_id in pycolmap_rec.reg_image_ids():
-        new_image_id = stitch_data.next_image_id
-        new_camera_id = new_image_id
-        
-        # Add camera
-        old_camera_id = pycolmap_rec.images[old_img_id].camera_id
-        cam = pycolmap_rec.cameras[old_camera_id]
-        cam2 = pycolmap.Camera(
-            model=cam.model,
-            width=cam.width,
-            height=cam.height,
-            params=cam.params,
-            camera_id=new_camera_id
-        )
-        stitch_data.combined_rec.add_camera(cam2)
-        rec2.add_camera(cam2)
-
-        # Add image
-        img = pycolmap_rec.images[old_img_id]
-        list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in img.points2D]
-        img2 = pycolmap.Image(
-            img.name,
-            pycolmap.ListPoint2D(list_point_2d),
-            img.cam_from_world,
-            new_camera_id,
-            new_image_id
-        )
-        stitch_data.combined_rec.add_image(img2)
-        stitch_data.combined_rec.register_image(new_image_id)
-        rec2.add_image(img2)
-        rec2.register_image(new_image_id)
-
-        image_id_old_to_new[old_img_id] = new_image_id
-        arkit_cam_from_world_transforms[new_image_id] = img.cam_from_world.inverse()
-        stitch_data.next_image_id += 1
-    measure_end = time.time()
-    logger.info(f"Transform reconstruction images and cams took {measure_end - measure_start:.2f} seconds")
-
-    # Add 3D points if requested
-    if with_3dpoints:
-        for point3D in pycolmap_rec.points3D.values():
-            point3D_id_new = stitch_data.combined_rec.add_point3D(
-                point3D.xyz, 
-                pycolmap.Track(), 
-                point3D.color
-            )
-            point3D_track = point3D.track
-            for element in point3D_track.elements:
-                element.image_id = image_id_old_to_new[element.image_id]
-                stitch_data.combined_rec.add_observation(point3D_id_new, element)
-
-    # Update timestamps
-    for filename, timestamp in timestamp_chunk.items():
-        assert filename not in stitch_data.timestamp_per_image
-        stitch_data.timestamp_per_image[filename] = timestamp
-
-    # Process sorted image IDs
-    sorted_image_ids = sorted(list(rec2.images.keys()))
-    stitch_data.chunks_image_ids.append(sorted_image_ids)
-
-    # Precompute ARKit offsets
-    stitch_data.arkit_precomputed = precompute_arkit_offsets(
-        sorted_image_ids,
-        arkit_cam_from_world_transforms,
-        stitch_data.arkit_precomputed
-    )
-
-    # Process QR detections
-    for detection in qr_detections:
-        qr_id = detection["short_id"]
-        if qr_id not in stitch_data.detections_per_qr:
-            stitch_data.detections_per_qr[qr_id] = []
-        if qr_id not in stitch_data.image_ids_per_qr:
-            stitch_data.image_ids_per_qr[qr_id] = []
-
-        cam_space_qr_pose = (
-            pycolmap_rec.images[detection["image_id"]].cam_from_world * 
+            pycolmap_rec.images[detection["image_id"]].cam_from_world() * 
             detection["pose"]
         )
         stitch_data.detections_per_qr[qr_id].append(cam_space_qr_pose)

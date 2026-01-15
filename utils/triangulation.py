@@ -4,7 +4,6 @@ from typing import Any, Dict, Optional, List
 import logging
 import numpy as np
 from numpy.linalg import norm
-
 import pycolmap
 import pyceres
 
@@ -17,7 +16,6 @@ def run_triangulation(
     database_path: Path,
     image_dir: Path,
     reference_model: pycolmap.Reconstruction,
-    options: Dict[str, Any],
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
@@ -26,214 +24,226 @@ def run_triangulation(
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
 
-    mapper_options = pycolmap.IncrementalMapperOptions(options)
+    with pycolmap.Database.open(database_path) as database:
+        
+        mapper_options = pycolmap.IncrementalMapperOptions({
+            #"filter_min_tri_angle": 1.0
+            #"filter_max_reproj_error": 6.0
+        })
+        min_num_matches = 15
+        ignore_watermarks = True
+        image_names = set()
+        database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+        reconstruction = deepcopy(reference_model)
 
-    database = pycolmap.Database(database_path)
+        # Instead of deepcopy.
+        # Workaround for occasional bug in pycolmap 3.10.
+        # Supposedly fixed in 3.11, but has several breaking changes we need to check more carefully.
+        #reconstruction = pycolmap.Reconstruction()
+        #reconstruction = pycolmap.Reconstruction(reference_model)
+        #for img in reference_model.images.values():
+        #    if database_cache.exists_image(img.image_id):
+        #        reconstruction.add_image(img)
+        #for cam in reference_model.cameras.values():
+        #    if database_cache.exists_camera(cam.camera_id):
+        #        reconstruction.add_camera(cam)
 
-    min_num_matches = 15
-    ignore_watermarks = True
-    image_names = set()
-    database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+        #clear_points = False
+        #if clear_points:
+        #    for point3D_id in reconstruction.point3D_ids():
+        #        reconstruction.delete_point3D(point3D_id)
 
-    #reconstruction = deepcopy(reference_model)
-    
-    # Instead of deepcopy.
-    # Workaround for occasional bug in pycolmap 3.10.
-    # Supposedly fixed in 3.11, but has several breaking changes we need to check more carefully.
-    reconstruction = pycolmap.Reconstruction()
-    for img in reference_model.images.values():
-        if database_cache.exists_image(img.image_id):
-            reconstruction.add_image(img)
-    for cam in reference_model.cameras.values():
-        if database_cache.exists_camera(cam.camera_id):
-            reconstruction.add_camera(cam)
+        filter_spikes = True
+        if filter_spikes:
+            prev_pose = None
+            prev_pose_new = None
+            prev_diff_pose = None
+            has_spikes = False
+            new_cam_from_world_per_image_id = {}
+            for image_id in sorted(reconstruction.images.keys()):
+                image = reconstruction.images[image_id]
+                pose = image.cam_from_world().inverse()
+                arkit_precomputed[image_id]["arkit_spike"] = False
 
-    #clear_points = False
-    #if clear_points:
-    #    for point3D_id in reconstruction.point3D_ids():
-    #        reconstruction.delete_point3D(point3D_id)
+                if prev_pose is None:
+                    prev_pose = pose
+                    prev_pose_new = pose
+                    prev_diff_pose = pycolmap.Rigid3d()
+                    new_cam_from_world_per_image_id[image_id] = image.cam_from_world()
+                    continue
 
-    filter_spikes = True
-    if filter_spikes:
-        prev_pose = None
-        prev_pose_new = None
-        prev_diff_pose = None
-        has_spikes = False
-        new_cam_from_world_per_image_id = {}
-        for image_id in sorted(reconstruction.images.keys()):
-            image = reconstruction.images[image_id]
-            pose = image.cam_from_world.inverse()
-            arkit_precomputed[image_id]["arkit_spike"] = False
+                diff_pose = prev_pose.inverse() * pose
+                if norm(diff_pose.translation - prev_diff_pose.translation) > 0.3: # Probable ARKit spike (loop closure)
+                    logger.info(f"SPIKE> Spike detected at {image_id}. Diff translation: {diff_pose.translation}")
+                    diff_pose.rotation = pycolmap.Rotation3d()
+                    diff_pose.translation = np.array(prev_diff_pose.translation)
+                    if norm(diff_pose.translation) > 0.05:
+                        diff_pose.translation *= 0.05 / norm(diff_pose.translation)
 
-            if prev_pose is None:
+                    logger.info(f"SPIKE> Spike detected at {image_id}. New diff_translation: {diff_pose.translation}")
+                    arkit_precomputed[image_id]["arkit_spike"] = True
+                    has_spikes = True
+
+                pose_new = prev_pose_new * diff_pose
+                prev_pose_new = pose_new
                 prev_pose = pose
-                prev_pose_new = pose
-                prev_diff_pose = pycolmap.Rigid3d()
-                new_cam_from_world_per_image_id[image_id] = image.cam_from_world
+                prev_diff_pose = diff_pose
+                new_cam_from_world_per_image_id[image_id] = pose_new.inverse()
+
+            if has_spikes:
+                logger.info("SPIKE> Has spikes")
+                for image_id, image in reconstruction.images.items():
+                    if image_id in new_cam_from_world_per_image_id:
+                        image.frame.rig_from_world = new_cam_from_world_per_image_id[image_id]
+
+                        if arkit_precomputed and image_id in arkit_precomputed:
+                            arkit_precomputed[image_id]["cam_from_world"] = image.cam_from_world()
+
+        mapper = pycolmap.IncrementalMapper(database_cache)
+        mapper.begin_reconstruction(reconstruction)
+
+        tri_options = pycolmap.IncrementalTriangulatorOptions()
+        tri_options.re_min_ratio = 0.8
+        tri_options.re_max_angle_error = 8.0
+        tri_options.re_max_trials = 3
+
+        for image_id in reconstruction.reg_image_ids():
+            image = reconstruction.images[image_id]
+            num_existing_points = image.num_points3D
+            try:
+                mapper.triangulate_image(tri_options, image_id)
+            except IndexError as e:
+                logger.error(f"Error triangulating image {image_id}: {e}")
                 continue
+            #logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
 
-            diff_pose = prev_pose.inverse() * pose
-            if norm(diff_pose.translation - prev_diff_pose.translation) > 0.3: # Probable ARKit spike (loop closure)
-                logger.info(f"SPIKE> Spike detected at {image_id}. Diff translation: {diff_pose.translation}")
-                diff_pose.rotation = pycolmap.Rotation3d()
-                diff_pose.translation = np.array(prev_diff_pose.translation)
-                if norm(diff_pose.translation) > 0.05:
-                    diff_pose.translation *= 0.05 / norm(diff_pose.translation)
+        mapper.complete_and_merge_tracks(tri_options)
 
-                logger.info(f"SPIKE> Spike detected at {image_id}. New diff_translation: {diff_pose.translation}")
-                arkit_precomputed[image_id]["arkit_spike"] = True
-                has_spikes = True
+        ba_options = pycolmap.BundleAdjustmentOptions()
 
-            pose_new = prev_pose_new * diff_pose
-            prev_pose_new = pose_new
-            prev_pose = pose
-            prev_diff_pose = diff_pose
-            new_cam_from_world_per_image_id[image_id] = pose_new.inverse()
+        ba_options.refine_focal_length = False
+        ba_options.refine_principal_point = False
+        ba_options.refine_extra_params = False
+        ba_options.refine_sensor_from_rig = False
+        ba_options.refine_rig_from_world = True
+        ba_options.solver_options.max_num_iterations = 100
+        ba_options.solver_options.gradient_tolerance = 1.0
+        ba_options.solver_options.logging_type = pyceres.LoggingType.SILENT
 
-        if has_spikes:
-            logger.info("SPIKE> Has spikes")
-            for image_id, image in reconstruction.images.items():
-                if image_id in new_cam_from_world_per_image_id:
-                    image.cam_from_world = new_cam_from_world_per_image_id[image_id]
+        num_ba_iterations_total = 4
 
-                    if arkit_precomputed and image_id in arkit_precomputed:
-                        arkit_precomputed[image_id]["cam_from_world"] = deepcopy(image.cam_from_world)
+        sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
-    mapper = pycolmap.IncrementalMapper(database_cache)
-    mapper.begin_reconstruction(reconstruction)
+        retriangulated = False
+        ba_iterations_remaining = num_ba_iterations_total
+        while ba_iterations_remaining > 0:
+            mapper.observation_manager.filter_observations_with_negative_depth()
 
-    tri_options = pycolmap.IncrementalTriangulatorOptions()
-    tri_options.re_min_ratio = 0.8
-    tri_options.re_max_angle_error = 8.0
-    tri_options.re_max_trials = 3
+            num_observations = reconstruction.compute_num_observations()
 
-    for image_id in reconstruction.reg_image_ids():
-        image = reconstruction.images[image_id]
-        num_existing_points = image.num_points3D
-        try:
-            mapper.triangulate_image(tri_options, image_id)
-        except IndexError as e:
-            logger.error(f"Error triangulating image {image_id}: {e}")
-            continue
-        #logger.info(f'Image {image_id}: seen {num_existing_points} points, triangulated {image.num_points3D - num_existing_points} points.')
+            logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
 
-    mapper.complete_and_merge_tracks(tri_options)
+            ba_config = pycolmap.BundleAdjustmentConfig()
 
-    ba_options = pycolmap.BundleAdjustmentOptions()
+            for image_id in sorted_image_ids:
+                #logger.info(f"Adding image {image_id} to bundle adjustment")
+                ba_config.add_image(image_id)
 
-    ba_options.refine_focal_length = False
-    ba_options.refine_principal_point = False
-    ba_options.refine_extra_params = False
-    ba_options.refine_extrinsics = True
-    ba_options.solver_options.max_num_iterations = 100
-    ba_options.solver_options.gradient_tolerance = 1.0
-    ba_options.solver_options.logging_type = pyceres.LoggingType.SILENT
-    ba_options.solver_options.minimizer_progress_to_stdout = False
+            loss = ba_options.create_loss_function()
 
-    num_ba_iterations_total = 4
+            # Fix 7-DOFs of the bundle adjustment problem
+            ba_config.set_constant_rig_from_world_pose(sorted_image_ids[0])
+            #TODO how to do this in pycolmap 3.12?
+            #ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
+            ba_config.set_constant_rig_from_world_pose(sorted_image_ids[1])
+            #ba_config.fix_gauge(pycolmap.BundleAdjustmentGauge.TWO_CAMS_FROM_WORLD)
 
-    sorted_image_ids = sorted(reconstruction.reg_image_ids())
+            # Adjust refinement config to add more weight to relative se3 poses (to keep scale from changing),
+            # and set max speed between adjacent frames (to filter out potential arkit pose jumps).
+            # These values were selected experimentally, and might require some adjustment.
 
-    retriangulated = False
-    ba_iterations_remaining = num_ba_iterations_total
-    while ba_iterations_remaining > 0:
-        mapper.observation_manager.filter_observations_with_negative_depth()
+            refinement_config = {
+                'add_rel_constraints': True,
+                'use_arkit_relposes': True,
+                'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
+                'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
+                'use_arkit_centerdist': False,
+                'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
+                'floor_height_weight': 1e4,
+                'floor_direction_weight': 1e2,
+            }
 
-        num_observations = reconstruction.compute_num_observations()
+            bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
+            bundle_adjuster.set_up_problem(
+                reconstruction, 
+                loss, 
+                timestamp_per_image=timestamp_per_image, 
+                arkit_precomputed=arkit_precomputed, 
+                detections_per_qr=detections_per_qr,
+                image_ids_per_qr=image_ids_per_qr
+            )
 
-        logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
+            logger.debug(f"Setting up solver options...")
+            solver_options = bundle_adjuster.set_up_solver_options(
+                bundle_adjuster.problem, ba_options.solver_options
+            )
+            solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
+            #solver_options.linear_solver_type = pyceres.LinearSolverType.DENSE_SCHUR
+            #solver_options.dense_linear_algebra_library_type = pyceres.DenseLinearAlgebraLibraryType.CUDA
 
-        ba_config = pycolmap.BundleAdjustmentConfig()
+            initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
-        for image_id in sorted_image_ids:
-            ba_config.add_image(image_id)
+            summary = pyceres.SolverSummary()
+            logger.debug("calling pyceres.solve() ...")
+            pyceres.solve(solver_options, bundle_adjuster.problem, summary)
+            logger.info("Solved!")
 
-        loss = ba_options.create_loss_function()
+            final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
 
-        # Fix 7-DOFs of the bundle adjustment problem
-        ba_config.set_constant_cam_pose(sorted_image_ids[0])
-        ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
+            logger.info("------------")
+            logger.info("INITIAL LOSS BREAKDOWN:")
+            for category, loss in initial_loss_breakdown.items():
+                logger.info(f"{category}: {loss}")
+            logger.info("------------")
+            logger.info("FINAL LOSS BREAKDOWN:")
+            for category, loss in final_loss_breakdown.items():
+                logger.info(f"{category}: {loss}")
+            logger.info("------------")
 
-        # Adjust refinement config to add more weight to relative se3 poses (to keep scale from changing),
-        # and set max speed between adjacent frames (to filter out potential arkit pose jumps).
-        # These values were selected experimentally, and might require some adjustment.
+            # logger.info("\n".join(summary.FullReport().split(",")))
+            logger.info(f"{summary.FullReport()}")
 
-        refinement_config = {
-            'add_rel_constraints': True,
-            'use_arkit_relposes': True,
-            'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
-            'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
-            'use_arkit_centerdist': False,
-            'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
-            'floor_height_weight': 1e4,
-            'floor_direction_weight': 1e2,
-        }
+            num_changed_observations = 0
+            num_changed_observations += mapper.complete_and_merge_tracks(tri_options)
+            num_changed_observations += mapper.filter_points(mapper_options)
 
-        bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
-        bundle_adjuster.set_up_problem(
-            reconstruction, 
-            loss, 
-            timestamp_per_image=timestamp_per_image, 
-            arkit_precomputed=arkit_precomputed, 
-            detections_per_qr=detections_per_qr,
-            image_ids_per_qr=image_ids_per_qr
-        )
+            changed = num_changed_observations / num_observations
+            logger.info(f'Changed observations: {changed}')
 
-        solver_options = bundle_adjuster.set_up_solver_options(
-            bundle_adjuster.problem, ba_options.solver_options
-        )
-        solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
+            ba_iterations_remaining -= 1
 
-        initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
+            # Retriangulate underreconstructed image pairs after first BA success
+            if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
+                logger.info('Retriangulating...')
+                num_retriangulated = mapper.retriangulate(tri_options)
+                logger.info(f'Retriangulated {num_retriangulated} observations')
+                retriangulated = True
 
-        summary = pyceres.SolverSummary()
-        pyceres.solve(solver_options, bundle_adjuster.problem, summary)
-        logger.info("Solved!")
-
-        final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
-
-        logger.info("------------")
-        logger.info("INITIAL LOSS BREAKDOWN:")
-        for category, loss in initial_loss_breakdown.items():
-            logger.info(f"{category}: {loss}")
-        logger.info("------------")
-        logger.info("FINAL LOSS BREAKDOWN:")
-        for category, loss in final_loss_breakdown.items():
-            logger.info(f"{category}: {loss}")
-        logger.info("------------")
-
-        # logger.info("\n".join(summary.FullReport().split(",")))
-        logger.info(f"{summary.FullReport()}")
-
-        num_changed_observations = 0
-        num_changed_observations += mapper.complete_and_merge_tracks(tri_options)
-        num_changed_observations += mapper.filter_points(mapper_options)
-
-        changed = num_changed_observations / num_observations
-        logger.info(f'Changed observations: {changed}')
-
-        ba_iterations_remaining -= 1
-
-        # Retriangulate underreconstructed image pairs after first BA success
-        if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
-            logger.info('Retriangulating...')
-            num_retriangulated = mapper.retriangulate(tri_options)
-            logger.info(f'Retriangulated {num_retriangulated} observations')
-            retriangulated = True
-
-            # make sure there are at least two more BA iterations after retriangulation
-            # (to finish loop closure + filter outliers)
-            additional_iterations = max(0, 2 - ba_iterations_remaining)
-            num_ba_iterations_total += additional_iterations
-            ba_iterations_remaining += additional_iterations
+                # make sure there are at least two more BA iterations after retriangulation
+                # (to finish loop closure + filter outliers)
+                additional_iterations = max(0, 2 - ba_iterations_remaining)
+                num_ba_iterations_total += additional_iterations
+                ba_iterations_remaining += additional_iterations
 
 
-    logger.info('Extracting colors...')
-    reconstruction.extract_colors_for_all_images(image_dir)
+        logger.info('Extracting colors...')
+        reconstruction.extract_colors_for_all_images(image_dir)
 
-    mapper.end_reconstruction(False)
+        mapper.end_reconstruction(False)
 
-    return reconstruction
+        logger.info(f"Reconstruction triangulated with {reconstruction.num_points3D()} points")
+
+        return reconstruction
 
 
 def triangulate_model(
@@ -247,7 +257,6 @@ def triangulate_model(
     estimate_two_view_geometries: bool = False,
     min_match_score: Optional[float] = None,
     verbose: bool = False,
-    mapper_options: Optional[Dict[str, Any]] = None,
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
@@ -259,14 +268,14 @@ def triangulate_model(
     assert matches.exists(), matches
 
     sfm_dir.mkdir(parents=True, exist_ok=True)
-    database = sfm_dir / "database.db"
+    database_path = sfm_dir / "database.db"
     reference = pycolmap.Reconstruction(reference_model)
 
-    image_ids = create_db_from_model(reference, database)
-    import_features(image_ids, database, features)
+    image_ids = create_db_from_model(reference, database_path)
+    import_features(image_ids, database_path, features)
     import_matches(
         image_ids,
-        database,
+        database_path,
         pairs,
         matches,
         min_match_score,
@@ -276,7 +285,7 @@ def triangulate_model(
     assert skip_geometric_verification and not estimate_two_view_geometries # TODO: support this later as well?
 
     reconstruction = run_triangulation(
-        database, image_dir, reference, mapper_options if mapper_options is not None else {},
+        database_path, image_dir, reference,
         timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr
     )
     # Grab logger by name
@@ -347,7 +356,8 @@ def process_features_and_matching(
         paths.sfm_dir,
         feature_path=paths.features,
         as_half=True,
-        image_list=references
+        image_list=references,
+        #overwrite=True
     )
 
     # Feature matching
@@ -358,5 +368,6 @@ def process_features_and_matching(
         matcher_conf, 
         paths.sfm_pairs, 
         features=paths.features, 
-        matches=paths.matches
+        matches=paths.matches,
+        #overwrite=True
     )

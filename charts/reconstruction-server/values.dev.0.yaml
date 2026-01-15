@@ -1,0 +1,6 @@
+reconstruction-server:
+  image:
+    repository: 621917369927.dkr.ecr.ap-southeast-1.amazonaws.com/reconstruction-server    
+    tag: v0.2.0
+    pullPolicy: IfNotPresent
+  apiKey: "kaffekopp123"

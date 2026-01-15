@@ -1,7 +1,20 @@
-FROM nvidia/cuda:12.8.1-base-ubuntu22.04
+##
+## Go build for server
+##
+FROM --platform=$BUILDPLATFORM golang:1.21 AS go-build
+RUN mkdir -p /app
+WORKDIR /app
+ADD server /app
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build
+
+
+FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/pytorch:25.09-py3
 
 ARG USERNAME=reconstruction-server
-ARG USER_UID=1000
+ARG USER_UID=1001
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -38,7 +51,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-tk
 
-RUN apt-get install -y libmkl-full-dev
+# RUN apt-get install -y libmkl-full-dev
 
 RUN apt-get install -y --no-install-recommends \
     ssh \
@@ -48,7 +61,33 @@ RUN apt-get install -y --no-install-recommends \
     iputils-ping \
     bind9-dnsutils
 
-RUN pip install --upgrade pip setuptools wheel
+RUN apt update && \
+    apt install -y libblas-dev \
+    liblapacke-dev xorg-dev libglu1-mesa-dev \
+    libsdl2-dev libxi-dev libeigen3-dev \
+    libopenblas-dev
+
+RUN cd /opt && \
+    git clone https://github.com/isl-org/Open3D &&\
+    cd Open3D && \
+    git checkout f8f57d891783f63e64c61d09e6166e692679a9f4
+
+RUN mkdir /opt/Open3D/build && \
+    cd /opt/Open3D/build && \
+    cmake -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_GUI=OFF \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_UNIT_TESTS=OFF \
+        -DUSE_SYSTEM_EIGEN3=ON \
+        -DUSE_SYSTEM_BLAS=ON \
+        -DUSE_SYSTEM_LAPACK=ON \
+        -DPYTHON_EXECUTABLE=$(which python3) \
+        .. && \
+    ninja -j$(nproc) && \
+    ninja install-pip-package
+
+# RUN pip install --upgrade pip setuptools wheel
 
 RUN wget https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz \
     && tar xvf cmake-3.27.9-linux-x86_64.tar.gz \
@@ -68,7 +107,7 @@ RUN git clone https://github.com/google/glog.git && cd glog && \
 RUN pip install "pybind11[global]==3.0.1"
 
 RUN pip install psutil gputil
-
+    
 WORKDIR /src
 
 RUN git clone https://github.com/NVIDIA/libglvnd && \
@@ -80,7 +119,7 @@ RUN git clone https://github.com/NVIDIA/libglvnd && \
 
 # Workaround for runtime error when loading Intel MKL libraries
 # See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
-RUN export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
+# ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
 # Ceres
 RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
@@ -88,7 +127,7 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
     && git checkout tags/2.2.0 \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Intel10_64lp \
+    && cmake .. -GNinja -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DLAPACK=ON -DBLA_VENDOR=Generic -DUSE_CUDA=OFF\
     && ninja -j$(nproc) \
     && ninja install
 
@@ -96,7 +135,7 @@ RUN git clone --recursive https://ceres-solver.googlesource.com/ceres-solver \
 RUN git clone https://github.com/cvg/pyceres.git \
     && cd pyceres \
     && git checkout tags/v2.5 \
-    && python3 -m pip install .
+    && CMAKE_ARGS="-DBLA_VENDOR=Generic" python3 -m pip install .
 
 # COLMAP
 RUN git clone https://github.com/colmap/colmap.git && \
@@ -104,11 +143,11 @@ RUN git clone https://github.com/colmap/colmap.git && \
     && git checkout 20b2777186654f20745f6c57974924d145bbbd6f \
     && mkdir build \
     && cd build \
-    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Intel10_64lp -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
+    && cmake .. -GNinja -DCUDA_ENABLED=ON -DBLA_VENDOR=Generic -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120" \
     && ninja -j$(nproc) \
     && ninja install \
     && cd .. \
-    && python3 -m pip install .
+    && CMAKE_ARGS="-DBLA_VENDOR=Generic" python3 -m pip install .
 
 # Hloc
 RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization && \
@@ -121,7 +160,7 @@ RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization 
 
 RUN python3 -m pip install enlighten
 
-RUN python3 -m pip install open3d trimesh alphashape
+RUN python3 -m pip install trimesh alphashape
 
 RUN git clone https://github.com/google/draco.git && \
     cd draco && \
@@ -130,21 +169,38 @@ RUN git clone https://github.com/google/draco.git && \
     cmake .. -GNinja && \
     ninja -j$(nproc)
 
-# Server Stuff
-COPY --from=golang:1.21 /usr/local/go/ /usr/local/go/
-ENV PATH="$PATH:/usr/local/go/bin"
+WORKDIR /app
 
-# User Stuff
+COPY scripts /app/scripts
+COPY src /app/src
+COPY config /app/config
+RUN chmod 755 /app/src
+COPY CMakeLists.txt /app/
+RUN mkdir build && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && \
+    cmake --build build
+
+COPY utils /app/utils
+RUN chmod 755 /app/utils
+COPY local_main.py global_main.py occlusion_box.py topology_main.py main.py /app/
+RUN chmod 755 /app/*.py
+
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
+
+# Run reconstruction server as separate user, not root
 RUN groupadd --gid $USER_GID $USERNAME \
-    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
-    #
-    # [Optional] Add sudo support. Omit if you don't need to install software after connecting.
-    && apt-get update \
-    && apt-get install -y sudo \
-    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
-    && chmod 0440 /etc/sudoers.d/$USERNAME
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
+
+RUN mkdir -p /app/jobs && chown -R reconstruction-server:reconstruction-server /app/jobs
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/hpcx/ucx/lib
 
 USER $USERNAME
 
-WORKDIR /app
-ENTRYPOINT /bin/bash
+COPY --from=go-build /app/reconstruction ./reconstruction
+
+ENTRYPOINT ["./reconstruction"]
+
+# Overridable using 'docker run ... image_name -api-key <your-api-key>'
+# TODO: we probably don't need api key, or make it optional. Just check domain token.
+CMD ["-api-key", "aukilabs123"]
