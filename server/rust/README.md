@@ -7,15 +7,15 @@ engine crate plus capability-specific runners. Everything is designed to be
 stateless, fail-fast, and observable.
 
 ## Workspace layout
-- [`posemesh-compute-node-runner-api`](https://github.com/aukilabs/posemesh/tree/main/core/posemesh-compute-node-runner-api/README.md) —
+- [`posemesh-compute-node-runner-api`](https://github.com/aukilabs/posemesh/tree/main/core/compute-node-runner-api/README.md) —
   trait-based API surface that all runners implement. Defines the lease/task
   contracts as serde models.
-- [`posemesh-compute-node`](https://github.com/aukilabs/posemesh/tree/main/core/posemesh-compute-node/README.md) —
+- [`posemesh-compute-node`](https://github.com/aukilabs/posemesh/tree/main/core/compute-node/README.md) —
   engine + shared infrastructure: config, SIWE auth, DDS registration, DMS
   client, heartbeat loop, storage facade, HTTP router, telemetry helpers.
-- [`runner-reconstruction-local`](runner-reconstruction-local/README.md) —
+- [`runner-reconstruction-local`](./runner-reconstruction-local/) —
   scaffold runner for local refinement pipeline integration.
-- [`runner-reconstruction-global`](runner-reconstruction-global/README.md) —
+- [`runner-reconstruction-global`](runner-reconstruction-global/) —
   scaffold runner for global refinement pipeline integration.
 - [`bin`](bin/README.md) — CLI binary
   that loads configuration, selects runners, exposes the registration callback,
@@ -29,7 +29,7 @@ Supporting directories:
 1. The binary boots, installs telemetry, and starts the HTTP server (health +
    DDS registration callback).
 2. `NodeConfig` loads all DMS/DDS settings from environment variables. See
-   [`posemesh-compute-node/README.md`](https://github.com/aukilabs/posemesh/tree/main/core/posemesh-compute-node/README.md)
+   [`posemesh-compute-node/README.md`](https://github.com/aukilabs/posemesh/tree/main/core/compute-node/README.md)
    for the exhaustive list.
 3. Runners are registered in a `RunnerRegistry`; the binary decides which
    capabilities to advertise.

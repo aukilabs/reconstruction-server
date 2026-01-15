@@ -18,7 +18,7 @@ crate so we can reuse it in other front-ends or integration tests.
 
 ## Environment cross-check
 The binary defers to the configuration code in
-[`posemesh-compute-node`](https://github.com/aukilabs/posemesh/tree/main/core/posemesh-compute-node/README.md),
+[`posemesh-compute-node`](https://github.com/aukilabs/posemesh/tree/main/core/compute-node/README.md),
 so see that README for exhaustive documentation. At a minimum you will need:
 - DDS + DMS URLs and credentials (SIWE private key, registration secret).
 - `REQUEST_TIMEOUT_SECS` tuned to your environment (defaults matter if omitted).
