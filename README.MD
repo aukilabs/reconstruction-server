@@ -39,7 +39,6 @@ Go to `http://console.auki.network/` and:
 ### 4) Create an env file
 Create a `.env` file in the repo root with required credentials:
 ```sh
-NODE_URL=https://your-public-url
 REG_SECRET=your-registration-secret
 SECP256K1_PRIVHEX=your-evm-private-key
 ```
@@ -53,41 +52,23 @@ REGISTER_MAX_RETRY=-1
 LOG_FORMAT=text
 ```
 
-Notes:
-- `NODE_URL` must be reachable by the DDS/DMS services (public IP or a public URL).
-- Include the scheme and port in `NODE_URL` (for example `https://example.com:8080`).
-- For production, ensure inbound TCP traffic to port 8080 is allowed and forwarded to this host.
-- For local development you can use ngrok (see below).
-
 ### 5) Run the container
 ```sh
 docker run \
   --gpus all \
   --shm-size 512m \
-  -p 8080:8080 \
   --env-file .env \
   --name reconstruction-node \
   aukilabs/reconstruction-node:local
 ```
 
 ### 6) Verify it is working
-- Check the health endpoint:
-  ```sh
-  curl http://localhost:8080/health
-  ```
 - Follow logs to confirm registration and DMS polling:
   ```sh
   docker logs -f reconstruction-node
   ```
   You should see successful registration and repeated polling for tasks. If there are
   no jobs yet, it will keep polling.
-
-## Local development with ngrok (optional)
-If you do not have a public IP, you can expose port 8080 with ngrok:
-```sh
-ngrok http 8080
-```
-Set `NODE_URL` in your `.env` to the HTTPS ngrok URL, then start the container.
 
 ## Advanced configuration (optional)
 The reconstruction runners can be tuned via environment variables (workspace path,
