@@ -134,12 +134,6 @@ Here are some common issues you may encounter, with suggested fixes:
 - **Fix:**  
   - Ensure you run Docker with `--shm-size 512m` (already included in the example command).  
 
-### ngrok URL not working, or changes every time you start it
-- **Symptom:** Public jobs don’t reach your server when using ngrok.  
-- **Fix:**  
-  - Use `--url` with a **static ngrok domain** (set up via the ngrok dashboard).  
-  - Ensure ngrok is always running; if your server restarts, you might need to also start ngrok again.
-
 ### Docker crashes on Windows
 - **Symptom:** Container stops after a few minutes on Windows.
 - **Fix:**  
