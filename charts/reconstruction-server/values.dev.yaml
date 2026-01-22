@@ -1,3 +1,5 @@
 reconstruction-server:
   extraEnvMap:
     RUST_LOG: "debug"
+    DMS_BASE_URL: "https://dms.staging.aukiverse.com/v1"
+    DDS_BASE_URL: "https://dds.staging.aukiverse.com"
