@@ -9,6 +9,10 @@ RUN cargo build --release -p bin
 
 FROM debian:bookworm-slim AS runtime
 
+ARG RECONSTRUCTION_VERSION=v0.3.0
+ENV NODE_VERSION=${RECONSTRUCTION_VERSION}
+ENV RECONSTRUCTION_SERVER_VERSION=${RECONSTRUCTION_VERSION}
+
 # Install required runtime libs
 # - ca-certificates: for HTTPS (reqwest + rustls uses system certs)
 # - libssl3: if any dependency pulls in native-tls/OpenSSL on Bookworm

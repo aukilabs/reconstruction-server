@@ -12,6 +12,10 @@ RUN cargo build --release -p bin
 ##
 FROM ghcr.io/aukilabs/reconstruction-server-base:latest AS final
 
+ARG RECONSTRUCTION_VERSION=v0.3.0
+ENV NODE_VERSION=${RECONSTRUCTION_VERSION}
+ENV RECONSTRUCTION_SERVER_VERSION=${RECONSTRUCTION_VERSION}
+
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
