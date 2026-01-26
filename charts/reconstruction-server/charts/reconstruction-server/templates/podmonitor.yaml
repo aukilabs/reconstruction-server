@@ -1,0 +1,21 @@
+{{- if .Values.monitoring.podMonitor.create -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "reconstruction-server.fullname" . }}
+  namespace: {{ .Values.monitoring.namespace }}
+  labels:
+    {{- include "reconstruction-server.labels" . | nindent 4 }}
+spec:
+  jobLabel: {{ include "reconstruction-server.fullname" . }}
+  selector:
+    matchLabels:
+      {{ include "reconstruction-server.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  podMetricsEndpoints:
+    - interval: {{ .Values.monitoring.podMonitor.scrapeInterval }}
+      path: /metrics
+      port: admin
+{{- end }}

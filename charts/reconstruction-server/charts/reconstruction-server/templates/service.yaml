@@ -1,0 +1,45 @@
+{{- /*
+If the operator configures the service input variable, then also create a Service resource that exposes the Pod as a
+stable endpoint that can be routed within the Kubernetes cluster.
+*/ -}}
+{{- if .Values.service.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reconstruction-server.fullname" . }}
+  labels:
+    {{- include "reconstruction-server.labels" . | nindent 4 }}
+{{- if .Values.service.annotations }}
+{{- with .Values.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  ports:
+    {{- range $key, $value := .Values.service.ports }}
+    - name: {{ $key }}
+{{ toYaml $value | indent 6 }}
+    {{- end }}
+  {{- if .Values.service.clusterIP }}
+  clusterIP: {{ .Values.service.clusterIP }}
+  {{- end }}
+  selector:
+    {{- include "reconstruction-server.selectorLabels" . | nindent 4 }}
+  {{- if .Values.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end}}
+  {{- if .Values.service.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ .Values.service.internalTrafficPolicy }}
+  {{- end}}
+  {{- if .Values.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- if .Values.service.sessionAffinityConfig }}
+  {{- with .Values.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+{{ toYaml . | indent 4 }}
+  {{- end}}
+  {{- end}}
+  {{- end}}
+{{- end }}
