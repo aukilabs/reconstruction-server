@@ -64,6 +64,6 @@ jobs:
         run: |
           IMAGE="aukilabs/reconstruction-node:${{ github.sha }}"
           echo "Building $IMAGE"
-          docker build --build-arg RECONSTRUCTION_VERSION="${{ github.sha }}" -t "$IMAGE" -f docker/Dockerfile .
+          docker build --build-arg "RECONSTRUCTION_VERSION=${{ github.sha }}" -t "$IMAGE" -f docker/Dockerfile .
           echo "Pushing $IMAGE"
           docker push "$IMAGE"
