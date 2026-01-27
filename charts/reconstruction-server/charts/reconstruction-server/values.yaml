@@ -18,18 +18,6 @@ secretPool:
   namePrefix: "reconstruction-server-std-"
   mountPath: "/var/run/reconstruction-server-secrets"
 
-# Autoscaling configuration
-autoscaling:
-  hpa:
-    enabled: false
-    annotations: {}
-    minReplicas: 1
-    maxReplicas: 1
-    ## Target CPU utilization percentage
-    targetCPU: 80
-    ## Target Memory utilization percentage
-    targetMemory: ""
-
 # Extra environment variables (non-secret), keyed by name for deterministic merging
 extraEnvMap: {}
 

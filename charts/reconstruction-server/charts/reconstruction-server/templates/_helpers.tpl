@@ -73,14 +73,9 @@ Validate configuration combinations.
   {{- if not .Values.secretPool.namePrefix }}
     {{- fail "secretPool.namePrefix must be set when secretPool.enabled is true" }}
   {{- end }}
-{{- end }}
-{{- if .Values.autoscaling.hpa.enabled }}
-  {{- $maxReplicas := int (default 0 .Values.autoscaling.hpa.maxReplicas) -}}
-  {{- if and .Values.secretPool.enabled (gt $maxReplicas $poolSize) }}
-    {{- fail "autoscaling.hpa.maxReplicas cannot exceed secretPool.size" }}
-  {{- end }}
-  {{- if and (not .Values.autoscaling.hpa.targetCPU) (not .Values.autoscaling.hpa.targetMemory) }}
-    {{- fail "autoscaling.hpa requires targetCPU or targetMemory to be set" }}
+  {{- $replicas := int (default 1 .Values.replicaCount) -}}
+  {{- if gt $replicas $poolSize }}
+    {{- fail "replicaCount cannot exceed secretPool.size when secretPool.enabled is true" }}
   {{- end }}
 {{- end }}
 {{- end }}
