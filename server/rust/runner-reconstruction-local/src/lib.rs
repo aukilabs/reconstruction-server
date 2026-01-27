@@ -153,6 +153,9 @@ impl Runner for RunnerReconstructionLocal {
             .await;
 
         let datasets = input::materialize_datasets(&ctx, &workspace).await?;
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled during input materialization");
+        }
         let _ = ctx
             .ctrl
             .progress(json!({"pct": 15, "stage": "inputs", "datasets": datasets.len()}))
@@ -257,6 +260,10 @@ impl Runner for RunnerReconstructionLocal {
             warn!(error = %err, task_id = %task_id, "failed to upload task log");
         }
         python_result?;
+
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled before upload");
+        }
 
         let mut refined_uploader = refined::RefinedUploader::new();
         let uploaded = refined_uploader
