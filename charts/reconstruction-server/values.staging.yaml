@@ -1,0 +1,3 @@
+reconstruction-server:
+  image:
+    tag: a3385677b7a3e68999bf05392112db0ff51d06ec
