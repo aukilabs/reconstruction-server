@@ -88,7 +88,7 @@ docker run \
   --env-file .env \
   --name reconstruction-node \
   -d \
-  aukilabs/reconstruction-node:latest
+  aukilabs/reconstruction-node:stable
 ```
 You can also pin a specific release tag, for example `aukilabs/reconstruction-node:vX.Y.Z`.
 
