@@ -2,3 +2,4 @@ reconstruction-server:
   image:
     tag: v0.2.1
     pullPolicy: IfNotPresent
+  apiKey: "aukilabs123"
