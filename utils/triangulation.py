@@ -210,8 +210,10 @@ def run_triangulation(
                 logger.info(f"{category}: {loss}")
             logger.info("------------")
 
-            # logger.info("\n".join(summary.FullReport().split(",")))
-            logger.info(f"{summary.FullReport()}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"{summary.FullReport()}")
+            else:
+                logger.info(f"{summary.BriefReport()}")
 
             num_changed_observations = 0
             num_changed_observations += mapper.complete_and_merge_tracks(tri_options)

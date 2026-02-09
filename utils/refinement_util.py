@@ -174,7 +174,7 @@ def prepare_data_for_loop_closure(
         nearest_image = image_per_timestamp[nearest_image_timestamp]
         cam_space_qr_pose = nearest_image.cam_from_world() * detection["pose"] #T_RC = T_WC*T_RW
 
-        logger.info(f"QR code {id} @ {timestamp} ns, nearest image: {nearest_image}, cam space pos: {cam_space_qr_pose}")
+        logger.debug(f"QR code {id} @ {timestamp} ns, nearest image: {nearest_image}, cam space pos: {cam_space_qr_pose}")
 
         detections_per_qr[id].append(cam_space_qr_pose)
         image_ids_per_qr[id].append(nearest_image.image_id)
