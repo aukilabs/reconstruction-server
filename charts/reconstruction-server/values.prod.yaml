@@ -1,4 +1,4 @@
 reconstruction-server:
   image:
-    tag: 3f32fc841fb5b1d18cc0ee9cdbbb2b574b78518f
+    tag: v0.3.0
     pullPolicy: IfNotPresent
