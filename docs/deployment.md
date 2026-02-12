@@ -79,6 +79,11 @@ How to get the registration secret + wallet key:
 
 ## Option 1 — Use the prebuilt image (recommended)
 
+Pull the latest stable docker image. If you are upgrading from a previous version you must **run this again** to pull the updated image.
+```shell
+docker pull aukilabs/reconstruction-node:stable
+```
+
 Start Docker using the below command, ❗**including all flags**❗
 ```shell
 docker run \
@@ -88,7 +93,7 @@ docker run \
   --env-file .env \
   --name reconstruction-node \
   -d \
-  aukilabs/reconstruction-node:latest
+  aukilabs/reconstruction-node:stable
 ```
 You can also pin a specific release tag, for example `aukilabs/reconstruction-node:vX.Y.Z`.
 
@@ -109,12 +114,14 @@ You can also pin a specific release tag, for example `aukilabs/reconstruction-no
    ```shell
    docker exec <container_id> nvidia-smi
    ```
-   This should show your GPU and driver information. If not, please double-check your setup, or see **Troubleshooting**.
+   This should show your GPU and driver information.
 
-   If your image includes PyTorch, you can also run:
+   Verify that torch detects your GPU:
    ```shell
    docker exec <container_id> python3 -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA not found')"
    ```
+   
+   If not, please double-check your setup, or see **Troubleshooting**.
 
 3. Make sure the server is reachable on a public IP or URL.
    Open your browser and navigate to your URL + `/health`,

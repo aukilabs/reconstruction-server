@@ -146,6 +146,9 @@ impl Runner for RunnerReconstructionGlobal {
             .await;
 
         let materialized = input::materialize_refined_scans(&ctx, &workspace).await?;
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled during input materialization");
+        }
         let scan_names: Vec<String> = materialized
             .iter()
             .map(|scan| scan.scan_name.clone())
@@ -253,6 +256,10 @@ impl Runner for RunnerReconstructionGlobal {
             warn!(error = %err, task_id = %task_id, "failed to upload task log");
         }
         python_result?;
+
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled before upload");
+        }
 
         let name_suffix = job_ctx.domain_data_name_suffix();
         output::upload_final_outputs(&workspace, ctx.output, &name_suffix, None).await?;
