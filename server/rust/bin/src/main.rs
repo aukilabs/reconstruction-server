@@ -1,10 +1,13 @@
+const RECONSTRUCTION_NODE_VERSION: &str = env!("RECONSTRUCTION_NODE_VERSION");
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize telemetry (LOG_FORMAT respected if set).
     posemesh_compute_node::telemetry::init_from_env()?;
 
     // Load config and wire runners
-    let cfg = posemesh_compute_node::config::NodeConfig::from_env()?;
+    let mut cfg = posemesh_compute_node::config::NodeConfig::from_env()?;
+    cfg.node_version = RECONSTRUCTION_NODE_VERSION.to_string();
     let mut reg = posemesh_compute_node::engine::RunnerRegistry::new();
     for runner in runner_reconstruction_local::RunnerReconstructionLocal::for_all_capabilities() {
         reg = reg.register(runner);

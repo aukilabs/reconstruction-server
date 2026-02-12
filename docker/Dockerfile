@@ -1,7 +1,10 @@
 ##
 ## Rust build for server
 ##
+ARG RECONSTRUCTION_VERSION=0.0.0-local
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
+ARG RECONSTRUCTION_VERSION
+ENV RECONSTRUCTION_VERSION="${RECONSTRUCTION_VERSION}"
 WORKDIR /app
 COPY server/rust/ ./
 # Build release binary for the compute-node crate
@@ -11,6 +14,9 @@ RUN cargo build --release -p bin
 ## Runtime
 ##
 FROM ghcr.io/aukilabs/reconstruction-server-base:latest AS final
+
+ARG RECONSTRUCTION_VERSION
+ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
 
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000

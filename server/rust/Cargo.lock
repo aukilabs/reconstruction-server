@@ -194,6 +194,7 @@ dependencies = [
  "posemesh-compute-node-runner-api",
  "runner-reconstruction-global",
  "runner-reconstruction-local",
+ "semver",
  "tokio",
 ]
 

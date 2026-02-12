@@ -32,6 +32,7 @@ jobs:
         run: |
 
           docker build \
+            --build-arg "RECONSTRUCTION_VERSION=${{ github.ref_name }}" \
             -t "aukilabs/reconstruction-node:latest" \
             -t "aukilabs/reconstruction-node:${{ github.ref_name }}" \
             --push \

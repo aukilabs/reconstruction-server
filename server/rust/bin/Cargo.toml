@@ -12,6 +12,9 @@ runner-reconstruction-global = { path = "../runner-reconstruction-global" }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 
+[build-dependencies]
+semver = "1"
+
 [[bin]]
 name = "compute-node"
 path = "src/main.rs"
