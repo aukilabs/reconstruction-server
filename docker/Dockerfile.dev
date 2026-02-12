@@ -28,4 +28,7 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-t
 RUN rustup component add rustfmt clippy
 
 WORKDIR /app
+
+EXPOSE 8080
+
 ENTRYPOINT ["/bin/bash"]

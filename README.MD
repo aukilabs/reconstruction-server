@@ -8,6 +8,7 @@ For more information on the reconstruction service, please refer to our [whitepa
 ## Documentation
 - [Minimum Requirements](docs/minimum-requirements.md)
 - [Deployment](docs/deployment.md)
+- [Development Guide](docs/development.md)
 
 ## Acknowledgments
 
