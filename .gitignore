@@ -4,7 +4,6 @@ output/**
 /build
 /.vscode
 /jobs
-reconstruction
 .venv
 /venv
 /.idea
