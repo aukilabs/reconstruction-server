@@ -1,7 +1,10 @@
 ##
 ## Rust build for server (builder stage)
 ##
+ARG RECONSTRUCTION_VERSION=0.0.0-local
 FROM --platform=$BUILDPLATFORM rust:1.89-bookworm AS rust-build
+ARG RECONSTRUCTION_VERSION
+ENV RECONSTRUCTION_VERSION="${RECONSTRUCTION_VERSION}"
 WORKDIR /app
 ADD server/rust /app
 # Build release binary for the compute-node crate
@@ -9,8 +12,7 @@ RUN cargo build --release -p bin
 
 FROM debian:bookworm-slim AS runtime
 
-ARG RECONSTRUCTION_VERSION=v0.3.0
-ENV NODE_VERSION="${RECONSTRUCTION_VERSION}"
+ARG RECONSTRUCTION_VERSION
 ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
 
 # Install required runtime libs

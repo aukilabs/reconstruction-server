@@ -13,6 +13,9 @@ anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 axum = { version = "0.7" }
 
+[build-dependencies]
+semver = "1"
+
 [[bin]]
 name = "compute-node"
 path = "src/main.rs"
