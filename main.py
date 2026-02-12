@@ -232,9 +232,11 @@ def main(args):
         level=args.log_level
     )
 
-    # TODO: ignoring the scans parameter from go for now since it's incorrect (fix after redeploy)
+    # The runner currently derives scans from datasets to avoid stale client-provided scan lists.
     # Get available scans from datasets directory
-    args.scans = get_available_scans(args.job_root_path / "datasets")
+    if not args.scans:
+        logger.warning("--scans not provided, will use all available scans from datasets directory")
+        args.scans = get_available_scans(args.job_root_path / "datasets")
 
     try:
         process_refinement(args, logger)
