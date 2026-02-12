@@ -682,7 +682,8 @@ def _get_refined_results(
         stitch_data.chunks_image_ids,
         stitch_data.detections_per_qr,
         stitch_data.image_ids_per_qr,
-        with_scale=True
+        with_scale=True,
+        logger=logger
     )
     
     # World space QR detections using globally refined camera poses

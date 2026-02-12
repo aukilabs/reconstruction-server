@@ -1,4 +1,5 @@
 import itertools
+import logging
 from typing import Dict, List
 import numpy as np
 import pycolmap
@@ -47,16 +48,18 @@ def align_reconstruction_chunks(
         chunks_image_ids: List[List[int]],
         detections_per_qr: Dict[str, List[pycolmap.Rigid3d]],
         image_ids_per_qr: Dict[str, List[int]],
-        with_scale: bool = True
+        with_scale: bool = True,
+        logger: logging.Logger = None
     ):
+    if logger is None:
+        logger = logging.getLogger()
 
-    print("Going to optimize chunk alignment...")
+    logger.info("Going to optimize chunk alignment...")
 
     t_local_chunk_quat = [pycolmap.Rigid3d().rotation.quat for _ in range(len(chunks_image_ids))]
     t_local_chunk_translation = [pycolmap.Rigid3d().translation for _ in range(len(chunks_image_ids))]
     image_id_to_chunk_id = {image_id : chunk_id for chunk_id, image_ids in enumerate(chunks_image_ids) for image_id in image_ids}
     problem = pyceres.Problem()
-
 
     #loss = pyceres.HuberLoss(0.1)
     loss = None
@@ -118,7 +121,7 @@ def align_reconstruction_chunks(
         for chunk_idx in range(len(chunks_image_ids)):
             if len(qr_ids_per_chunk[chunk_idx]) < 2:
                 chunks_to_fix_scale = [chunk_idx]
-                print(f'Chunk {chunk_idx} has less than 2 correspondences, fixing scale') # for chunks {chunks_to_fix_scale}.')
+                logger.info(f"Chunk {chunk_idx} has less than 2 correspondences, fixing scale")
                 for chunk_fix_idx in chunks_to_fix_scale:
                     quat = t_local_chunk_quat[chunk_fix_idx]
                     if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
@@ -148,15 +151,18 @@ def align_reconstruction_chunks(
 
     summary = pyceres.SolverSummary()
     pyceres.solve(solver_options, problem, summary)
-    print(summary.FullReport())
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"{summary.FullReport()}")
+    else:
+        logger.info(f"{summary.BriefReport()}")
 
     t_local_chunks = [pycolmap.Sim3d(pycolmap.Rotation3d(quat).norm()**2, pycolmap.Rotation3d(quat), translation) for quat, translation in zip(t_local_chunk_quat, t_local_chunk_translation)]
     for t_local_chunk in t_local_chunks:
         t_local_chunk.rotation.normalize()
 
-    print('Refined Sim3 transforms:')
+    logger.debug('Refined Sim3 transforms:')
     for chunk_idx, t_local_chunk in enumerate(t_local_chunks):
-        print(f'Chunk {chunk_idx} ({len(chunks_image_ids[chunk_idx]):5,d} images): {t_local_chunk}')
+        logger.debug(f'Chunk {chunk_idx} ({len(chunks_image_ids[chunk_idx]):5,d} images): {t_local_chunk}')
 
     for image_id in reconstruction.images.keys():
         chunk_id = image_id_to_chunk_id[image_id]
@@ -177,6 +183,6 @@ def align_reconstruction_chunks(
             chunk_id = image_id_to_chunk_id[image_id]
             detections_per_qr[qr_id][det_idx].translation *= t_local_chunks[chunk_id].scale
 
-    print("Chunk alignment optimization DONE\n")
+    logger.info("Chunk alignment optimization DONE")
 
     return
