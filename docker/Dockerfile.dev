@@ -20,11 +20,11 @@ RUN set -eux; \
     echo "$USERNAME ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME; \
     chmod 0440 /etc/sudoers.d/$USERNAME
 
-ENV RUSTUP_HOME=/usr/local/rustup
-ENV CARGO_HOME=/usr/local/cargo
-ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV RUSTUP_HOME=/home/${USERNAME}/.rustup
+ENV CARGO_HOME=/home/${USERNAME}/.cargo
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-toolchain stable \
-    && chmod -R a+rX /usr/local/rustup /usr/local/cargo
+    && chown -R "$USERNAME:$USERNAME" "$RUSTUP_HOME" "$CARGO_HOME"
 RUN rustup component add rustfmt clippy
 
 WORKDIR /app

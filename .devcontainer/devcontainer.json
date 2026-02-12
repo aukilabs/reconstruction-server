@@ -32,10 +32,5 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": [
-        "mkdir -p build",
-        "cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && cmake --build build",
-        "cd server/rust && cargo fetch",
-        "echo 'Done!'"
-    ]
+    "postCreateCommand": "bash .devcontainer/post_create.sh"
 }
