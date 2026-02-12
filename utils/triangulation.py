@@ -311,7 +311,11 @@ def process_features_and_matching(
     # Feature extraction for loop closure
     if use_loop_closure:
         global_feature_conf = extract_features.confs["eigenplaces"]
+        
+        # Specify git ref explicitly since otherwise the automatic lookup fails occasionally
+        global_feature_conf["model"]["variant"] = "EigenPlaces:main"
         global_feature_conf["output"] = paths.global_features
+
         extract_features.main(
             global_feature_conf,
             paths.images,
