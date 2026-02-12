@@ -16,6 +16,8 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
             "4c0883a69102937d6231471b5dbb6204fe5129617082798ce3f4fdf2548b6f90".into(),
         ),
         heartbeat_jitter_ms: 250,
+        heartbeat_min_ratio: 0.25,
+        heartbeat_max_ratio: 0.35,
         poll_backoff_ms_min: 1000,
         poll_backoff_ms_max: 30000,
         token_safety_ratio: 0.75,
