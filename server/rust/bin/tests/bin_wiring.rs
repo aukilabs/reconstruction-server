@@ -11,7 +11,6 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
         node_version: "1.0.0".into(),
         request_timeout_secs: 10,
         dds_base_url: Some("https://dds.example".parse().unwrap()),
-        node_url: Some("https://node.example".parse().unwrap()),
         reg_secret: Some("secret".into()),
         secp256k1_privhex: Some(
             "4c0883a69102937d6231471b5dbb6204fe5129617082798ce3f4fdf2548b6f90".into(),

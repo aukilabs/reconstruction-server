@@ -27,7 +27,7 @@ Supporting directories:
 
 ## High-level data flow
 1. The binary boots, installs telemetry, and starts the HTTP server (health +
-   DDS registration callback).
+   DDS registration).
 2. `NodeConfig` loads all DMS/DDS settings from environment variables. See
    [`posemesh-compute-node/README.md`](https://github.com/aukilabs/posemesh/tree/main/core/compute-node/README.md)
    for the exhaustive list.
@@ -44,7 +44,6 @@ Supporting directories:
    workspace ships with `rust-toolchain.toml`).
 2. Export configuration:
    ```sh
-   export NODE_URL=https://node.example
    export REG_SECRET=replace-me
    export SECP256K1_PRIVHEX=32-byte-hex-string
    ```
@@ -59,8 +58,7 @@ Supporting directories:
    ```sh
    cargo run -p bin
    ```
-4. Hit `http://localhost:8080/health` to verify liveness. Watch the logs for DDS
-   registration and leasing activity.
+4. Watch the logs for DDS registration and leasing activity.
 
 ## Development tooling
 - `cargo fmt --all` (or `make fmt`) keeps formatting consistent.

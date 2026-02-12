@@ -351,7 +351,7 @@ impl JobContext {
             .unwrap_or_default();
         let domain_server_url = domain_server_url.trim_end_matches('/').to_string();
 
-        let reconstruction_server_url = env::var("NODE_URL").ok();
+        let reconstruction_server_url = None;
 
         let data_ids: Vec<String> = lease
             .task
