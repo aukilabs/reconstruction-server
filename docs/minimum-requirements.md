@@ -11,14 +11,6 @@ Most Windows or Linux machines with modern NVIDIA GPUs will be able to run a Rec
 - **NVIDIA driver:** recent version that supports CUDA 12.8
 - **Disk space:** 40 GB or more
 - **Docker** _- Windows support tested with Docker Desktop and WSL 2_
-
-**Additionally**, you need these in order to expose the reconstruction server to the Internet:
-
-- A stable Internet connection with
-  - an externally accessible local port (TCP)
-  - static and public IP address with port forwarding
-  - at least 10 Mbps downstream and upstream
-- Optionally, a domain name configured to point to your IP address
-- Or, if you don't have a static IP address, a [dynamic DNS service](https://en.wikipedia.org/wiki/Dynamic_DNS)
+- A stable Internet connection with at least 10 Mbps downstream and upstream
 
 See [Deployment](deployment.md) for more information.
