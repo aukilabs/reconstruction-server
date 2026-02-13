@@ -43,7 +43,7 @@ If you update Docker/devcontainer settings or system dependencies, rebuild the e
 
 You can also manually rebuild the server binary inside the container, which is often enough after changing Rust code.
 ```shell
-bash .devcontainer/build_server.sh
+bash .devcontainer/build_server.sh 0.0.0
 ```
 
 Python code changes don't require a rebuild, just stop the server (Ctrl+C) and run it again (`./compute-node`)

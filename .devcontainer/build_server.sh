@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $0 <reconstruction_version>" >&2
+  echo "Example: $0 0.3.0" >&2
+  exit 1
+fi
+
+export RECONSTRUCTION_VERSION="$1"
+echo "[build_server] Using RECONSTRUCTION_VERSION=${RECONSTRUCTION_VERSION}"
+
 cd /app/server/rust
 
 echo "[build_server] Fetching Rust dependencies..."

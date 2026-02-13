@@ -9,6 +9,6 @@ cmake --build build
 sudo rm /app/server/rust/target/release/compute-node*
 sudo rm /app/compute-node
 
-bash .devcontainer/build_server.sh
+bash .devcontainer/build_server.sh 0.0.0
 
 echo "Done!"
