@@ -1,0 +1,120 @@
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  pullPolicy: IfNotPresent
+  repository: aukilabs/reconstruction-node
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# Initial replica count for the StatefulSet.
+replicaCount: 1
+
+# Secret pool for per-pod credentials (StatefulSet ordinal -> secret).
+secretPool:
+  enabled: false
+  size: 0
+  namePrefix: "reconstruction-server-std-"
+  mountPath: "/var/run/reconstruction-server-secrets"
+
+# Extra environment variables (non-secret), keyed by name for deterministic merging
+extraEnvMap: {}
+
+# Optional envFrom entries (e.g. secrets or configmaps)
+envFrom: []
+
+tolerations:
+  # Needs to run on a GPU-enabled node
+  # - key: "dedicated"
+  #   value: "gpuGroup"
+  #   effect: "NoSchedule"
+
+nodeSelector: {}
+
+affinity: {}
+
+# These are the recommended resources for good performance.
+# We have left them commented out as they might differ between workloads
+# and some users might prefer not configuring them at all because they
+# have set up dedicated nodes for the reconstruction-server.
+# resources:
+#   limits:
+#     memory: 7Gi
+#     cpu: 8
+#   requests:
+#     memory: 7Gi
+#     cpu: 6
+
+# Set the /dev/shm (shared memory) size limit
+shmSizeLimit: 512Mi
+
+# Deprecated: only used by reconstruction-server versions <=0.2.0.
+apiKey: ""
+
+containerPorts:
+  app:
+    port: 8080
+    protocol: TCP
+  admin:
+    port: 18190
+    protocol: TCP
+
+service:
+  enabled: true
+  ports:
+    app:
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    admin:
+      port: 18190
+      targetPort: 18190
+      protocol: TCP
+
+ingress:
+  enabled: false
+  # className: nginx
+  annotations:
+    # kubernetes.io/tls-acme: "true"
+  path: /
+  pathType: Prefix
+  servicePort: app
+  # hosts:
+  #   - chart-example.local
+  # tls:
+  #   - secretName: chart-example-tls
+  #     hosts:
+  #       - chart-example.local
+
+monitoring:
+  namespace: monitoring
+  podMonitor:
+    create: false
+    scrapeInterval: 10s
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+deploymentStrategy:
+  enabled: true
+  type: Recreate

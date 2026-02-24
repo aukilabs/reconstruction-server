@@ -1,0 +1,129 @@
+{{- include "reconstruction-server.validate" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "reconstruction-server.fullname" . }}
+  labels:
+    {{- include "reconstruction-server.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "reconstruction-server.fullname" . }}
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "reconstruction-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "reconstruction-server.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "reconstruction-server.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (print "v" .Chart.AppVersion) }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            {{- range $key, $portSpec := .Values.containerPorts }}
+            - name: {{ $key }}
+              containerPort: {{ int $portSpec.port }}
+              protocol: {{ $portSpec.protocol }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- $env := list }}
+          {{- range $k := sortAlpha (keys .Values.extraEnvMap) }}
+          {{- $env = append $env (dict "name" $k "value" (index $.Values.extraEnvMap $k)) }}
+          {{- end }}
+          {{- with $env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.secretPool.enabled }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              ordinal="${HOSTNAME##*-}"
+              secret_dir="{{ .Values.secretPool.mountPath }}/${ordinal}"
+              if [ -z "${ordinal}" ] || [ ! -d "${secret_dir}" ]; then
+                echo "missing secret directory for pod ordinal ${ordinal}" >&2
+                ls -la {{ .Values.secretPool.mountPath }} || true
+                exit 1
+              fi
+              export REG_SECRET="$(cat "${secret_dir}/REG_SECRET")"
+              export SECP256K1_PRIVHEX="$(cat "${secret_dir}/SECP256K1_PRIVHEX")"
+              exec /app/compute-node{{ if .Values.apiKey }} --api-key={{ .Values.apiKey }}{{ end }}
+          {{- else if .Values.apiKey }}
+          args:
+            - "--api-key={{ .Values.apiKey }}"
+          {{- end }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: jobs
+              mountPath: /app/jobs
+            - name: home
+              mountPath: /home/reconstruction-server
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.secretPool.enabled }}
+            - name: secret-pool
+              mountPath: {{ .Values.secretPool.mountPath }}
+              readOnly: true
+            {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSizeLimit }}
+        - name: jobs
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.secretPool.enabled }}
+        - name: secret-pool
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- range $i := until (int .Values.secretPool.size) }}
+              - secret:
+                  name: {{ printf "%s%d" $.Values.secretPool.namePrefix $i }}
+                  items:
+                    - key: REG_SECRET
+                      path: "{{ $i }}/REG_SECRET"
+                    - key: SECP256K1_PRIVHEX
+                      path: "{{ $i }}/SECP256K1_PRIVHEX"
+              {{- end }}
+        {{- end }}
