@@ -9,9 +9,9 @@
     "customizations": {
         "vscode": {
             "extensions":[
-                "golang.Go",
                 "ms-python.python",
-                "ms-python.debugpy"
+                "ms-python.debugpy",
+                "rust-lang.rust-analyzer"
             ]
         }
     },
@@ -32,10 +32,5 @@
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": [
-        ".devcontainer/build_golang_server.sh",
-        "mkdir -p build",
-        "cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && cmake --build build",
-        "echo 'Done!'"
-    ]
+    "postCreateCommand": "bash .devcontainer/post_create.sh"
 }

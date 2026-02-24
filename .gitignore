@@ -4,13 +4,13 @@ output/**
 /build
 /.vscode
 /jobs
-reconstruction
 .venv
 /venv
 /.idea
 /cluster_outlines
 log.txt
 **/target/**
+/compute-node
 server/rust/server-bin/jobs
 server/rust/data
 *.so
