@@ -1,5 +1,3 @@
 reconstruction-server:
-  image:
-    tag: 34e11b605e461f82ada5dc052f707a863f62f55e
   extraEnvMap:
     RUST_LOG: "debug"
