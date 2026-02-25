@@ -20,5 +20,5 @@ reconstruction-server:
       memory: 6Gi
   tolerations:
     - key: "dedicated"
-      value: "gpuGroup"
+      value: "karpenterGPU"
       effect: "NoSchedule"
