@@ -14,10 +14,11 @@ reconstruction-server:
     limits:
       cpu: 8
       memory: 12Gi
+      nvidia.com/gpu: 1
     requests:
       cpu: 6
       memory: 6Gi
   tolerations:
     - key: "dedicated"
-      value: "gpuGroup"
+      value: "karpenterGPU"
       effect: "NoSchedule"
