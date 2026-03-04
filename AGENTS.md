@@ -15,6 +15,13 @@ resulting 3D map on a **domain server**.
 
 ---
 
+## Git Branch Naming
+- `feature/*` — new functionality
+- `chore/*` — maintenance, refactoring, docs, deps
+- `hotfix/*` — urgent production fixes
+
+---
+
 ## Services in This Repo
 
 The `reference-code/domain-service` submodule contains **two** services in separate subdirectories:
