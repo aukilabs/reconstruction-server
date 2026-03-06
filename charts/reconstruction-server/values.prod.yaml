@@ -2,3 +2,6 @@ reconstruction-server:
   image:
     tag: v0.3.0
     pullPolicy: IfNotPresent
+  extraEnvMap:
+    POLL_BACKOFF_MS_MIN: "180000"
+    POLL_BACKOFF_MS_MAX: "180000"
