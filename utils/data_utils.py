@@ -684,6 +684,34 @@ def process_frames(
     logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
     return sorted(references), use_frames_from_video, original_image_count
 
+def process_enquirectangular_frames(
+    paths,
+    every_nth_image,
+    logger
+):
+    """
+    Process and extract frames from enquirectangular video if necessary.
+    
+    Returns:
+        Tuple of (reference_list, use_frames_from_video)
+    """
+    # frames_mp4 = paths.scan_folder / 'Frames.mp4'
+    # logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
+    
+    use_frames_from_video = True
+    # if frames_mp4.exists():
+    #     logger.info(f"Frames mp4 found, unpacking into {paths.images}")
+    #     if not paths.images.exists():
+    #         paths.images.mkdir()
+    #     mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_")
+    #     use_frames_from_video = True
+
+    references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]
+
+    original_image_count = len(references)
+    references = references[::every_nth_image]
+    logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
+    return sorted(references), use_frames_from_video, original_image_count
 
 def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
     logger = logging.getLogger(logger_name)

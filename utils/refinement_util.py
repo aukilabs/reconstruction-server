@@ -15,6 +15,7 @@ from utils.data_utils import (
     setup_logger,
     save_portal_csv, 
     process_frames,
+    process_enquirectangular_frames,
     rectify_portal_pose
 )
 
@@ -324,6 +325,103 @@ def refine_dataset(
 
     # Process frames and load data
     references, use_frames_from_video, original_image_count = process_frames(
+        paths, every_nth_image, logger
+    )
+
+    # Load scan from folder
+    scan_data = load_scan(
+        paths,  
+        use_frames_from_video, 
+        original_image_count, 
+        logger
+    )
+
+    # Initialize reconstruction
+    rec, cam_from_world_transforms = initialize_reconstruction(references, scan_data)
+    # Save initial reconstruction
+    colmap_rec_path = paths.output / 'colmap_rec'
+    colmap_rec_path.mkdir(parents=True, exist_ok=True)
+    rec.write(colmap_rec_path)
+    rec.write(paths.sfm_dir)
+
+    # Process features and matching
+    process_features_and_matching(
+        references, 
+        colmap_rec_path, 
+        paths,
+        logger
+    )
+    
+    if pool_executor:
+        future = pool_executor.submit(
+            refine_dataset_part_two,
+            paths,
+            cam_from_world_transforms,
+            scan_data,
+            logger,
+            colmap_rec_path,
+            remove_outputs,
+            start_time
+        )
+        return future
+    else:
+        refine_dataset_part_two(
+            paths,
+            cam_from_world_transforms,
+            scan_data,
+            logger,
+            colmap_rec_path,
+            remove_outputs,
+            start_time
+        )
+        return None
+
+
+def refine_enquirectangular_data(
+    scan_folder_path, 
+    output_path,
+    every_nth_image=1,
+    remove_outputs=False,
+    domain_id="",
+    job_id="",
+    log_level="INFO",
+    pool_executor=None
+):
+    """
+    Refine a dataset using Structure from Motion techniques.
+    
+    Args:
+        scan_folder_path: Path to the scan folder
+        output_path: Path for output files
+        every_nth_image: Process every nth image
+        remove_outputs: Whether to remove existing outputs
+        domain_id: Domain identifier
+        job_id: Job identifier
+        log_level: Logging level
+        pool_executor: ThreadPoolExecutor instance for parallel processing
+    Returns:
+        Future object if pool_executor is provided, otherwise None
+    """
+    start_time = datetime.now()
+
+    # Setup paths and logging
+    paths = setup_refinement_paths(
+        scan_folder_path, output_path
+    )
+
+    # Setup Logging
+    logger = setup_logger(
+        name="refine_dataset", 
+        log_file=str(paths.log_path / "local_logs"), 
+        domain_id=domain_id, 
+        job_id=job_id, 
+        dataset_id=scan_folder_path.name,
+        level=log_level
+    )
+    logger.info(f'Starting local refinement of {scan_folder_path.name}')
+
+    # Process frames and load data
+    references, use_frames_from_video, original_image_count = process_enquirectangular_frames(
         paths, every_nth_image, logger
     )
 
