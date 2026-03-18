@@ -283,6 +283,10 @@ def update_helper(
             logger.debug(f"Exported merged model to {paths.output_path / f'merged_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
 
         # Transform and Merge Portals
+        # we only add the new portals, do not modify the existing portals in the reference model to avoid instability of portal poses across updates. 
+        # This means the portal poses in the manifest may not be perfectly aligned with the geometry in the case of noisy detections, 
+        # but it avoids the risk of breaking all existing portals in the reference model when a bad alignment happens. 
+        # We can consider more sophisticated strategies for portal merging in the future when we have more experience with real data.
         for pid, portal in portals_u.items():
             if pid in portal_r:
                 logger.info(f"Portal {pid} already exists in reference model. Skipping.")
