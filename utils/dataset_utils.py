@@ -288,6 +288,16 @@ def update_helper(
     logger.debug(f"Exported updated reconstruction to {paths.output_path / 'updated_sfm'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
+    manifest_path = paths.output_path / 'refined_manifest.json'
+    portals = {pid: [pose] for pid, pose in portal_r.items()}
+    save_manifest_json(
+        portals,
+        manifest_path,
+        paths.parent_dir,
+        job_status="refined",
+        job_progress=100
+    )
+
     ply_path = paths.refined_group_dir / 'updated' / "RefinedPointCloud.ply"
     rec = pycolmap.Reconstruction()
     for point in pts_r.values():
