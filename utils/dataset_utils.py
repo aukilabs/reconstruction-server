@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import time
 import pycolmap
 import os 
@@ -234,7 +234,8 @@ def update_helper(
     
     # Loading the reference model that will be refined. This should be the model that set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin",logger=logger)
-    portal_r = parse_portals_from_manifest(paths.reference_path / "refined_manifest.json")
+    portal_r = parse_portals_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
+    portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
     portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
 
     # Process datasets
@@ -244,7 +245,7 @@ def update_helper(
         # Loading the new reconstruction that contains the new geometry to be merged in. 
         # This should be the local refined reconstruction of the new scan that will be merged in.
         cams_u, imgs_u, pts_u = read_model(pending_update_rec_dir, ".bin", logger=logger)
-        portals_u = load_qr_detections_from_local_refinement(pending_update_rec_dir, logger)
+        portals_u, portal_sizes_u = load_qr_detections_from_local_refinement(pending_update_rec_dir, logger)
         
         # Align the new reconstruction to the reference model using the detected QR code portals as anchors. 
         # This gives us a rough alignment that is good enough for culling out outdated geometry from the reference model.
@@ -281,6 +282,15 @@ def update_helper(
             write_model(cams_r, imgs_r, pts_r, paths.output_path / f"merged_update_{pending_update_rec_dir.parent.name}")
             logger.debug(f"Exported merged model to {paths.output_path / f'merged_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
 
+        # Transform and Merge Portals
+        for pid, portal in portals_u.items():
+            if pid in portal_r:
+                logger.info(f"Portal {pid} already exists in reference model. Skipping.")
+                continue
+            transformed_portal = transform_with_scale(alignment_mat, portal)
+            portal_r[pid] = transformed_portal
+            portal_sizes[pid] = portal_sizes_u[pid]
+
 
     # Export the merged model for inspection
     os.makedirs(paths.output_path / "updated_sfm", exist_ok=True)
@@ -295,7 +305,8 @@ def update_helper(
         manifest_path,
         paths.parent_dir,
         job_status="refined",
-        job_progress=100
+        job_progress=100,
+        portal_sizes=portal_sizes
     )
 
     ply_path = paths.refined_group_dir / 'updated' / "RefinedPointCloud.ply"
@@ -307,10 +318,12 @@ def update_helper(
 
     return True
 
-def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> List[Dict]:
+def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[List[Dict], Dict[str, float]]:
     portals_u_dict = read_portal_csv(rec_dir / "portals.csv")
     portals_u_list = []
+    portal_sizes = {}
     for portal in portals_u_dict.values():
+        portal_sizes[portal.short_id] = portal.size
         gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
         portals_u_list.append({
             "short_id": portal.short_id, 
@@ -322,7 +335,7 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> List[Dict
             "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
         })
     chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
-    return _calculate_mean_qr_poses(chunk_detections_per_qr)
+    return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
 
 def load_partial(
     unzip_folder: Path,

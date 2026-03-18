@@ -637,7 +637,8 @@ def parse_portals_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarr
             continue
         t = np.array([pos['x'], pos['y'], pos['z']], dtype=np.float64)
         R = quaternion_to_rotation_matrix((rot['x'], rot['y'], rot['z'], rot['w']))
-        out[sid] = (R, t)
+        size = p.get('physicalSize', None)
+        out[sid] = (R, t, size)
     return out
 
 
