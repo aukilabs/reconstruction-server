@@ -18,7 +18,7 @@ import GPUtil
 import subprocess
 from dateutil import parser
 from pathlib import Path
-from typing import NamedTuple, Dict
+from typing import NamedTuple, Dict, Tuple
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -614,6 +614,31 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
 
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
+
+
+def parse_portals_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    """
+    Returns dict: shortId -> (R_world_portal, t_world_portal)
+    Assumes 'pose' is the transform from portal frame to world frame (world_T_portal).
+    """
+    data = json.loads(Path(manifest_path).read_text())
+    portals = data.get('portals', [])
+    out = {}
+    for p in portals:
+        sid = p.get('shortId') or p.get('shortID') or p.get('id')
+        pose = p.get('pose') or p.get('averagePose')  # use pose; fallback to averagePose
+        if sid is None or pose is None: 
+            continue
+        pos = pose.get('position', {})
+        rot = pose.get('rotation', {})
+        if not all(k in pos for k in ('x','y','z')): 
+            continue
+        if not all(k in rot for k in ('x','y','z','w')): 
+            continue
+        t = np.array([pos['x'], pos['y'], pos['z']], dtype=np.float64)
+        R = quaternion_to_rotation_matrix((rot['x'], rot['y'], rot['z'], rot['w']))
+        out[sid] = (R, t)
+    return out
 
 
 def vec3_angle(v, w):

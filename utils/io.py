@@ -1,3 +1,4 @@
+from typing import Dict, Optional, Tuple
 import numpy as np
 import logging
 import os
@@ -8,6 +9,7 @@ import yaml
 import trimesh
 import uuid
 import csv
+from scipy.spatial.transform import Rotation as R
 from utils.data_utils import (convert_pose_colmap_to_opengl)
 
 CameraModel = collections.namedtuple(
@@ -527,6 +529,73 @@ def write_portal_csv(portals, csv_path):
             csv_writer.writerow(row)
     return
 
+
+def validate_model_consistency(cameras: Dict[int, 'Camera'], images: Dict[int, 'Image'], points3D: Dict[int, 'Point3D'], logger=None) -> bool:
+    """Check camera/image/point3D cross-references for consistency.
+
+    Returns True if valid, False if inconsistencies were detected.
+    """
+    if logger is None:
+        logger = logging.getLogger()
+
+    valid = True
+    # Camera references in images
+    for iid, img in images.items():
+        if img.camera_id not in cameras:
+            logger.error("Invalid model: image %d references missing camera id %d", iid, img.camera_id)
+            valid = False
+
+    # Image references in points3D
+    for pid, p in points3D.items():
+        for (iid, p2d_idx) in zip(p.image_ids, p.point2D_idxs):
+            if iid not in images:
+                logger.error("Invalid model: point3D %d references missing image id %d", pid, iid)
+                valid = False
+                continue
+            img = images[iid]
+            if p2d_idx < 0 or p2d_idx >= len(img.xys):
+                logger.error("Invalid model: point3D %d references image %d point2D index %d out of bounds (len=%d)", pid, iid, p2d_idx, len(img.xys))
+                valid = False
+
+    # Inverse cross-check image point3D_ids vs point tracks
+    for iid, img in images.items():
+        if img.point3D_ids is None:
+            continue
+        if img.xys is not None and len(img.point3D_ids) != len(img.xys):
+            logger.error("Invalid model: image %d has %d point3D_ids but %d xys", iid, len(img.point3D_ids), len(img.xys))
+            valid = False
+
+        for j, pid in enumerate(img.point3D_ids):
+            if pid < 0:
+                continue
+            if pid not in points3D:
+                logger.error("Invalid model: image %d observation %d references missing point3D id %d", iid, j, pid)
+                valid = False
+                continue
+            p = points3D[pid]
+            if not any(image_id == iid and point2D_idx == j for image_id, point2D_idx in zip(p.image_ids, p.point2D_idxs)):
+                logger.error("Invalid model: image %d observation %d -> point3D %d has no matching track entry", iid, j, pid)
+                valid = False
+
+    # Optional: verify every point3D track is mirrored in image point3D_ids
+    for pid, p in points3D.items():
+        for (iid, p2d_idx) in zip(p.image_ids, p.point2D_idxs):
+            if iid not in images:
+                continue
+            img = images[iid]
+            if p2d_idx < 0 or p2d_idx >= len(img.point3D_ids):
+                continue
+            if img.point3D_ids[p2d_idx] != pid:
+                logger.error("Invalid model: point3D %d track says image %d idx %d but image lists %d", pid, iid, p2d_idx, img.point3D_ids[p2d_idx])
+                valid = False
+
+    if valid:
+        logger.info("Model consistency check passed: cameras=%d, images=%d, points3D=%d", len(cameras), len(images), len(points3D))
+    else:
+        logger.error("Model consistency check failed: cameras=%d, images=%d, points3D=%d", len(cameras), len(images), len(points3D))
+    return valid
+
+
 def read_model(path, ext="", logger=None):
     if logger is None:
         logger = logging.getLogger()
@@ -549,6 +618,8 @@ def read_model(path, ext="", logger=None):
         cameras = read_cameras_binary(os.path.join(path, "cameras" + ext))
         images = read_images_binary(os.path.join(path, "images" + ext))
         points3D = read_points3D_binary(os.path.join(path, "points3D") + ext)
+    validate_model_consistency(cameras, images, points3D, logger=logger)
+    
     return cameras, images, points3D
 
 
@@ -562,6 +633,138 @@ def write_model(cameras, images, points3D, path, ext=".bin"):
         write_images_binary(images, os.path.join(path, "images" + ext))
         write_points3D_binary(points3D, os.path.join(path, "points3D") + ext)
     return cameras, images, points3D
+
+
+def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'BaseImage'], pts: Dict[int, 'Point3D'],
+                                  T_a: np.ndarray) -> Tuple[Dict[int, 'Camera'], Dict[int, 'BaseImage'], Dict[int, 'Point3D']]:
+    """
+    Transform the entire new model (cameras & points) into the reference frame 
+    using a 4x4 similarity transformation matrix.
+    """
+    
+    # Extract scale and pure rotation from the 4x4 matrix
+    # T_a[:3, :3] contains s * R_a. We can find 's' by taking the norm of the first column.
+    s = np.linalg.norm(T_a[:3, 0])
+    R_a = T_a[:3, :3] / s
+
+    # transform images: update rotations and translations via centers
+    new_imgs = {}
+    for iid, im in imgs.items():
+        Rn = qvec2rotmat(im.qvec)
+        tn = im.tvec
+        Cn = cam_center_from_extrinsics(Rn, tn)
+        
+        # Apply 4x4 transformation to the camera center using homogeneous coordinates
+        Cn_hom = np.append(Cn, 1.0)
+        C_ref = (T_a @ Cn_hom)[:3]
+        
+        R_ref = Rn @ R_a.T
+        t_ref = -R_ref @ C_ref
+
+        rot_ref = R.from_matrix(R_ref)
+        q_ref2 = rot_ref.as_quat()
+        # SciPy returns [x, y, z, w], but COLMAP uses [w, x, y, z]
+        q_ref2 = np.array([q_ref2[3], q_ref2[0], q_ref2[1], q_ref2[2]])
+        new_imgs[iid] = BaseImage(iid, q_ref2, t_ref, im.camera_id, im.name, im.xys, im.point3D_ids)
+        
+    # transform points
+    new_pts = {}
+    for pid, p in pts.items():
+        # Apply 4x4 transformation to 3D points
+        p_hom = np.append(p.xyz, 1.0)
+        X_ref = (T_a @ p_hom)[:3]
+        new_pts[pid] = Point3D(pid, X_ref, p.rgb, p.error, p.image_ids, p.point2D_idxs)
+        
+    # cameras unchanged (intrinsics)
+    return cams, new_imgs, new_pts
+
+
+def merge_models(reference_model: Tuple[Dict[int,Camera], Dict[int,Image], Dict[int,Point3D]],
+                 new_model: Tuple[Dict[int,Camera], Dict[int,Image], Dict[int,Point3D]],
+                 new_name_prefix: Optional[str] = "new/") -> Tuple[Dict[int,Camera], Dict[int,Image], Dict[int,Point3D], Dict[int,int]]:
+    cams_r, imgs_r, pts_r = reference_model
+    cams_n, imgs_n, pts_n = new_model
+
+    next_cam_id = (max(cams_r.keys()) + 1) if cams_r else 1
+    next_img_id = (max(imgs_r.keys()) + 1) if imgs_r else 1
+    next_pt_id  = (max(pts_r.keys())  + 1) if pts_r  else 1
+
+    # 1) Cameras: append and map ids
+    cam_map = {}
+    for cid, c in cams_n.items():
+        cam_map[cid] = next_cam_id
+        cams_r[next_cam_id] = Camera(next_cam_id, c.model, c.width, c.height, list(c.params))
+        next_cam_id += 1
+
+    # 2) Images: append, avoid name clashes, remember image id remap
+    existing_names = set([im.name for im in imgs_r.values()])
+    img_map = {}
+    for iid, im in imgs_n.items():
+        new_name = im.name
+        if new_name in existing_names:
+            new_name = (new_name_prefix or "new/") + new_name
+        img_map[iid] = next_img_id
+        # Temporarily copy point3D_ids; we'll fix them after adding points (once we know pid remap)
+        imgs_r[next_img_id] = BaseImage(
+            next_img_id, im.qvec, im.tvec, cam_map[im.camera_id],
+            new_name, im.xys.copy(), im.point3D_ids.copy()
+        )
+        existing_names.add(new_name)
+        next_img_id += 1
+
+    # 3) Points: append with new ids, rewrite tracks with remapped image ids
+    oldpid_to_newpid: Dict[int, int] = {}
+    for old_pid, p in pts_n.items():
+        new_img_ids = []
+        new_pt2ds = []
+        for (old_iid, j) in zip(p.image_ids, p.point2D_idxs):
+            if old_iid in img_map:
+                new_img_ids.append(img_map[old_iid])
+                new_pt2ds.append(j)
+
+        if len(new_img_ids) >= 2:
+            new_pid = next_pt_id
+            oldpid_to_newpid[old_pid] = new_pid
+            pts_r[new_pid] = Point3D(new_pid, p.xyz, p.rgb, p.error, np.array(new_img_ids), np.array(new_pt2ds))
+            next_pt_id += 1
+        # else: drop point (insufficient observations)
+
+    # 4) Fix images' point3D_ids to reflect new point ids (or -1 if point was dropped)
+    for new_iid, im_r in imgs_r.items():
+        # Only adjust images that came from the new model (those in img_map values)
+        if new_iid in img_map.values():
+            # Find the corresponding old image (inverse lookup)
+            # Build a small inverse map once to speed up for large sets
+            pass
+
+    # Build inverse image map once
+    inv_img_map = {new_id: old_id for old_id, new_id in img_map.items()}
+
+    for new_iid, im_r in imgs_r.items():
+        if new_iid not in inv_img_map:
+            continue  # this is an original reference image; its links stay unchanged
+        old_iid = inv_img_map[new_iid]
+        # Fetch the original new image to see original point3D_ids (old pids)
+        im_old = imgs_n[old_iid]
+        old_pids = im_old.point3D_ids
+        if old_pids.size == 0:
+            continue
+        # Map old pids to new pids where available; else set to -1
+        mapped = old_pids.copy()
+        mask = mapped >= 0
+        if mask.any():
+            # vectorized map: for speed, use a dict lookup with fallback -1
+            mapped_ids = []
+            for pid in mapped[mask]:
+                mapped_ids.append(oldpid_to_newpid.get(int(pid), -1))
+            mapped[mask] = np.array(mapped_ids, dtype=np.int64)
+        # namedtuple-based Image is immutable; replace with updated copy
+        imgs_r[new_iid] = im_r._replace(point3D_ids=mapped)
+
+    print(f"[merge] merged model (cams={len(cams_r)}, images={len(imgs_r)}, points={len(pts_r)})")
+    
+    return cams_r, imgs_r, pts_r, oldpid_to_newpid
+
 
 
 # Load from COLMAP
@@ -831,3 +1034,7 @@ def save_meshes_obj(meshes, filename):
     with open(filename, 'w') as f:
         f.write('\n'.join(lines))
     return
+
+def cam_center_from_extrinsics(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    # world->cam: x_c = R X + t; center C satisfies R C + t = 0 => C = -R^T t
+    return -R.T @ t
