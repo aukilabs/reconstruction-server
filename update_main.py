@@ -40,7 +40,11 @@ def main(args):
         logger_name="update_refinement"
     )
     
-    # post_process_ply(output_path, logger=logger)
+    if result is None:
+        logger.error("Stitching failed")
+        return
+
+    post_process_ply(output_path, logger=logger)
 
     logger.info("Update refinement completed successfully")
     return

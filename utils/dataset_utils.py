@@ -287,7 +287,15 @@ def update_helper(
     write_model(cams_r, imgs_r, pts_r, paths.output_path / "updated_sfm")
     logger.debug(f"Exported updated reconstruction to {paths.output_path / 'updated_sfm'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
-    return
+
+    ply_path = paths.refined_group_dir / 'updated' / "RefinedPointCloud.ply"
+    rec = pycolmap.Reconstruction()
+    for point in pts_r.values():
+        x,y,z = point.xyz
+        _ = rec.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.rgb)
+    export_rec_as_ply(rec, ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
+
+    return True
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> List[Dict]:
     portals_u_dict = read_portal_csv(rec_dir / "portals.csv")
@@ -610,7 +618,7 @@ def _initialize_paths(group_folder: Path, function: str = "stitching_helper") ->
     if function == "stitching_helper":
         output_path = parent_dir / "refined" / "global"
     elif function == "update_helper":
-        output_path = parent_dir / "updated"
+        output_path = parent_dir / "refined" / "updated"
         reference_path = parent_dir / "refined" / "global"
     else:
         raise ValueError(f"Unknown function: {function}")
