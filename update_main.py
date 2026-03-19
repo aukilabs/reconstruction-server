@@ -36,7 +36,7 @@ def main(args):
     # Perform Update Refinement
     result = update_helper(
         dataset_paths=dataset_paths,
-        group_folder=args.data_path,
+        job_root_path=args.data_path.parent.parent,
         logger_name="update_refinement"
     )
     

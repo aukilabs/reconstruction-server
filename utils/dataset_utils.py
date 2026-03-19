@@ -116,7 +116,7 @@ def stitching_helper(
     logger = logging.getLogger(logger_name)
 
     # Initialize paths and data
-    paths = _initialize_paths(group_folder)
+    paths = _initialize_paths(group_folder.parent, "stitching_helper")
     stitch_data = StitchingData()
 
     # Process datasets
@@ -181,21 +181,14 @@ def stitching_helper(
 
 def update_helper(
     dataset_paths: List[Path],
-    group_folder: Path,
+    job_root_path: Path,
     logger_name: Optional[str] = None
 ) -> StitchingResult:
     """Main function to stitch multiple reconstructions together.
     
     Args:
         dataset_paths: List of paths to datasets to stitch
-        dataset_group: Name of dataset group
-        group_folder: Path to group folder
-        truth_portal_poses: Ground truth portal poses if available
-        all_observations: Whether to use all observations
-        all_poses: Whether to use all poses 
-        use_refined_outputs: Whether to use refined outputs
-        with_3dpoints: Whether to include 3D points
-        basic_stitch_only: Whether to only do basic stitching
+        job_root_path: Path to the root folder for the update job
         logger_name: Name of logger to use
 
     Returns:
@@ -205,8 +198,8 @@ def update_helper(
     logger = logging.getLogger(logger_name)
 
     # Initialize paths and data
-    paths = _initialize_paths(group_folder, "update_helper")
-    stitch_data = StitchingData()
+    paths = _initialize_paths(job_root_path, "update_helper")
+    # stitch_data = StitchingData()
 
     pending_update_rec = []
 
@@ -291,7 +284,8 @@ def update_helper(
             if pid in portal_r:
                 logger.info(f"Portal {pid} already exists in reference model. Skipping.")
                 continue
-            transformed_portal = transform_with_scale(alignment_mat, portal)
+            alignment_sim3d = pycolmap.Sim3d(1.0, alignment_mat.rotation, alignment_mat.translation)
+            transformed_portal = transform_with_scale(alignment_sim3d, portal)
             portal_r[pid] = transformed_portal
             portal_sizes[pid] = portal_sizes_u[pid]
 
@@ -313,7 +307,7 @@ def update_helper(
         portal_sizes=portal_sizes
     )
 
-    ply_path = paths.refined_group_dir / 'updated' / "RefinedPointCloud.ply"
+    ply_path = paths.refined_group_dir / 'update' / "RefinedPointCloud.ply"
     rec = pycolmap.Reconstruction()
     for point in pts_r.values():
         x,y,z = point.xyz
@@ -638,14 +632,14 @@ def _process_reconstruction(
             image_id_old_to_new[detection["image_id"]]
         )
 
-def _initialize_paths(group_folder: Path, function: str = "stitching_helper") -> Paths:
+def _initialize_paths(job_root_path: Path, function: str = "stitching_helper") -> Paths:
     """Initialize all required paths."""
-    parent_dir = group_folder.parent
-    
+    parent_dir = job_root_path
+
     if function == "stitching_helper":
         output_path = parent_dir / "refined" / "global"
     elif function == "update_helper":
-        output_path = parent_dir / "refined" / "updated"
+        output_path = parent_dir / "refined" / "update"
         reference_path = parent_dir / "refined" / "global"
     else:
         raise ValueError(f"Unknown function: {function}")
