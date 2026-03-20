@@ -291,9 +291,9 @@ def update_helper(
 
 
     # Export the merged model for inspection
-    os.makedirs(paths.output_path / "updated_sfm", exist_ok=True)
-    write_model(cams_r, imgs_r, pts_r, paths.output_path / "updated_sfm")
-    logger.debug(f"Exported updated reconstruction to {paths.output_path / 'updated_sfm'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
+    os.makedirs(paths.output_path / "refined_sfm_combined", exist_ok=True)
+    write_model(cams_r, imgs_r, pts_r, paths.output_path / "refined_sfm_combined")
+    logger.debug(f"Exported updated reconstruction to {paths.output_path / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = paths.output_path / 'refined_manifest.json'
