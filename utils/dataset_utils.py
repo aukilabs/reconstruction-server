@@ -297,7 +297,8 @@ def update_helper(
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = paths.output_path / 'refined_manifest.json'
-    portals = {pid: [pose] for pid, pose in portal_r.items()}
+    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
+    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
     save_manifest_json(
         portals,
         manifest_path,
