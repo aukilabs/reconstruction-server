@@ -194,6 +194,7 @@ dependencies = [
  "posemesh-compute-node-runner-api",
  "runner-reconstruction-global",
  "runner-reconstruction-local",
+ "runner-reconstruction-update",
  "semver",
  "tokio",
 ]
@@ -1696,6 +1697,25 @@ dependencies = [
  "tokio-util",
  "tracing",
  "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "runner-reconstruction-update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "posemesh-compute-node-runner-api",
+ "posemesh-domain-http",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
  "zip",
 ]
 
