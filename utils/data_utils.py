@@ -424,7 +424,7 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None):
+def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None, previous_scan_files=None):
 
     job_root_path = Path(job_root_path)
 
@@ -478,6 +478,9 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             manifest_data["domainServerURL"] = job_metadata_json.get("domain_server_url", None)
             manifest_data["processingType"] = job_metadata_json["processing_type"]
             manifest_data["dataIDs"] = job_metadata_json["data_ids"]
+            if previous_scan_files is not None:
+                manifest_data["dataIDs"].extend(previous_scan_files)
+            
     except Exception as e:
         print("No job metadata found for manifest")
         print(e)
@@ -616,7 +619,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         json.dump(manifest_data, json_file, indent=4)
 
 
-def parse_portals_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+def parse_info_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
     """
     Returns dict: shortId -> (R_world_portal, t_world_portal)
     Assumes 'pose' is the transform from portal frame to world frame (world_T_portal).
@@ -639,7 +642,12 @@ def parse_portals_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarr
         R = quaternion_to_rotation_matrix((rot['x'], rot['y'], rot['z'], rot['w']))
         size = p.get('physicalSize', None)
         out[sid] = (R, t, size)
-    return out
+
+    data_id = data.get('dataIDs', [])
+
+    data_id = [str(d) for d in data_id if "refined_scan" in str(d)]
+
+    return out, data_id
 
 
 def vec3_angle(v, w):

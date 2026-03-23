@@ -21,7 +21,7 @@ from utils.data_utils import (
     get_world_space_qr_codes,
     save_manifest_json,
     export_rec_as_ply,
-    parse_portals_from_manifest
+    parse_info_from_manifest
 )
 from utils.geometry_utils import align_reconstruction_chunks
 from utils.io import Model, read_portal_csv, read_model, merge_models, write_model, apply_similarity_to_new_model, validate_model_consistency
@@ -227,7 +227,7 @@ def update_helper(
     
     # Loading the reference model that will be refined. This should be the model that set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin",logger=logger)
-    portal_r = parse_portals_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
+    portal_r, refined_files_r = parse_info_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
     portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
     portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
 
@@ -305,7 +305,8 @@ def update_helper(
         paths.parent_dir,
         job_status="refined",
         job_progress=100,
-        portal_sizes=portal_sizes
+        portal_sizes=portal_sizes,
+        previous_scan_files=refined_files_r
     )
 
     ply_path = paths.refined_group_dir / 'update' / "RefinedPointCloud.ply"
@@ -841,6 +842,7 @@ def _handle_basic_stitch(
 def _get_refined_results(
     stitch_data: StitchingData,
     basic_results: StitchResults,
+    scan_names: List[str],
     paths: Paths,
     truth_portal_poses: Dict[str, pycolmap.Rigid3d],
     with_3dpoints: bool,
@@ -872,6 +874,7 @@ def _get_refined_results(
     manifest_path = paths.output_path / 'refined_manifest.json'
     save_manifest_json(
         mean_poses,
+        scan_names,
         manifest_path,
         paths.parent_dir,
         job_status="refined",
