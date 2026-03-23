@@ -136,6 +136,7 @@ pub async fn materialize_refined_scans(
     Ok(scans)
 }
 
+#[allow(dead_code)]
 pub struct MaterializedRefinedGlobal {
     pub name: String,
     pub data_id: String,
@@ -175,8 +176,6 @@ pub async fn materialize_global_colmap(
 
     let client_id = get_client_id();
     let token = ctx.access_token.get();
-
-    let mut result: Option<MaterializedRefinedGlobal> = None;
 
     let expected_colmap = [
         ("colmap_images_bin", "images.bin"),
@@ -277,7 +276,7 @@ pub async fn materialize_global_colmap(
         ));
     }
 
-    result = Some(MaterializedRefinedGlobal {
+    let result = Some(MaterializedRefinedGlobal {
         name: global_refinement_name.to_string(),
         data_id: "".to_string(),
         scan_name: global_refinement_name.to_string(),
