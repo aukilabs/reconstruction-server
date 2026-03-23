@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result, Error};
+use anyhow::{anyhow, Context, Error, Result};
 use compute_runner_api::TaskCtx;
 use posemesh_domain_http::domain_data::{download_by_id, download_metadata_v1, DownloadQuery};
 use tokio::fs;
@@ -11,7 +11,13 @@ use crate::strategy::unzip_refined_scan;
 use crate::workspace::Workspace;
 
 const REQUIRED_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
-const REQUIRED_GLOBAL_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "frames.bin", "rigs.bin"];
+const REQUIRED_GLOBAL_SFM_FILES: &[&str] = &[
+    "images.bin",
+    "cameras.bin",
+    "points3D.bin",
+    "frames.bin",
+    "rigs.bin",
+];
 
 /// Data captured for each materialized refined scan.
 #[allow(dead_code)]
@@ -24,7 +30,6 @@ pub struct MaterializedRefinedScan {
     pub zip_path: PathBuf,
     pub refined_sfm_dir: PathBuf,
 }
-
 
 /// Materialize each refined scan name into the workspace, downloading from Domain,
 /// keeping the zip under datasets, and extracting into refined/local/<scan>/sfm.
@@ -185,10 +190,17 @@ pub async fn materialize_global_colmap(
 
     fs::create_dir_all(&workspace.refined_global().join("refined_sfm_combined"))
         .await
-        .with_context(|| format!("create dataset directory {}", &workspace.refined_global().join("refined_sfm_combined").display()))?;
+        .with_context(|| {
+            format!(
+                "create dataset directory {}",
+                &workspace
+                    .refined_global()
+                    .join("refined_sfm_combined")
+                    .display()
+            )
+        })?;
 
     for (display_name, file_name) in &expected_colmap {
-
         for name in &ctx.lease.task.inputs_cids {
             if is_url(name) {
                 return Err(anyhow!(
@@ -197,9 +209,16 @@ pub async fn materialize_global_colmap(
                 ));
             }
 
-            let meta = match resolve_by_name_and_type(&domain_url, &client_id, &token, &domain_id, name, display_name)
-                .await
-                .with_context(|| format!("resolve colmap file name {}", name))
+            let meta = match resolve_by_name_and_type(
+                &domain_url,
+                &client_id,
+                &token,
+                &domain_id,
+                name,
+                display_name,
+            )
+            .await
+            .with_context(|| format!("resolve colmap file name {}", name))
             {
                 Ok(meta) => meta,
                 Err(_) => continue,
@@ -218,11 +237,12 @@ pub async fn materialize_global_colmap(
 
             if global_refinement_name.is_empty() {
                 let prefix = format!("{}{}", display_name, "_");
-                global_refinement_name = name.as_str().strip_prefix(&prefix)
-                        .unwrap_or(name);
+                global_refinement_name = name.as_str().strip_prefix(&prefix).unwrap_or(name);
             }
 
-            let file_path = &workspace.root().join("refined")
+            let file_path = &workspace
+                .root()
+                .join("refined")
                 .join("global")
                 .join("refined_sfm_combined")
                 .join(file_name);
@@ -232,7 +252,8 @@ pub async fn materialize_global_colmap(
         }
     }
 
-    let sfm_dir = workspace.root()
+    let sfm_dir = workspace
+        .root()
         .join("refined")
         .join("global")
         .join("refined_sfm_combined");
@@ -247,9 +268,12 @@ pub async fn materialize_global_colmap(
     if !has_required_global_sfm_files(&sfm_dir) {
         return Err(anyhow!(
             "global colmap files' missing required sfm files under {}",
-            workspace.root().join("refined")
-                .join("global").
-                join("refined_sfm_combined").display()
+            workspace
+                .root()
+                .join("refined")
+                .join("global")
+                .join("refined_sfm_combined")
+                .display()
         ));
     }
 
@@ -262,7 +286,6 @@ pub async fn materialize_global_colmap(
     });
 
     result.ok_or_else(|| anyhow!("could not materialize any global colmap refined scan"))
-
 }
 
 pub async fn materialize_refine_manifest(
@@ -305,9 +328,16 @@ pub async fn materialize_refine_manifest(
             ));
         }
 
-        let meta = match resolve_by_name_and_type(&domain_url, &client_id, &token, &domain_id, name, "refined_manifest_json")
-            .await
-            .with_context(|| format!("resolve refined_manifest name {}", name))
+        let meta = match resolve_by_name_and_type(
+            &domain_url,
+            &client_id,
+            &token,
+            &domain_id,
+            name,
+            "refined_manifest_json",
+        )
+        .await
+        .with_context(|| format!("resolve refined_manifest name {}", name))
         {
             Ok(meta) => meta,
             Err(_) => continue,
@@ -324,7 +354,8 @@ pub async fn materialize_refine_manifest(
             .await
             .map_err(|e| anyhow!("failed to download refined_manifest '{}': {}", name, e))?;
 
-        let file_path = workspace.root()
+        let file_path = workspace
+            .root()
             .join("refined")
             .join("global")
             .join("refined_manifest.json");
@@ -386,7 +417,10 @@ async fn resolve_by_name_and_type(
 
     println!("matching file name {} datatype {}", name, data_type);
     for meta in &metas {
-        println!("found artifact with name {} and data_type {}", meta.name, meta.data_type);
+        println!(
+            "found artifact with name {} and data_type {}",
+            meta.name, meta.data_type
+        );
     }
 
     metas

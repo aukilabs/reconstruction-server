@@ -205,7 +205,6 @@ impl Runner for RunnerReconstructionUpdate {
             }))
             .await;
 
-
         let python_args = build_python_args(&self.config, &job_ctx, &workspace);
         let _ = ctx
             .ctrl
@@ -512,13 +511,27 @@ fn load_config() -> RunnerConfig {
 fn build_python_args(
     config: &RunnerConfig,
     job_ctx: &JobContext,
-    workspace: &workspace::Workspace
+    workspace: &workspace::Workspace,
 ) -> Vec<String> {
     let mut args = config.python_args.clone();
     args.push("--data_path".to_string());
-    args.push(workspace.root().join("refined").join("local").display().to_string());
+    args.push(
+        workspace
+            .root()
+            .join("refined")
+            .join("local")
+            .display()
+            .to_string(),
+    );
     args.push("--output_path".to_string());
-    args.push(workspace.root().join("refined").join("update").display().to_string());
+    args.push(
+        workspace
+            .root()
+            .join("refined")
+            .join("update")
+            .display()
+            .to_string(),
+    );
     args.push("--domain_id".to_string());
     args.push(job_ctx.metadata.domain_id.clone());
     args.push("--job_id".to_string());
