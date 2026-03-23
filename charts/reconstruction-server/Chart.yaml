@@ -4,4 +4,4 @@ version: 0.0.1
 dependencies:
 - name: reconstruction-server
   version: 0.3.0
-  repository: "file://charts/reconstruction-server"
+  repository: "https://charts.aukiverse.com"
