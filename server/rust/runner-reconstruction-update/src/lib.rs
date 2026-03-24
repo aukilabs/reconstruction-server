@@ -1,4 +1,4 @@
-//! runner-reconstruction-global: runner for global refinement.
+//! runner-reconstruction-update: runner for update refinement.
 
 use std::{
     env,
@@ -503,7 +503,7 @@ impl Default for RunnerConfig {
 
 fn load_config() -> RunnerConfig {
     RunnerConfig::from_env().unwrap_or_else(|err| {
-        warn!(error = %err, "failed to read global runner config; using defaults");
+        warn!(error = %err, "failed to read update runner config; using defaults");
         RunnerConfig::default()
     })
 }
