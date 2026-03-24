@@ -410,7 +410,7 @@ impl JobContext {
         if !self.metadata.name.trim().is_empty() {
             return self.metadata.name.clone();
         }
-        "global_job".to_string()
+        "update_job".to_string()
     }
 
     async fn persist_metadata(&self, path: &Path) -> Result<()> {
