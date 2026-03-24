@@ -596,7 +596,7 @@ def validate_model_consistency(cameras: Dict[int, 'Camera'], images: Dict[int, '
     return valid
 
 
-def read_model(path, ext="", logger=None):
+def read_model(path, ext="", logger=None, validate_consistency=True):
     if logger is None:
         logger = logging.getLogger()
 
@@ -618,7 +618,9 @@ def read_model(path, ext="", logger=None):
         cameras = read_cameras_binary(os.path.join(path, "cameras" + ext))
         images = read_images_binary(os.path.join(path, "images" + ext))
         points3D = read_points3D_binary(os.path.join(path, "points3D") + ext)
-    validate_model_consistency(cameras, images, points3D, logger=logger)
+    
+    if validate_consistency:
+        validate_model_consistency(cameras, images, points3D, logger=logger)
     
     return cameras, images, points3D
 
