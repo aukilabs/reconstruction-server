@@ -1,4 +1,3 @@
-from attr import attr
 import numpy as np
 from typing import Dict, Tuple
 from utils.io import Image, Point3D, qvec2rotmat, cam_center_from_extrinsics
