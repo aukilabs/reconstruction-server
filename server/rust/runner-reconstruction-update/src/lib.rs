@@ -393,7 +393,7 @@ impl JobContext {
             id: job_id.clone(),
             name: job_name,
             domain_id: lease.domain_id.map(|id| id.to_string()).unwrap_or_default(),
-            processing_type: "global_refinement".to_string(),
+            processing_type: "update_refinement".to_string(),
             created_at: Utc::now().to_rfc3339(),
             domain_server_url,
             reconstruction_server_url,
@@ -427,7 +427,7 @@ impl JobContext {
     }
 }
 
-/// Configuration for the global reconstruction runner.
+/// Configuration for the update reconstruction runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerConfig {
     /// Optional base directory for job workspaces.
