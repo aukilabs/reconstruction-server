@@ -731,14 +731,6 @@ def merge_models(reference_model: Tuple[Dict[int,Camera], Dict[int,Image], Dict[
             next_pt_id += 1
         # else: drop point (insufficient observations)
 
-    # 4) Fix images' point3D_ids to reflect new point ids (or -1 if point was dropped)
-    for new_iid, im_r in imgs_r.items():
-        # Only adjust images that came from the new model (those in img_map values)
-        if new_iid in img_map.values():
-            # Find the corresponding old image (inverse lookup)
-            # Build a small inverse map once to speed up for large sets
-            pass
-
     # Build inverse image map once
     inv_img_map = {new_id: old_id for old_id, new_id in img_map.items()}
 
