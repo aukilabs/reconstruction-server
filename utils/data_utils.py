@@ -18,7 +18,7 @@ import GPUtil
 import subprocess
 from dateutil import parser
 from pathlib import Path
-from typing import NamedTuple, Dict, Tuple
+from typing import List, NamedTuple, Dict, Tuple
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -619,7 +619,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         json.dump(manifest_data, json_file, indent=4)
 
 
-def parse_info_from_manifest(manifest_path: Path) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+def parse_info_from_manifest(manifest_path: Path) -> Tuple[Dict[str, Tuple[np.ndarray, np.ndarray]], List[str]]:
     """
     Returns dict: shortId -> (R_world_portal, t_world_portal)
     Assumes 'pose' is the transform from portal frame to world frame (world_T_portal).
