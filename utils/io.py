@@ -754,8 +754,6 @@ def merge_models(reference_model: Tuple[Dict[int,Camera], Dict[int,Image], Dict[
             mapped[mask] = np.array(mapped_ids, dtype=np.int64)
         # namedtuple-based Image is immutable; replace with updated copy
         imgs_r[new_iid] = im_r._replace(point3D_ids=mapped)
-
-    print(f"[merge] merged model (cams={len(cams_r)}, images={len(imgs_r)}, points={len(pts_r)})")
     
     return cams_r, imgs_r, pts_r, oldpid_to_newpid
 
