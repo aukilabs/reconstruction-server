@@ -11,8 +11,6 @@ from numpy.linalg import norm
 import logging
 from dataclasses import dataclass
 
-from sklearn import logger
-
 from utils.data_utils import (
     convert_pose_colmap_to_opengl,
     mean_pose,
@@ -85,7 +83,7 @@ class Paths:
     output_path: Path
     dataset_dir: Path
     refined_group_dir: Path
-    reference_path: Path    # Path for reference reconstruction (global refinement that set as canonical)
+    reference_path: Optional[Path] = None # Path for reference reconstruction (global refinement that set as canonical) only used in update_helper
 
 def stitching_helper(
     dataset_paths: List[Path],
@@ -183,7 +181,7 @@ def update_helper(
     dataset_paths: List[Path],
     job_root_path: Path,
     logger_name: Optional[str] = None
-) -> StitchingResult:
+) -> bool:
     """Main function to stitch multiple reconstructions together.
     
     Args:
@@ -199,7 +197,6 @@ def update_helper(
 
     # Initialize paths and data
     paths = _initialize_paths(job_root_path, "update_helper")
-    # stitch_data = StitchingData()
 
     pending_update_rec = []
 
@@ -223,7 +220,7 @@ def update_helper(
         logger.info("Only one dataset path found. Skipping stitching and preparing for update refinement.")
     else:
         logger.error("No dataset paths found. Exiting.")
-        return None
+        return False
     
     # Loading the reference model that will be refined. This should be the model that set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin",logger=logger)
@@ -842,7 +839,6 @@ def _handle_basic_stitch(
 def _get_refined_results(
     stitch_data: StitchingData,
     basic_results: StitchResults,
-    scan_names: List[str],
     paths: Paths,
     truth_portal_poses: Dict[str, pycolmap.Rigid3d],
     with_3dpoints: bool,
@@ -874,12 +870,11 @@ def _get_refined_results(
     manifest_path = paths.output_path / 'refined_manifest.json'
     save_manifest_json(
         mean_poses,
-        scan_names,
         manifest_path,
         paths.parent_dir,
         job_status="refined",
         job_progress=100,
-        portal_sizes=stitch_data.portal_sizes
+        portal_sizes=stitch_data.portal_sizes,
     )
 
     if with_3dpoints:
