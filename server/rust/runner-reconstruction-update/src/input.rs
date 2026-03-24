@@ -181,8 +181,8 @@ pub async fn materialize_global_colmap(
         ("colmap_images_bin", "images.bin"),
         ("colmap_cameras_bin", "cameras.bin"),
         ("colmap_points3d_bin", "points3D.bin"),
-        // ("colmap_frames_bin", "frames.bin"),
-        // ("colmap_rigs_bin", "rigs.bin"),
+        ("colmap_frames_bin", "frames.bin"),
+        ("colmap_rigs_bin", "rigs.bin"),
     ];
 
     let mut global_refinement_name = "";
