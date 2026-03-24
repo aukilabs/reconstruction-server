@@ -684,13 +684,13 @@ def process_frames(
     logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
     return sorted(references), use_frames_from_video, original_image_count
 
-def process_enquirectangular_frames(
+def process_pano_frames(
     paths,
-    every_nth_image,
+    every_nth_frame,
     logger
 ):
     """
-    Process and extract frames from enquirectangular video if necessary.
+    Process and extract frames from panorama / enquirectangular video if necessary.
     
     Returns:
         Tuple of (reference_list, use_frames_from_video)
@@ -709,7 +709,7 @@ def process_enquirectangular_frames(
     references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]
 
     original_image_count = len(references)
-    references = references[::every_nth_image]
+    references = references[::every_nth_frame]
     logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
     return sorted(references), use_frames_from_video, original_image_count
 

@@ -15,7 +15,7 @@ from utils.data_utils import (
     setup_logger,
     save_portal_csv, 
     process_frames,
-    process_enquirectangular_frames,
+    process_pano_frames,
     rectify_portal_pose
 )
 
@@ -377,10 +377,10 @@ def refine_dataset(
         return None
 
 
-def refine_enquirectangular_data(
+def refine_pano_data(
     scan_folder_path, 
     output_path,
-    every_nth_image=1,
+    every_nth_frame=1,
     remove_outputs=False,
     domain_id="",
     job_id="",
@@ -393,7 +393,7 @@ def refine_enquirectangular_data(
     Args:
         scan_folder_path: Path to the scan folder
         output_path: Path for output files
-        every_nth_image: Process every nth image
+        every_nth_frame: Process every nth frame (each frame is a rig, contains multiple images)
         remove_outputs: Whether to remove existing outputs
         domain_id: Domain identifier
         job_id: Job identifier
@@ -412,17 +412,17 @@ def refine_enquirectangular_data(
     # Setup Logging
     logger = setup_logger(
         name="refine_dataset", 
-        log_file=str(paths.log_path / "local_logs"), 
+        log_file=str(paths.log_path / "pano_logs"), 
         domain_id=domain_id, 
         job_id=job_id, 
         dataset_id=scan_folder_path.name,
         level=log_level
     )
-    logger.info(f'Starting local refinement of {scan_folder_path.name}')
+    logger.info(f'Starting pano refinement of {scan_folder_path.name}')
 
     # Process frames and load data
-    references, use_frames_from_video, original_image_count = process_enquirectangular_frames(
-        paths, every_nth_image, logger
+    references, use_frames_from_video, original_image_count = process_pano_frames(
+        paths, every_nth_frame, logger
     )
 
     # Load scan from folder
