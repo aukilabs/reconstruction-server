@@ -257,13 +257,6 @@ pub async fn materialize_global_colmap(
         .join("global")
         .join("refined_sfm_combined");
 
-    println!("Listing files under {}", sfm_dir.display());
-    for entry in std::fs::read_dir(&sfm_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        println!("{}", path.display());
-    }
-
     if !has_required_global_sfm_files(&sfm_dir) {
         return Err(anyhow!(
             "global colmap files' missing required sfm files under {}",
@@ -413,14 +406,6 @@ async fn resolve_by_name_and_type(
     )
     .await
     .map_err(|e| anyhow!("failed to query Domain for artifact '{}': {}", name, e))?;
-
-    println!("matching file name {} datatype {}", name, data_type);
-    for meta in &metas {
-        println!(
-            "found artifact with name {} and data_type {}",
-            meta.name, meta.data_type
-        );
-    }
 
     metas
         .into_iter()
