@@ -1,0 +1,41 @@
+##
+## Rust build for server (builder stage)
+##
+ARG RECONSTRUCTION_VERSION=0.0.0-local
+FROM --platform=$BUILDPLATFORM rust:1.89-bookworm AS rust-build
+ARG RECONSTRUCTION_VERSION
+ENV RECONSTRUCTION_VERSION="${RECONSTRUCTION_VERSION}"
+WORKDIR /app
+ADD server/rust /app
+# Build release binary for the compute-node crate
+RUN cargo build --release -p bin
+
+FROM debian:bookworm-slim AS runtime
+
+ARG RECONSTRUCTION_VERSION
+ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
+
+# Install required runtime libs
+# - ca-certificates: for HTTPS (reqwest + rustls uses system certs)
+# - libssl3: if any dependency pulls in native-tls/OpenSSL on Bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+ARG USERNAME=reconstruction
+ARG USER_UID=10001
+ARG USER_GID=10001
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME}
+
+WORKDIR /app
+RUN mkdir -p /app/jobs && chown -R ${USERNAME}:${USERNAME} /app
+
+COPY --from=rust-build /app/target/release/compute-node /usr/local/bin/compute-node
+
+USER ${USERNAME}
+
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/compute-node"]

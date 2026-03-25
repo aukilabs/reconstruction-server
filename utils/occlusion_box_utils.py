@@ -7,6 +7,7 @@ from collections import defaultdict
 import random
 import matplotlib.pyplot as plt
 import alphashape
+import logging
 
 from shapely.geometry import Polygon, GeometryCollection
 from scipy.spatial import ConvexHull
@@ -120,15 +121,18 @@ def assign_cluster_colors(pcd, labels):
     return pcd
 
 
-def find_best_fit_alphashape(points, alpha=0.5):
+def find_best_fit_alphashape(points, alpha=0.5, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     x_arr = points[:, 0]
     y_arr = points[:, 1]
     if len(np.unique(x_arr)) < 2 or len(np.unique(y_arr)) < 2:
         return False, None
     try:
         alpha_shape = alphashape.alphashape(points, alpha)
-    except:
-        print(f"failed to extract alpha shape")
+    except Exception:
+        logger.warning("failed to extract alpha shape")
         return False, None
     # Check if the result is a Polygon, MultiPolygon, or GeometryCollection
     if isinstance(alpha_shape, Polygon):
@@ -140,17 +144,21 @@ def find_best_fit_alphashape(points, alpha=0.5):
         return False, None
     return True, exterior_coords
 
-def find_best_fit_alphashape_optimized(points, alpha=2.0):
+def find_best_fit_alphashape_optimized(points, alpha=2.0, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     x_arr = points[:, 0]
     y_arr = points[:, 1]
     if len(np.unique(x_arr)) < 2 or len(np.unique(y_arr)) < 2:
-        print("not enough points")
+        logger.info("not enough points")
         return False, None
     try:
         alpha_shape = alphashape.alphashape(points, alpha)
-    except:
-        print(f"failed to extract alpha shape")
+    except Exception:
+        logger.warning("failed to extract alpha shape")
         return False, None
+
     # Check if the result is a Polygon, MultiPolygon, or GeometryCollection
     if isinstance(alpha_shape, Polygon):
         # If it's a single Polygon, extract the exterior
@@ -167,15 +175,18 @@ def find_best_fit_alphashape_optimized(points, alpha=2.0):
         exterior_coords = np.column_stack([x, y])
     elif isinstance(alpha_shape, GeometryCollection):
         for geom in alpha_shape.geoms:
-            print(type(geom))
+            logger.debug(type(geom))
         return False, None
     else:
-        # For other cases (like GeometryCollection), handle them appropriately
-        print(type(alpha_shape))
+        logger.debug(type(alpha_shape))
         return False, None
+
     return True, exterior_coords
 
-def find_best_fit_convexhull(points):
+def find_best_fit_convexhull(points, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     x_arr = points[:, 0]
     y_arr = points[:, 1]
     if len(np.unique(x_arr)) < 2 or len(np.unique(y_arr)) < 2:
@@ -184,7 +195,7 @@ def find_best_fit_convexhull(points):
         # Compute the convex hull of the centroids
         hull = ConvexHull(points)
     except QhullError:
-        print(f"Convex hull error for cluster. Using all points as boundary.")
+        logger.warning("Convex hull error for cluster. Using all points as boundary.")
         return False, None
     quad_points = points[hull.vertices]
     return True, quad_points

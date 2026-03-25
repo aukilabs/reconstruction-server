@@ -1,0 +1,3 @@
+# Clippy configuration for this workspace.
+# CI denies all warnings via: `cargo clippy --workspace -- -D warnings`.
+# Add lint-specific configuration here if needed by future prompts.

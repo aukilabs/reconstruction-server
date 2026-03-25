@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "runner-reconstruction-global",
+    "runner-reconstruction-local",
+    "bin",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+# Metadata used by scripts/CI; clippy warnings are denied via CI commands.
+[workspace.metadata.ci]
+deny-warnings = true

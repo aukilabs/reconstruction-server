@@ -1,6 +1,8 @@
 FROM dustynv/l4t-pytorch:r36.4.0
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG RECONSTRUCTION_VERSION=0.0.0-local
+ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
 
 RUN apt-get update && apt-get install -y wget \
     curl \
@@ -73,7 +75,7 @@ RUN git clone --recursive https://github.com/cvg/Hierarchical-Localization && \
     cd Hierarchical-Localization && \
     python3 -m pip install -e . --config-settings editable_mode=compat
 
-RUN python3 -m pip install enlighten evo hloc
+RUN python3 -m pip install enlighten hloc
 
 
 WORKDIR /app

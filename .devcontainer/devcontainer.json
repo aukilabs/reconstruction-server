@@ -9,20 +9,28 @@
     "customizations": {
         "vscode": {
             "extensions":[
-                "golang.Go",
                 "ms-python.python",
-                "ms-python.debugpy"
+                "ms-python.debugpy",
+                "rust-lang.rust-analyzer"
             ]
         }
     },
-    "appPort": [8080],
+    "forwardPorts": [8080],
     "runArgs": [
         "--gpus", "all",
         "--shm-size", "512m"
     ],
+
+    // Uncomment if you want display forward
+    // "containerEnv": {
+    //     "DISPLAY": "unix:0"
+    // },
     "mounts": [
         // Modify this to your own data folder
-        // "source=/home/sam/Workspaces/data,target=/data,type=bind"
+        // "source=/path/to/data,target=/data,type=bind",
+
+        // Uncomment if you want display forward
+        // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
-    "postCreateCommand": "chown -R reconstruction-server:reconstruction-server /app && .devcontainer/build_golang_server.sh"
+    "postCreateCommand": "bash .devcontainer/post_create.sh"
 }

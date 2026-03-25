@@ -2,6 +2,6 @@ name: reconstruction-server
 apiVersion: v2
 version: 0.0.1
 dependencies:
-- name: k8s-service
-  version: v0.2.29
-  repository: https://github.com/gruntwork-io/helm-kubernetes-services/releases/download/v0.2.29/
+- name: reconstruction-server
+  version: 0.2.0
+  repository: https://charts.aukiverse.com

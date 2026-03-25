@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import os
 import collections
 import struct
@@ -6,6 +7,8 @@ import open3d
 import yaml
 import trimesh
 import uuid
+import csv
+from utils.data_utils import (convert_pose_colmap_to_opengl)
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"]
@@ -19,7 +22,9 @@ BaseImage = collections.namedtuple(
 Point3D = collections.namedtuple(
     "Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"]
 )
-
+Portal = collections.namedtuple(
+    "Portal", ["id", "short_id", "qvec", "tvec", "image_id", "corners", "size"]
+)
 
 CAMERA_MODELS = {
     CameraModel(model_id=0, model_name="SIMPLE_PINHOLE", num_params=3),
@@ -97,13 +102,16 @@ def write_next_bytes(fid, data, format_char_sequence, endian_character="<"):
     fid.write(bytes)
 
 
-def detect_model_format(path, ext):
+def detect_model_format(path, ext, logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     if (
         os.path.isfile(os.path.join(path, "cameras" + ext))
         and os.path.isfile(os.path.join(path, "images" + ext))
         and os.path.isfile(os.path.join(path, "points3D" + ext))
     ):
-        print("Detected model format: '" + ext + "'")
+        logger.info("Detected model format: '%s'", ext)
         return True
 
     return False
@@ -137,6 +145,25 @@ def read_cameras_text(path):
                     params=params,
                 )
     return cameras
+
+
+def write_cameras_text(cameras, path):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::WriteCamerasText(const std::string& path)
+        void Reconstruction::ReadCamerasText(const std::string& path)
+    """
+    HEADER = (
+        "# Camera list with one line of data per camera:\n"
+        + "#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n"
+        + "# Number of cameras: {}\n".format(len(cameras))
+    )
+    with open(path, "w") as fid:
+        fid.write(HEADER)
+        for _, cam in cameras.items():
+            to_write = [cam.id, cam.model, cam.width, cam.height, *cam.params]
+            line = " ".join([str(elem) for elem in to_write])
+            fid.write(line + "\n")
 
 
 def read_images_text(path):
@@ -179,6 +206,40 @@ def read_images_text(path):
     return images
 
 
+def write_images_text(images, path):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::ReadImagesText(const std::string& path)
+        void Reconstruction::WriteImagesText(const std::string& path)
+    """
+    if len(images) == 0:
+        mean_observations = 0
+    else:
+        mean_observations = sum(
+            (len(img.point3D_ids) for _, img in images.items())
+        ) / len(images)
+    HEADER = (
+        "# Image list with two lines of data per image:\n"
+        + "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n"
+        + "#   POINTS2D[] as (X, Y, POINT3D_ID)\n"
+        + "# Number of images: {}, mean observations per image: {}\n".format(
+            len(images), mean_observations
+        )
+    )
+
+    with open(path, "w") as fid:
+        fid.write(HEADER)
+        for _, img in images.items():
+            image_header = [img.id, *img.qvec, *img.tvec, img.camera_id, img.name]
+            first_line = " ".join(map(str, image_header))
+            fid.write(first_line + "\n")
+
+            points_strings = []
+            for xy, point3D_id in zip(img.xys, img.point3D_ids):
+                points_strings.append(" ".join(map(str, [*xy, point3D_id])))
+            fid.write(" ".join(points_strings) + "\n")
+
+
 def read_points3D_text(path):
     """
     see: src/colmap/scene/reconstruction.cc
@@ -209,6 +270,37 @@ def read_points3D_text(path):
                     point2D_idxs=point2D_idxs,
                 )
     return points3D
+
+
+def write_points3D_text(points3D, path):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::ReadPoints3DText(const std::string& path)
+        void Reconstruction::WritePoints3DText(const std::string& path)
+    """
+    if len(points3D) == 0:
+        mean_track_length = 0
+    else:
+        mean_track_length = sum(
+            (len(pt.image_ids) for _, pt in points3D.items())
+        ) / len(points3D)
+    HEADER = (
+        "# 3D point list with one line of data per point:\n"
+        + "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n"  # noqa: E501
+        + "# Number of points: {}, mean track length: {}\n".format(
+            len(points3D), mean_track_length
+        )
+    )
+
+    with open(path, "w") as fid:
+        fid.write(HEADER)
+        for _, pt in points3D.items():
+            point_header = [pt.id, *pt.xyz, *pt.rgb, pt.error]
+            fid.write(" ".join(map(str, point_header)) + " ")
+            track_strings = []
+            for image_id, point2D in zip(pt.image_ids, pt.point2D_idxs):
+                track_strings.append(" ".join(map(str, [image_id, point2D])))
+            fid.write(" ".join(track_strings) + "\n")
 
 
 def read_cameras_binary(path_to_model_file):
@@ -243,6 +335,23 @@ def read_cameras_binary(path_to_model_file):
                 params=np.array(params),
             )
         assert len(cameras) == num_cameras
+    return cameras
+
+
+def write_cameras_binary(cameras, path_to_model_file):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::WriteCamerasBinary(const std::string& path)
+        void Reconstruction::ReadCamerasBinary(const std::string& path)
+    """
+    with open(path_to_model_file, "wb") as fid:
+        write_next_bytes(fid, len(cameras), "Q")
+        for _, cam in cameras.items():
+            model_id = CAMERA_MODEL_NAMES[cam.model].model_id
+            camera_properties = [cam.id, model_id, cam.width, cam.height]
+            write_next_bytes(fid, camera_properties, "iiQQ")
+            for p in cam.params:
+                write_next_bytes(fid, float(p), "d")
     return cameras
 
 
@@ -296,6 +405,27 @@ def read_images_binary(path_to_model_file):
     return images
 
 
+def write_images_binary(images, path_to_model_file):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::ReadImagesBinary(const std::string& path)
+        void Reconstruction::WriteImagesBinary(const std::string& path)
+    """
+    with open(path_to_model_file, "wb") as fid:
+        write_next_bytes(fid, len(images), "Q")
+        for _, img in images.items():
+            write_next_bytes(fid, img.id, "i")
+            write_next_bytes(fid, img.qvec.tolist(), "dddd")
+            write_next_bytes(fid, img.tvec.tolist(), "ddd")
+            write_next_bytes(fid, img.camera_id, "i")
+            for char in img.name:
+                write_next_bytes(fid, char.encode("utf-8"), "c")
+            write_next_bytes(fid, b"\x00", "c")
+            write_next_bytes(fid, len(img.point3D_ids), "Q")
+            for xy, p3d_id in zip(img.xys, img.point3D_ids):
+                write_next_bytes(fid, [*xy, p3d_id], "ddq")
+
+
 def read_points3D_binary(path_to_model_file):
     """
     see: src/colmap/scene/reconstruction.cc
@@ -334,15 +464,81 @@ def read_points3D_binary(path_to_model_file):
     return points3D
 
 
-def read_model(path, ext=""):
+def write_points3D_binary(points3D, path_to_model_file):
+    """
+    see: src/base/reconstruction.cc
+        void Reconstruction::ReadPoints3DBinary(const std::string& path)
+        void Reconstruction::WritePoints3DBinary(const std::string& path)
+    """
+    with open(path_to_model_file, "wb") as fid:
+        write_next_bytes(fid, len(points3D), "Q")
+        for _, pt in points3D.items():
+            write_next_bytes(fid, pt.id, "Q")
+            write_next_bytes(fid, pt.xyz.tolist(), "ddd")
+            write_next_bytes(fid, pt.rgb.tolist(), "BBB")
+            write_next_bytes(fid, pt.error, "d")
+            track_length = pt.image_ids.shape[0]
+            write_next_bytes(fid, track_length, "Q")
+            for image_id, point2D_id in zip(pt.image_ids, pt.point2D_idxs):
+                write_next_bytes(fid, [image_id, point2D_id], "ii")
+
+
+def read_portal_csv(path_to_model_file):
+    portals = {}
+    with open(path_to_model_file, newline='')  as csvfile:
+        csv_reader = csv.reader(csvfile)
+        for i, row in enumerate(csv_reader):
+            image_id = int(row[0])
+            short_id = row[1]
+            size = row[2]
+            tvec = row[3:6]
+            qvec = row[6:10]
+            coordinates = [float(coord) for coord in row[10:]]
+
+            portals[i] = Portal(
+                id=i,
+                short_id=short_id,
+                qvec=np.array(qvec, dtype=np.float64),
+                tvec=np.array(tvec, dtype=np.float64),
+                image_id=image_id,
+                size=float(size),
+                corners=[(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
+            )
+    return portals
+
+def write_portal_csv(portals, csv_path):
+    if len(portals) <=0:
+        return
+    with open(csv_path, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        for portal in portals.values():
+            # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
+            row = [
+                portal.image_id,
+                portal.short_id,
+                portal.size,
+                portal.tvec[0], portal.tvec[1], portal.tvec[2],
+                portal.qvec[0], portal.qvec[1], portal.qvec[2], portal.qvec[3]
+            ]
+            for point in portal.corners:
+                row.extend(point)
+            # Write the row to the CSV file
+            csv_writer.writerow(row)
+    return
+
+def read_model(path, ext="", logger=None):
+    if logger is None:
+        logger = logging.getLogger()
+
     # try to detect the extension automatically
     if ext == "":
-        if detect_model_format(path, ".bin"):
+        if detect_model_format(path, ".bin", logger=logger):
             ext = ".bin"
-        elif detect_model_format(path, ".txt"):
+        elif detect_model_format(path, ".txt", logger=logger):
             ext = ".txt"
         else:
-            print("Provide model format: '.bin' or '.txt'")
+            logger.error("Provide model format: '.bin' or '.txt'")
             return
 
     if ext == ".txt":
@@ -356,16 +552,38 @@ def read_model(path, ext=""):
     return cameras, images, points3D
 
 
+def write_model(cameras, images, points3D, path, ext=".bin"):
+    if ext == ".txt":
+        write_cameras_text(cameras, os.path.join(path, "cameras" + ext))
+        write_images_text(images, os.path.join(path, "images" + ext))
+        write_points3D_text(points3D, os.path.join(path, "points3D") + ext)
+    else:
+        write_cameras_binary(cameras, os.path.join(path, "cameras" + ext))
+        write_images_binary(images, os.path.join(path, "images" + ext))
+        write_points3D_binary(points3D, os.path.join(path, "points3D") + ext)
+    return cameras, images, points3D
+
+
 # Load from COLMAP
 class Model:
     def __init__(self):
         self.cameras = []
         self.images = []
         self.points3D = []
-        self.__vis = None
+        self.portals=[]
+        self.__vis=None
+        self._path=None
 
-    def read_model(self, path, ext=""):
-        self.cameras, self.images, self.points3D = read_model(path, ext)
+    def read_model(self, path, ext="", logger=None):
+        self.cameras, self.images, self.points3D = read_model(path, ext, logger)
+        self.portals = read_portal_csv(os.path.join(path, "portals.csv"))
+        self._path = path
+
+    def write_model(self, path, ext=".bin"):
+        write_model(self.cameras, self.images, self.points3D, path)
+        write_portal_csv(self.portals, os.path.join(path, "portals.csv"))
+        return
+
 
     def add_points(self, min_track_len=3, remove_statistical_outlier=True):
         pcd = open3d.geometry.PointCloud()
@@ -473,6 +691,27 @@ class Model:
             return pcd.transform(transformation_matrix)
         
         return pcd
+
+    def get_portals(self, in_opengl=False):
+        portals = []
+        for portal in self.portals.values():
+            tvec, qvec = portal.tvec, portal.qvec
+            if in_opengl:
+                tvec, qvec = convert_pose_colmap_to_opengl(tvec, qvec)
+            portals.append(
+                {
+                    "short_id": portal.short_id, 
+                    "tvec": tvec,
+                    "qvec": qvec,
+                    "image_id": portal.image_id, 
+                    "size": portal.size, 
+                    "corners": portal.corners
+                }
+            )
+        return portals
+    
+    def get_path(self):
+        return self._path
 
     def create_window(self):
         self.__vis = open3d.visualization.Visualizer()
