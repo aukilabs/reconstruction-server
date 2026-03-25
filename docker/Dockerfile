@@ -140,8 +140,6 @@ RUN chmod 755 /app/utils
 COPY local_main.py global_main.py occlusion_box.py main.py /app/
 RUN chmod 755 /app/*.py
 
-RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
-
 # Run reconstruction server as separate user, not root
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
