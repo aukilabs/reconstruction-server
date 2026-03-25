@@ -18,7 +18,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
-posemesh-domain-http = "1.5.1"
+posemesh-domain-http = { version = "1.5.2" }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
