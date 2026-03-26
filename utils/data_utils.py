@@ -612,6 +612,42 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
 
     #-------------------------
 
+    #-------------------------
+    # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
+    #-------------------------
+    if aligned_scans:
+        manifest_data["alignedScans"] = {}
+        for scan_id, sim3 in aligned_scans.items():
+            pos = sim3.translation
+            quat = sim3.rotation.quat
+            #pos, quat = convert_pose_colmap_to_opengl(pos, quat)
+            #colmap_to_gl = np.array([
+            #    [0, 1, 0],
+            #    [1, 0, 0],
+            #    [0, 0, -1]
+            #])
+            #colmap_to_gl_inv = colmap_to_gl # Inverse is the same since it's symmetric
+            #pos = colmap_to_gl @ pos
+            #R = scipy_Rotation.from_quat(quat).as_matrix()
+            #R = colmap_to_gl @ R colmap_to_gl_inv
+            #quat = scipy_Rotation.from_matrix(R).as_quat()
+            manifest_data["alignedScans"][scan_id] = {
+                "localToDomain": {
+                    "scale": str(float(sim3.scale)),
+                    "position": {
+                        "x": str(float(pos[0])),
+                        "y": str(float(pos[1])),
+                        "z": str(float(pos[2])),
+                    },
+                    "rotation": {
+                        "x": str(float(quat[0])),
+                        "y": str(float(quat[1])),
+                        "z": str(float(quat[2])),
+                        "w": str(float(quat[3])),
+                    }
+                } 
+            }
+
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
 

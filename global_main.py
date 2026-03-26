@@ -76,6 +76,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, 
                         default="./datasets")
+    parser.add_argument("--output_path", type=Path, default="./refined/global")
     parser.add_argument("--use_refined_outputs", action='store_true', default=False, help="Use refined outputs")
     parser.add_argument("--add_3dpoints", action='store_true', default=False, help="Consider whole 3D points")
     parser.add_argument("--basic_stitch_only", action='store_true', default=False, help="Perform basic stitching only")

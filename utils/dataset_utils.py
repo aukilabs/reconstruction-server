@@ -37,24 +37,24 @@ floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
 @dataclass
 class StitchingData:
-    detections_per_qr: Dict[str, List[pycolmap.Rigid3d]] = None
-    image_ids_per_qr: Dict[str, List[int]] = None
-    timestamp_per_image: Dict[str, int] = None
-    arkit_precomputed: Dict = None
+    #detections_per_qr: Dict[str, List[pycolmap.Rigid3d]] = None
+    #image_ids_per_qr: Dict[str, List[int]] = None
+    #timestamp_per_image: Dict[str, int] = None
+    #arkit_precomputed: Dict = None
     placed_portal: Dict[str, pycolmap.Rigid3d] = None
-    chunks_image_ids: List[List[int]] = None
-    combined_rec: pycolmap.Reconstruction = None
-    next_image_id: int = 1
+    #chunks_image_ids: List[List[int]] = None
+    #combined_rec: pycolmap.Reconstruction = None
+    #next_image_id: int = 1
     portal_sizes: Dict[str, float] = None
 
     def __post_init__(self):
-        self.detections_per_qr = self.detections_per_qr or {}
-        self.image_ids_per_qr = self.image_ids_per_qr or {}
-        self.timestamp_per_image = self.timestamp_per_image or {}
-        self.arkit_precomputed = self.arkit_precomputed or {}
+        #self.detections_per_qr = self.detections_per_qr or {}
+        #self.image_ids_per_qr = self.image_ids_per_qr or {}
+        #self.timestamp_per_image = self.timestamp_per_image or {}
+        #self.arkit_precomputed = self.arkit_precomputed or {}
         self.placed_portal = self.placed_portal or {}
-        self.chunks_image_ids = self.chunks_image_ids or []
-        self.combined_rec = self.combined_rec or pycolmap.Reconstruction()
+        #self.chunks_image_ids = self.chunks_image_ids or []
+        #self.combined_rec = self.combined_rec or pycolmap.Reconstruction()
         self.portal_sizes = self.portal_sizes or {}
 
 @dataclass
@@ -204,20 +204,47 @@ def load_partial(
     logger = logging.getLogger(logger_name)
 
     # Load refined reconstruction
-    loaded_rec = _load_refined_reconstruction(partial_rec_dir, logger)
-    if loaded_rec is None:
-        return stitch_data
+    #time_a = time.time()
+    #loaded_rec = _load_refined_reconstruction(partial_rec_dir, logger)
+    #if loaded_rec is None:
+    #    return stitch_data
+    #print(f"[timer] load refined rec: {time.time() - time_a}")
     
     # Extract and process QR code detections
-    qr_detections = _process_qr_detections(loaded_rec)
+    time_b = time.time()
+    #qr_detections = _process_qr_detections(loaded_rec)
+    portals = read_portal_csv(str(partial_rec_dir / "portals.csv"))
+    qr_detections = []
+    for portal in portals.values():
+        qr_detections.append({
+            "short_id": portal.short_id, 
+            "tvec": portal.tvec,
+            "qvec": portal.qvec,
+            "image_id": portal.image_id, 
+            "size": portal.size, 
+            "corners": portal.corners,
+            "pose": pycolmap.Rigid3d(
+                pycolmap.Rotation3d(np.array(portal.qvec)),
+                np.array(portal.tvec)
+            )
+        })
+
+    print(f"[timer] process qr detections: {time.time() - time_b}")
 
     # Calculate mean QR poses 
+    time_c = time.time()
     chunk_detections_per_qr = _group_detections_by_qr(qr_detections)
+    print(f"[timer] group detections by qr: {time.time() - time_c}")
+
+    time_d = time.time()
     chunk_mean_qr_poses = _calculate_mean_qr_poses(
         chunk_detections_per_qr, 
         truth_portal_poses if gt_observations else None
     )
+    print(f"[timer] calculate mean qr poses: {time.time() - time_d}")
 
+    time_e = time.time()
+    scan_id = scan_dataset_folder.stem
 
     # Find overlapping portals and calculate alignment
     rigid_alignment_transform = _calculate_alignment_transform(
@@ -225,30 +252,41 @@ def load_partial(
         stitch_data.placed_portal,
         logger,
     )
+    print(f"[timer] calculate alignment transform: {time.time() - time_e}")
 
+    time_f = time.time()
     alignment_transform = pycolmap.Sim3d(
         1.0,
         rigid_alignment_transform.rotation.quat,
         rigid_alignment_transform.translation
     )
+    print(f"[timer] init sim3: {time.time() - time_f}")
+
+    stitch_data.alignment_transforms[scan_id] = alignment_transform
 
     # Update placed portals
+    time_g = time.time()
     _update_placed_portals(
         chunk_mean_qr_poses,
         alignment_transform,
         stitch_data.placed_portal,
         logger
     )
+    print(f"[timer] update placed portals: {time.time() - time_g}")
 
+    time_h = time.time()
     # Process reconstruction
+    """
     _process_reconstruction(
-        loaded_rec,
+        partial_rec_dir,
         alignment_transform,
         qr_detections,
         stitch_data,
         with_3dpoints,
         logger
     )
+    """
+    print(f"[timer] process reconstruction: {time.time() - time_h}")
 
     return stitch_data
 
@@ -371,7 +409,7 @@ def transform_with_scale(alignment_transform: pycolmap.Sim3d, pose: pycolmap.Rig
     return pycolmap.Rigid3d(pose.rotation, pose.translation)
 
 def _process_reconstruction(
-    loaded_rec: Model,
+    rec_path: Path,
     alignment_transform: Optional[pycolmap.Sim3d],
     qr_detections: List[Dict],
     stitch_data: StitchingData,
@@ -379,14 +417,24 @@ def _process_reconstruction(
     logger
 ) -> None:
     # Step 1: Load reconstruction and apply alignment
+    time_a = time.time()
     pycolmap_rec = pycolmap.Reconstruction()
-    pycolmap_rec.read(loaded_rec.get_path())
+    pycolmap_rec.read(rec_path)
+    print(f"[timer] _process_reconstruction: load reconstruction: {time.time() - time_a}")
+
     if alignment_transform is not None:
+        time_b = time.time()
         pycolmap_rec.transform(alignment_transform)
+        print(f"[timer] _process_reconstruction: transform reconstruction: {time.time() - time_b}")
+        time_c = time.time()
         for detection in qr_detections:
+            print(f"[timer] _process_reconstruction: transform detection: {time.time() - time_c}")
             detection["pose"] = transform_with_scale(alignment_transform, detection["pose"])
+        print(f"[timer] _process_reconstruction: transform detections: {time.time() - time_c}")
 
     # Step 2: Copy cameras and images but with incremented IDs
+    time_d = time.time()
+    time_copy_2d_points = 0.0
     image_id_old_to_new = {}
     for old_img_id in pycolmap_rec.reg_image_ids():
         old_img = pycolmap_rec.images[old_img_id]
@@ -422,13 +470,16 @@ def _process_reconstruction(
         ))
         stitch_data.combined_rec.add_frame(new_frame)
 
-        list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in old_img.points2D]
+        time_2d = time.time()
+        #list_point_2d = [pycolmap.Point2D(pt2d.xy) for pt2d in old_img.points2D]
         new_img = pycolmap.Image(
             old_img.name,
-            pycolmap.Point2DList(list_point_2d),
+            #pycolmap.Point2DList(list_point_2d),
+            pycolmap.Point2DList([]),
             new_id,
             new_id
         )
+        time_copy_2d_points += time.time() - time_2d
         new_img.frame_id = new_id
         
         image_id_old_to_new[old_img_id] = new_id
@@ -436,7 +487,9 @@ def _process_reconstruction(
         stitch_data.combined_rec.add_image(new_img)
         stitch_data.combined_rec.register_frame(new_id)
         stitch_data.next_image_id += 1
+    print(f"[timer] _process_reconstruction: copy images etc: {time_copy_2d_points}, of which copy 2d points took {time_copy_2d_points}")
 
+    time_e = time.time()
     # Step 3: Copy 3D points if requested
     if with_3dpoints:
         for point3D in pycolmap_rec.points3D.values():
@@ -445,15 +498,18 @@ def _process_reconstruction(
                 pycolmap.Track(), 
                 point3D.color
             )
-            point3D_track = point3D.track
-            for element in point3D_track.elements:
-                element.image_id = image_id_old_to_new[element.image_id]
-                stitch_data.combined_rec.add_observation(point3D_id_new, element)
-
+            #point3D_track = point3D.track
+            #for element in point3D_track.elements:
+            #    element.image_id = image_id_old_to_new[element.image_id]
+            #    stitch_data.combined_rec.add_observation(point3D_id_new, element)
+    print(f"[timer] _process_reconstruction: copy 3d points: {time.time() - time_e}")
+    time_f = time.time()
     # Process sorted image IDs
     sorted_new_image_ids = sorted(list(image_id_old_to_new.values()))
     stitch_data.chunks_image_ids.append(sorted_new_image_ids)
+    print(f"[timer] _process_reconstruction: sort and append image ids: {time.time() - time_f}")
 
+    time_g = time.time()
     # Process QR detections
     for detection in qr_detections:
         qr_id = detection["short_id"]
@@ -470,6 +526,7 @@ def _process_reconstruction(
         stitch_data.image_ids_per_qr[qr_id].append(
             image_id_old_to_new[detection["image_id"]]
         )
+    #print(f"[timer] _process_reconstruction: process qr detections: {time.time() - time_g}")
 
 def _initialize_paths(group_folder: Path) -> Paths:
     """Initialize all required paths."""
@@ -505,6 +562,7 @@ def _process_datasets(
         scan_name = dataset_path.stem
 
         try:
+            time_a = time.time()
             unzip_folder = _prepare_dataset(dataset_path, paths.dataset_dir, logger)
             partial_rec_dir = _get_refined_rec_dir(
                 use_refined_outputs,
@@ -512,6 +570,8 @@ def _process_datasets(
                 scan_name,
                 logger
             )
+            print(f"[timer] step A: {time.time() - time_a}")
+            time_b = time.time()
 
             # Quick overlap check before loading reconstruction, to not waste time
             scanned_portal_ids = portal_ids_per_dataset.get(scan_name, None)
@@ -526,6 +586,9 @@ def _process_datasets(
                     portal.short_id for portal in portals.values()
                 ]
                 portal_ids_per_dataset[scan_name] = scanned_portal_ids
+            
+            print(f"[timer] step B: {time.time() - time_b}")
+            time_c = time.time()
 
             has_overlap = len(set(scanned_portal_ids) & set(stitch_data.placed_portal.keys())) > 0
             is_first_chunk = len(stitch_data.placed_portal) == 0
@@ -540,6 +603,8 @@ def _process_datasets(
                 with_3dpoints=with_3dpoints,
                 logger_name=logger.name
             )
+
+            print(f"[timer] step C: {time.time() - time_c}")
 
             consecutive_alignment_fails = 0
             datasets_already_aligned.add(unzip_folder)

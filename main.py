@@ -140,7 +140,7 @@ def global_main_wrapper(args, logger):
         input_path=global_args.output_path / "RefinedPointCloud.ply",
         output_dir=global_args.output_path / "topology",
         floor_height=0.0,
-        floor_height_threshold=0.2,
+        floor_height_threshold=0.35,
         voxel_size=0.05
     )
 
