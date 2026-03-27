@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import time
 import pycolmap
 import os 
@@ -12,15 +12,18 @@ import logging
 from dataclasses import dataclass
 
 from utils.data_utils import (
+    convert_pose_colmap_to_opengl,
     mean_pose,
     convert_pose_opengl_to_colmap, 
     precompute_arkit_offsets, 
     get_world_space_qr_codes,
     save_manifest_json,
-    export_rec_as_ply
+    export_rec_as_ply,
+    parse_info_from_manifest
 )
 from utils.geometry_utils import align_reconstruction_chunks
-from utils.io import Model, read_portal_csv
+from utils.io import Model, read_portal_csv, read_model, merge_models, write_model, apply_similarity_to_new_model, validate_model_consistency
+from utils.voxel_raycast_utils import carve_outdated_reference_geometry
 
 
 class NoOverlapException(Exception):
@@ -80,7 +83,7 @@ class Paths:
     output_path: Path
     dataset_dir: Path
     refined_group_dir: Path
-
+    reference_path: Optional[Path] = None # Path for reference reconstruction (global refinement that set as canonical) only used in update_helper
 
 def stitching_helper(
     dataset_paths: List[Path],
@@ -111,7 +114,7 @@ def stitching_helper(
     logger = logging.getLogger(logger_name)
 
     # Initialize paths and data
-    paths = _initialize_paths(group_folder)
+    paths = _initialize_paths(group_folder.parent, "stitching_helper")
     stitch_data = StitchingData()
 
     # Process datasets
@@ -173,6 +176,163 @@ def stitching_helper(
         image_ids_per_qr=stitch_data.image_ids_per_qr
     )
 
+
+def update_helper(
+    dataset_paths: List[Path],
+    job_root_path: Path,
+    logger_name: Optional[str] = None
+) -> bool:
+    """Main function to stitch multiple reconstructions together.
+    
+    Args:
+        dataset_paths: List of paths to datasets to stitch
+        job_root_path: Path to the root folder for the update job
+        logger_name: Name of logger to use
+
+    Returns:
+        StitchingResult containing basic and refined reconstructions
+    """
+
+    logger = logging.getLogger(logger_name)
+
+    # Initialize paths and data
+    paths = _initialize_paths(job_root_path, "update_helper")
+
+    pending_update_rec = []
+
+
+    dataset_rec_paths = [
+        _get_refined_rec_dir(
+            True,
+            paths.refined_group_dir,
+            scan_name,
+            logger
+        )for scan_name in [path.stem for path in dataset_paths]]
+
+    if len(dataset_rec_paths) > 1:
+        logger.info("Multiple dataset paths found. Proceeding with stitching.")
+
+        # TODO: Replace this function with bundle scans and perform basic stitch.
+        pending_update_rec.extend(dataset_rec_paths)
+
+    elif len(dataset_rec_paths) == 1:
+        pending_update_rec.append(dataset_rec_paths[0])
+        logger.info("Only one dataset path found. Skipping stitching and preparing for update refinement.")
+    else:
+        logger.error("No dataset paths found. Exiting.")
+        return False
+    
+    # Loading the reference model that will be refined. This should be the model that set to be canonical, which is the latest colmap model of the domain.
+    cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin",logger=logger)
+    portal_r, refined_files_r = parse_info_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
+    portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
+    portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
+
+    # Process datasets
+    for pending_update_rec_dir in pending_update_rec:
+        logger.info(f"Processing dataset for update refinement: {pending_update_rec_dir}")
+
+        # Loading the new reconstruction that contains the new geometry to be merged in. 
+        # This should be the local refined reconstruction of the new scan that will be merged in.
+        cams_u, imgs_u, pts_u = read_model(pending_update_rec_dir, ".bin", logger=logger)
+        portals_u, portal_sizes_u = load_qr_detections_from_local_refinement(pending_update_rec_dir, logger)
+        
+        # Align the new reconstruction to the reference model using the detected QR code portals as anchors. 
+        # This gives us a rough alignment that is good enough for culling out outdated geometry from the reference model.
+        alignment_mat = _calculate_alignment_transform(portals_u, portal_r, logger)
+        logger.info(f"Calculated alignment transform for update refinement: \n{alignment_mat.matrix()}")
+        cams_u_aligned, imgs_u_aligned, pts_u_aligned = apply_similarity_to_new_model(cams_u, imgs_u, pts_u, alignment_mat.matrix())
+
+        # Pruning the reference model by carving out points that violate the new free-space constraints observed in the new scan.
+        pruned_imgs_r, pruned_pts_r = carve_outdated_reference_geometry(
+            ref_imgs=imgs_r,
+            ref_pts=pts_r,
+            new_imgs=imgs_u_aligned,
+            new_pts=pts_u_aligned,
+            voxel_size=0.15,         # Adjust based on scene scale (e.g. 10cm)
+            clearance_margin=0.1,   # Stop 10cm before the target to avoid false collisions
+            min_surviving_points=50, # Drop old images with < 50 valid points left
+            logger=logger
+        )
+        logger.info(f"Pruned reference model has {len(pruned_imgs_r)} images and {len(pruned_pts_r)} points (out of original {len(imgs_r)} images and {len(pts_r)} points).")
+        if logger.level <= logging.DEBUG:
+            validate_model_consistency(cams_r, pruned_imgs_r, pruned_pts_r, logger=logger)
+            os.makedirs(paths.output_path / f"pruned_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
+            write_model(cams_r, pruned_imgs_r, pruned_pts_r, paths.output_path / f"pruned_update_{pending_update_rec_dir.parent.name}")
+            logger.debug(f"Exported pruned reference model to {paths.output_path / f'pruned_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(pruned_imgs_r)} images, and {len(pruned_pts_r)} points.")
+
+        # Merging the pruned reference model with the new aligned reconstruction to produce the updated reconstruction.
+        cams_r, imgs_r, pts_r, _ = merge_models(
+            (cams_r, pruned_imgs_r, pruned_pts_r), # Use the freshly carved reference map
+            (cams_u_aligned, imgs_u_aligned, pts_u_aligned)
+        )
+        if logger.level <= logging.DEBUG:
+            validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
+            os.makedirs(paths.output_path / f"merged_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
+            write_model(cams_r, imgs_r, pts_r, paths.output_path / f"merged_update_{pending_update_rec_dir.parent.name}")
+            logger.debug(f"Exported merged model to {paths.output_path / f'merged_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
+
+        # Transform and Merge Portals
+        # we only add the new portals, do not modify the existing portals in the reference model to avoid instability of portal poses across updates. 
+        # This means the portal poses in the manifest may not be perfectly aligned with the geometry in the case of noisy detections, 
+        # but it avoids the risk of breaking all existing portals in the reference model when a bad alignment happens. 
+        # We can consider more sophisticated strategies for portal merging in the future when we have more experience with real data.
+        for pid, portal in portals_u.items():
+            if pid in portal_r:
+                logger.info(f"Portal {pid} already exists in reference model. Skipping.")
+                continue
+            alignment_sim3d = pycolmap.Sim3d(1.0, alignment_mat.rotation, alignment_mat.translation)
+            transformed_portal = transform_with_scale(alignment_sim3d, portal)
+            portal_r[pid] = transformed_portal
+            portal_sizes[pid] = portal_sizes_u[pid]
+
+
+    # Export the merged model for inspection
+    os.makedirs(paths.output_path / "refined_sfm_combined", exist_ok=True)
+    write_model(cams_r, imgs_r, pts_r, paths.output_path / "refined_sfm_combined")
+    logger.debug(f"Exported updated reconstruction to {paths.output_path / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
+    validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
+
+    manifest_path = paths.output_path / 'refined_manifest.json'
+    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
+    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
+    save_manifest_json(
+        portals,
+        manifest_path,
+        paths.parent_dir,
+        job_status="refined",
+        job_progress=100,
+        portal_sizes=portal_sizes,
+        previous_scan_files=refined_files_r
+    )
+
+    ply_path = paths.refined_group_dir / 'update' / "RefinedPointCloud.ply"
+    rec = pycolmap.Reconstruction()
+    for point in pts_r.values():
+        x,y,z = point.xyz
+        _ = rec.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.rgb)
+    export_rec_as_ply(rec, ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
+
+    return True
+
+def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[List[Dict], Dict[str, float]]:
+    portals_u_dict = read_portal_csv(rec_dir / "portals.csv")
+    portals_u_list = []
+    portal_sizes = {}
+    for portal in portals_u_dict.values():
+        portal_sizes[portal.short_id] = portal.size
+        gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
+        portals_u_list.append({
+            "short_id": portal.short_id, 
+            "tvec": gl_tvec,
+            "qvec": gl_qvec,
+            "image_id": portal.image_id, 
+            "size": portal.size, 
+            "corners": portal.corners,
+            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
+        })
+    chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
+    return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
 
 def load_partial(
     unzip_folder: Path,
@@ -471,17 +631,26 @@ def _process_reconstruction(
             image_id_old_to_new[detection["image_id"]]
         )
 
-def _initialize_paths(group_folder: Path) -> Paths:
+def _initialize_paths(job_root_path: Path, function: str = "stitching_helper") -> Paths:
     """Initialize all required paths."""
-    parent_dir = group_folder.parent
-    output_path = parent_dir / "refined" / "global"
+    parent_dir = job_root_path
+
+    if function == "stitching_helper":
+        output_path = parent_dir / "refined" / "global"
+    elif function == "update_helper":
+        output_path = parent_dir / "refined" / "update"
+        reference_path = parent_dir / "refined" / "global"
+    else:
+        raise ValueError(f"Unknown function: {function}")
+    
+    
     dataset_dir = parent_dir / "datasets"
     refined_group_dir = parent_dir / "refined"
 
     os.makedirs(refined_group_dir, exist_ok=True)
     os.makedirs(dataset_dir, exist_ok=True)
 
-    return Paths(parent_dir, output_path, dataset_dir, refined_group_dir)
+    return Paths(parent_dir, output_path, dataset_dir, refined_group_dir, reference_path if function == "update_helper" else None)
 
 def _process_datasets(
     dataset_paths: List[Path],
@@ -705,7 +874,7 @@ def _get_refined_results(
         paths.parent_dir,
         job_status="refined",
         job_progress=100,
-        portal_sizes=stitch_data.portal_sizes
+        portal_sizes=stitch_data.portal_sizes,
     )
 
     if with_3dpoints:
