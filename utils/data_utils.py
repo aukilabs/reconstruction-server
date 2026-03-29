@@ -19,6 +19,7 @@ import subprocess
 from dateutil import parser
 from pathlib import Path
 from typing import NamedTuple, Dict
+from utils.aruco_detection import ARUCO_ID_PREFIX, DEFAULT_MARKER_SIZE
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
@@ -972,14 +973,40 @@ def load_scan(
     logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
 
 
-    # Load QR detections
-    qr_detections_path = (paths.scan_folder / "PortalDetections.csv" 
-                         if (paths.scan_folder / "PortalDetections.csv").exists() 
-                         else paths.scan_folder / "Observations.csv")
-    logger.info(f'Loading QR detections from {qr_detections_path}')
-    
-    qr_detections_per_timestamp = load_qr_detections_csv(str(qr_detections_path))
-    logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
+    # Load portal / QR detections from DMT app files
+    qr_detections_per_timestamp = {}
+    loaded_qr_source = None
+    for candidate in ["PortalDetections.csv", "Observations.csv"]:
+        candidate_path = paths.scan_folder / candidate
+        if candidate_path.exists():
+            loaded_qr_source = candidate_path
+            logger.info(f"Loading QR detections from {candidate_path}")
+            qr_detections_per_timestamp = load_qr_detections_csv(str(candidate_path))
+            break
+    if loaded_qr_source is None:
+        logger.warning("No PortalDetections.csv or Observations.csv found")
+    else:
+        logger.info(f"{len(qr_detections_per_timestamp)}, QR detections loaded")
+
+    # Load server-side ArUco detections (additive)
+    aruco_path = paths.scan_folder / "ArUcoDetections.csv"
+    if aruco_path.exists():
+        logger.info(f"Loading ArUco detections from {aruco_path}")
+        aruco_detections = load_qr_detections_csv(str(aruco_path))
+        merged_aruco = 0
+        for ts, detection in aruco_detections.items():
+            if ts not in qr_detections_per_timestamp:
+                qr_detections_per_timestamp[ts] = detection
+                merged_aruco += 1
+            short_id = detection["short_id"]
+            if short_id.startswith(ARUCO_ID_PREFIX) and short_id not in portal_sizes:
+                portal_sizes[short_id] = DEFAULT_MARKER_SIZE
+        logger.info(
+            "ArUco detections loaded=%d merged=%d total_qr=%d",
+            len(aruco_detections),
+            merged_aruco,
+            len(qr_detections_per_timestamp),
+        )
 
     # Validate data
     for data_dict, name in [
