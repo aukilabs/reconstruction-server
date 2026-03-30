@@ -655,6 +655,29 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
     capture.release()
 
 
+def mp4_to_frames_fps(mp4_path, frames_path, filename_prefix="", save_images_per_second=1):
+    capture = cv2.VideoCapture(mp4_path)
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    ratio = int(fps / save_images_per_second)
+    # total_frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    frame_count = 0
+    unpacked_count = 0
+    print("Unpacking mp4 to frames:", mp4_path, "->", frames_path, f"FPS: {fps}, saving every {ratio} frames")
+    while capture.isOpened():
+        ret, frame = capture.read()
+        if not ret:
+            break
+
+        img_path = f"{frames_path}/{filename_prefix}{frame_count:06d}.jpg"
+        if not os.path.exists(img_path) and frame_count % int(ratio) == 0:
+            cv2.imwrite(img_path, frame)
+            unpacked_count += 1
+        frame_count += 1
+
+    print(f"Unpacked {unpacked_count} frames from mp4")
+    capture.release()
+    return frame_count
+
 def process_frames(
     paths,
     every_nth_image,
@@ -686,7 +709,7 @@ def process_frames(
 
 def process_pano_frames(
     paths,
-    every_nth_frame,
+    save_images_per_second,
     logger
 ):
     """
@@ -695,23 +718,20 @@ def process_pano_frames(
     Returns:
         Tuple of (reference_list, use_frames_from_video)
     """
-    # frames_mp4 = paths.scan_folder / 'Frames.mp4'
-    # logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
+    frames_mp4 = paths.scan_folder / 'Frames.mp4'
+    logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
     
-    use_frames_from_video = True
-    # if frames_mp4.exists():
-    #     logger.info(f"Frames mp4 found, unpacking into {paths.images}")
-    #     if not paths.images.exists():
-    #         paths.images.mkdir()
-    #     mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_")
-    #     use_frames_from_video = True
+    tmp_img_dir = paths.scan_folder / "tmp_frames"
+    if frames_mp4.exists():
+        logger.info(f"Frames mp4 found, unpacking into {tmp_img_dir}")
+        if not tmp_img_dir.exists():
+            tmp_img_dir.mkdir(exist_ok=True, parents=True)
+        original_image_count = mp4_to_frames_fps(frames_mp4, tmp_img_dir, filename_prefix=f"{paths.scan_folder.name}_", save_images_per_second=save_images_per_second)
 
-    references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]
+    references = [str(p.relative_to(tmp_img_dir)) for p in tmp_img_dir.iterdir()]
 
-    original_image_count = len(references)
-    references = references[::every_nth_frame]
     logger.info(f'{len(references)}, frames selected, out of, {original_image_count}')
-    return sorted(references), use_frames_from_video, original_image_count
+    return sorted(references), tmp_img_dir
 
 def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
     logger = logging.getLogger(logger_name)

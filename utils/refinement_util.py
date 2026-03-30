@@ -4,8 +4,9 @@ import numpy as np
 import shutil
 from datetime import datetime
 from typing import NamedTuple
+import pyceres
 
-from utils.triangulation import process_features_and_matching, triangulate_model
+from utils.triangulation import process_features_and_matching, process_features_and_matching_rig, triangulate_model
 from utils.data_utils import (
     convert_pose_opengl_to_colmap,
     load_scan, 
@@ -18,6 +19,7 @@ from utils.data_utils import (
     process_pano_frames,
     rectify_portal_pose
 )
+from utils.panorama_utils import create_pano_rig_config, get_virtual_rotations, render_perspective_images, PanoRenderOptions
 
 class RefinementPaths(NamedTuple):
     """Container for all paths used in refinement."""
@@ -380,7 +382,7 @@ def refine_dataset(
 def refine_pano_data(
     scan_folder_path, 
     output_path,
-    every_nth_frame=1,
+    save_images_per_second=1,
     remove_outputs=False,
     domain_id="",
     job_id="",
@@ -402,7 +404,6 @@ def refine_pano_data(
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
-    start_time = datetime.now()
 
     # Setup paths and logging
     paths = setup_refinement_paths(
@@ -421,54 +422,97 @@ def refine_pano_data(
     logger.info(f'Starting pano refinement of {scan_folder_path.name}')
 
     # Process frames and load data
-    references, use_frames_from_video, original_image_count = process_pano_frames(
-        paths, every_nth_frame, logger
+    references, tmp_img_dir = process_pano_frames(
+        paths, save_images_per_second, logger
     )
 
-    # Load scan from folder
-    scan_data = load_scan(
-        paths,  
-        use_frames_from_video, 
-        original_image_count, 
-        logger
+    mask_dir = paths.scan_folder / "masks"
+    rig_config = render_perspective_images(
+        references,
+        tmp_img_dir, 
+        paths.images, 
+        mask_dir, 
+        PanoRenderOptions(        
+            num_steps_yaw=4,
+            pitches_deg=(-35.0, 0.0, 35.0),
+            hfov_deg=90.0,
+            vfov_deg=90.0,
+        )
     )
+
+    # For Debug use only
+
+    # rig_config = create_pano_rig_config(
+    #     get_virtual_rotations(
+    #         num_steps_yaw=4,
+    #         pitches_deg=(-35.0, 0.0, 35.0),
+    #     )
+    # )
+
+    # logger.info(f'rig_config: {rig_config}')
+    # import sys; sys.exit(1)
 
     # Initialize reconstruction
-    rec, cam_from_world_transforms = initialize_reconstruction(references, scan_data)
-    # Save initial reconstruction
     colmap_rec_path = paths.output / 'colmap_rec'
     colmap_rec_path.mkdir(parents=True, exist_ok=True)
-    rec.write(colmap_rec_path)
-    rec.write(paths.sfm_dir)
+    database_path = colmap_rec_path / "database.db"
 
-    # Process features and matching
-    process_features_and_matching(
-        references, 
-        colmap_rec_path, 
-        paths,
-        logger
+    pycolmap.extract_features(
+        database_path,
+        paths.images,
+        reader_options=pycolmap.ImageReaderOptions(mask_path=mask_dir),
+        camera_mode=pycolmap.CameraMode.PER_FOLDER,
     )
-    
-    if pool_executor:
-        future = pool_executor.submit(
-            refine_dataset_part_two,
-            paths,
-            cam_from_world_transforms,
-            scan_data,
-            logger,
-            colmap_rec_path,
-            remove_outputs,
-            start_time
-        )
-        return future
-    else:
-        refine_dataset_part_two(
-            paths,
-            cam_from_world_transforms,
-            scan_data,
-            logger,
-            colmap_rec_path,
-            remove_outputs,
-            start_time
-        )
-        return None
+
+    with pycolmap.Database.open(database_path) as db:
+        pycolmap.apply_rig_config([rig_config], db)
+
+    matching_options = pycolmap.FeatureMatchingOptions()
+    # We have perfect sensor_from_rig poses (except for potential stitching
+    # artifacts by the spherical image provider), so we can perform geometric
+    # verification using rig constraints.
+    matching_options.rig_verification = True
+    # The images within a frame do not have overlap due to the provided masks.
+    matching_options.skip_image_pairs_in_same_frame = True
+    pycolmap.match_sequential(
+        database_path,
+        pairing_options=pycolmap.SequentialPairingOptions(
+            loop_detection=True
+        ),
+        matching_options=matching_options,
+    )
+
+    ba_options = pycolmap.BundleAdjustmentOptions(
+        refine_focal_length=False,
+        refine_principal_point=False,
+        refine_extra_params=False,
+        refine_sensor_from_rig = False
+    )
+    ba_options.ceres.solver_options.gradient_tolerance = 1.0
+    ba_options.ceres.solver_options.logging_type = pyceres.LoggingType.SILENT
+    ba_options.ceres.use_gpu = True
+
+    mapper_options = pycolmap.GlobalMapperOptions(
+        bundle_adjustment=ba_options,
+        ba_num_iterations=100,
+        skip_global_positioning=False,
+    )
+
+    opts = pycolmap.GlobalPipelineOptions(
+        mapper = mapper_options,
+    )
+
+    logger.info(f"opts.summary(): {opts.summary()}")
+
+    recons = pycolmap.global_mapping(
+        database_path,
+        paths.images,
+        colmap_rec_path,
+        opts
+    )
+
+    # Estimate Scale from QR Detections
+    recons[0].write_text(paths.sfm_dir)
+    logger.info("Finished global mapping for pano data")    
+
+    return None
