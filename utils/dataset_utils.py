@@ -91,6 +91,7 @@ def stitching_helper(
     basic_stitch_only: bool = False,
     logger_name: Optional[str] = None
 ) -> StitchingResult:
+
     """Main function to stitch multiple reconstructions together.
     
     Args:
@@ -212,10 +213,9 @@ def load_partial(
     
     # Extract and process QR code detections
     time_b = time.time()
-    #qr_detections = _process_qr_detections(loaded_rec)
     portals = read_portal_csv(str(partial_rec_dir / "portals.csv"))
     qr_detections = []
-    for portal in portals.values():
+    for portal in portals:
         qr_detections.append({
             "short_id": portal.short_id, 
             "tvec": portal.tvec,
@@ -324,16 +324,6 @@ def _load_frame_timestamps(dataset: Path, logger) -> Dict[str, int]:
             
     logger.info(f"Loaded {len(timestamps)} frame timestamps")
     return timestamps
-
-def _process_qr_detections(loaded_rec: Model) -> List[Dict]:
-    """Process QR code detections from loaded reconstruction."""
-    qr_detections = loaded_rec.get_portals()
-    for detection in qr_detections:
-        detection["pose"] = pycolmap.Rigid3d(
-            pycolmap.Rotation3d(np.array(detection["qvec"])),
-            detection["tvec"]
-        )
-    return qr_detections
 
 def _group_detections_by_qr(qr_detections: List[Dict]) -> Dict[str, List[pycolmap.Rigid3d]]:
     """Group QR detections by QR ID."""
@@ -578,12 +568,12 @@ def _process_datasets(
             if scanned_portal_ids is None:
                 portals = read_portal_csv(os.path.join(partial_rec_dir, "portals.csv"))
                 
-                for portal in portals.values():
+                for portal in portals:
                     if portal.short_id not in stitch_data.portal_sizes:
                         stitch_data.portal_sizes[portal.short_id] = portal.size
 
                 scanned_portal_ids = [
-                    portal.short_id for portal in portals.values()
+                    portal.short_id for portal in portals
                 ]
                 portal_ids_per_dataset[scan_name] = scanned_portal_ids
             
@@ -673,7 +663,7 @@ def _get_basic_stitch_results(
 
     if with_3dpoints:
         ply_path = paths.refined_group_dir / 'global' / "BasicStitchPointCloud.ply"
-        export_rec_as_ply(stitch_data.combined_rec, ply_path, logger.name)
+        export_rec_as_ply(stitch_data.combined_rec, ply_path, logger_name=logger.name)
 
     return StitchResults(
         rec=stitch_data.combined_rec,

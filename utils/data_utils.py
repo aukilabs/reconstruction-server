@@ -3,6 +3,7 @@ import json
 import numpy as np
 import csv
 import os
+import sys
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
@@ -615,6 +616,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     #-------------------------
     # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
     #-------------------------
+    """
     if aligned_scans:
         manifest_data["alignedScans"] = {}
         for scan_id, sim3 in aligned_scans.items():
@@ -647,6 +649,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
                     }
                 } 
             }
+    """
 
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
@@ -721,8 +724,12 @@ def process_frames(
     return sorted(references), use_frames_from_video, original_image_count
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
-    logger = logging.getLogger(logger_name)
+def export_rec_as_ply(rec, path, convert_to_opengl=False, logger=None):
+    if logger is None:
+        logger = logging.getLogger("data_utils")
+        logger.setLevel(logging.INFO)
+        if not logger.hasHandlers():
+            logger.addHandler(logging.StreamHandler(sys.stdout))
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
     logger.info(f"convert_to_opengl = {convert_to_opengl}")

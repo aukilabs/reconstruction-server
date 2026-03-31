@@ -1,4 +1,6 @@
 import numpy as np
+import pycolmap
+from typing import List
 import logging
 import os
 import collections
@@ -46,13 +48,20 @@ CAMERA_MODEL_NAMES = dict(
     [(camera_model.model_name, camera_model) for camera_model in CAMERA_MODELS]
 )
 
-
 class Image(BaseImage):
     def qvec2rotmat(self):
         return qvec2rotmat(self.qvec)
-    
 
-def qvec2rotmat(qvec):
+def constructPose(qvec: np.array, tvec: np.array) -> pycolmap.Rigid3d:
+    return pycolmap.Rigid3d(
+        pycolmap.Rotation3d(qvec),
+        tvec
+    )
+
+def portalPose(portal: Portal) -> pycolmap.Rigid3d:
+    return constructPose(portal.qvec, portal.tvec)
+
+def qvec2rotmat(qvec: np.array) -> np.array:
     return np.array(
         [
             [
@@ -483,9 +492,9 @@ def write_points3D_binary(points3D, path_to_model_file):
                 write_next_bytes(fid, [image_id, point2D_id], "ii")
 
 
-def read_portal_csv(path_to_model_file):
-    portals = {}
-    with open(path_to_model_file, newline='')  as csvfile:
+def read_portal_csv(path_to_model_file: os.PathLike) -> List[Portal]:
+    portals: List[Portal] = []
+    with open(path_to_model_file, newline='') as csvfile:
         csv_reader = csv.reader(csvfile)
         for i, row in enumerate(csv_reader):
             image_id = int(row[0])
@@ -495,7 +504,7 @@ def read_portal_csv(path_to_model_file):
             qvec = row[6:10]
             coordinates = [float(coord) for coord in row[10:]]
 
-            portals[i] = Portal(
+            portal = Portal(
                 id=i,
                 short_id=short_id,
                 qvec=np.array(qvec, dtype=np.float64),
@@ -504,15 +513,17 @@ def read_portal_csv(path_to_model_file):
                 size=float(size),
                 corners=[(coordinates[i], coordinates[i + 1]) for i in range(0, len(coordinates), 2)]
             )
+            portals.append(portal)
     return portals
 
-def write_portal_csv(portals, csv_path):
-    if len(portals) <=0:
+def write_portal_csv(portals: List[Portal], csv_path: str):
+    if not portals:
         return
+
     with open(csv_path, mode='w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile)
 
-        for portal in portals.values():
+        for portal in portals:
             # image_id, portal_id, portal_size, px, py, pz, qx, qy, qz, qw
             row = [
                 portal.image_id,
@@ -527,7 +538,7 @@ def write_portal_csv(portals, csv_path):
             csv_writer.writerow(row)
     return
 
-def read_model(path, ext="", logger=None):
+def read_model(path, ext="", with_points3D=True, logger=None):
     if logger is None:
         logger = logging.getLogger()
 
@@ -544,11 +555,17 @@ def read_model(path, ext="", logger=None):
     if ext == ".txt":
         cameras = read_cameras_text(os.path.join(path, "cameras" + ext))
         images = read_images_text(os.path.join(path, "images" + ext))
-        points3D = read_points3D_text(os.path.join(path, "points3D") + ext)
+        if with_points3D:
+            points3D = read_points3D_text(os.path.join(path, "points3D") + ext)
+        else:
+            points3D = None
     else:
         cameras = read_cameras_binary(os.path.join(path, "cameras" + ext))
         images = read_images_binary(os.path.join(path, "images" + ext))
-        points3D = read_points3D_binary(os.path.join(path, "points3D") + ext)
+        if with_points3D:
+            points3D = read_points3D_binary(os.path.join(path, "points3D") + ext)
+        else:
+            points3D = None
     return cameras, images, points3D
 
 
@@ -570,7 +587,7 @@ class Model:
         self.cameras = []
         self.images = []
         self.points3D = []
-        self.portals=[]
+        self.portals: List[Portal] = []
         self.__vis=None
         self._path=None
 
@@ -692,22 +709,24 @@ class Model:
         
         return pcd
 
-    def get_portals(self, in_opengl=False):
-        portals = []
-        for portal in self.portals.values():
+    def get_portals(self, in_opengl=False) -> List[Portal]:
+        portals: List[Portal] = []
+        for portal in self.portals:
             tvec, qvec = portal.tvec, portal.qvec
             if in_opengl:
                 tvec, qvec = convert_pose_colmap_to_opengl(tvec, qvec)
-            portals.append(
-                {
-                    "short_id": portal.short_id, 
-                    "tvec": tvec,
-                    "qvec": qvec,
-                    "image_id": portal.image_id, 
-                    "size": portal.size, 
-                    "corners": portal.corners
-                }
+
+            portal = Portal(
+                id=portal.id,
+                short_id=portal.short_id,    
+                tvec=tvec,
+                qvec=qvec,
+                image_id=portal.image_id, 
+                size=portal.size, 
+                corners=portal.corners
             )
+
+            portals.append(portal)
         return portals
     
     def get_path(self):

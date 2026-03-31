@@ -15,3 +15,4 @@ server/rust/server-bin/jobs
 server/rust/data
 *.so
 .env
+RobinHome*
