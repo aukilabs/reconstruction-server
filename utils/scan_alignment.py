@@ -12,6 +12,7 @@ from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap
 from utils.dataset_utils import transform_with_scale
 from utils.geometry_utils import QuaternionNormalizationCostFunction
 from src.cost_functions import RelativeTransformationSim3CostFunction # Custom ceres cost implementated in C++
+from src.reconstruction_merge import append_reconstruction
 
 @dataclass
 class AlignedScans:
@@ -305,7 +306,6 @@ def merge_aligned_scans(
             logger.addHandler(logging.StreamHandler(sys.stdout))
 
     combined_rec = pycolmap.Reconstruction()
-    next_id = 1
 
     for i, scan_id in enumerate(aligned_scans.scan_ids):
         scan_path = job_root_path / "refined" / "local" / scan_id / "sfm"
@@ -316,85 +316,7 @@ def merge_aligned_scans(
         logger.info(f"-- Aligning ...")
         rec.transform(aligned_scans.alignment_transforms[scan_id])
         logger.debug(f"-- Merging ...")
-
-        image_id_old_to_new = {}
-
-        for old_image_id in sorted(rec.reg_image_ids()):
-            old_img = rec.images[old_image_id]
-            old_cam = rec.cameras[old_img.camera_id]
-            old_frame = old_img.frame
-            old_rig = old_frame.rig
-
-            new_id = next_id
-            next_id += 1
-
-            new_cam = pycolmap.Camera(
-                model=old_cam.model,
-                width=old_cam.width,
-                height=old_cam.height,
-                params=old_cam.params,
-                camera_id=new_id
-            )
-            combined_rec.add_camera(new_cam)
-
-            new_rig = pycolmap.Rig()
-            new_rig.rig_id = new_id
-            new_sensor = pycolmap.sensor_t(
-                type=pycolmap.SensorType.CAMERA,
-                id=new_id
-            )
-            if old_rig.ref_sensor_id is not None and old_rig.ref_sensor_id.type == pycolmap.SensorType.CAMERA:
-                new_rig.add_ref_sensor(new_sensor)
-            else:
-                new_rig.add_sensor(new_sensor)
-            combined_rec.add_rig(new_rig)
-
-            new_frame = pycolmap.Frame(
-                rig_id=new_id,
-                rig_from_world=old_frame.rig_from_world,
-                frame_id=new_id
-            )
-            new_frame.add_data_id(pycolmap.data_t(
-                sensor_id=new_sensor,
-                id=new_id
-            ))
-            combined_rec.add_frame(new_frame)
-
-            copied_points2D = pycolmap.Point2DList(
-                [pycolmap.Point2D(pt2d.xy) for pt2d in old_img.points2D]
-            )
-            new_img = pycolmap.Image(
-                old_img.name,
-                copied_points2D,
-                new_id,
-                new_id
-            )
-            new_img.frame_id = new_id
-            image_id_old_to_new[old_image_id] = new_id
-
-            combined_rec.add_image(new_img)
-            combined_rec.register_frame(new_id)
-
-        for old_point3D in rec.points3D.values():
-            new_track = pycolmap.Track()
-            for old_track_element in old_point3D.track.elements:
-                new_image_id = image_id_old_to_new.get(old_track_element.image_id)
-                if new_image_id is None:
-                    continue
-
-                new_track_element = pycolmap.TrackElement()
-                new_track_element.image_id = new_image_id
-                new_track_element.point2D_idx = old_track_element.point2D_idx
-                new_track.add_element(new_track_element)
-
-            if new_track.length() == 0:
-                continue
-
-            combined_rec.add_point3D(
-                old_point3D.xyz,
-                new_track,
-                old_point3D.color
-            )
+        append_reconstruction(combined_rec, rec)
 
         logger.debug(f"-- MERGED! Combined size: {combined_rec.num_images()} images, "
             f"{combined_rec.num_frames()} frames, {combined_rec.num_rigs()} rigs, "

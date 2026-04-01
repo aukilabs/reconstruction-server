@@ -141,7 +141,7 @@ def global_main_wrapper(args, logger):
         output_dir=global_args.output_path / "topology",
         floor_height=0.0,
         floor_height_threshold=0.35,
-        voxel_size=0.05
+        voxel_size=0.1
     )
 
     topology_main(topology_args, logger)
