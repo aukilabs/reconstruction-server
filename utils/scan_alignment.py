@@ -313,7 +313,7 @@ def merge_aligned_scans(
         logger.info(f"Align and merge scan {i} / {len(aligned_scans.scan_ids)}: {scan_id}")
         logger.debug(f"-- Reading ...")
         rec.read(scan_path)
-        logger.info(f"-- Aligning ...")
+        logger.debug(f"-- Aligning ...")
         rec.transform(aligned_scans.alignment_transforms[scan_id])
         logger.debug(f"-- Merging ...")
         append_reconstruction(combined_rec, rec)
@@ -361,10 +361,17 @@ def print_alignment_comparison(
         f"90%={np.percentile(rot_vals, 90):.2f}"
     )
 
-    high_move = move_vals > np.mean(move_vals) + 2 * np.std(move_vals)
-    high_rot = rot_vals > np.mean(rot_vals) + 2 * np.std(rot_vals)
-    high_rot_or_move = high_move | high_rot
-    high_indices = np.where(high_rot_or_move)[0]
+    # Find and warn for any scans which were moved or rotated significantly by refinement.
+    # If we see any weird setup accuracy issues checking these logs manually can help us figure out why.
+    # Relative AND absolute thresholds must be met, so we catch outliers but avoid false warnings.
+    high_move_rel = move_vals > np.mean(move_vals) + 3 * np.std(move_vals)
+    high_move_abs = np.array(move_vals) > 100.0
+    high_rot_rel = rot_vals > np.mean(rot_vals) + 3 * np.std(rot_vals)
+    high_rot_abs = np.array(rot_vals) > 10
+    high_indices = np.where(
+        (high_move_rel & high_move_abs) | (high_rot_rel & high_rot_abs)
+    )[0]
+
     high_scan_ids = []
     for index in high_indices:
         high_scan_ids.append(aligned_scans.scan_ids[index])

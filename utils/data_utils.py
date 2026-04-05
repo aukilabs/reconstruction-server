@@ -271,12 +271,6 @@ def snap_to_yz_plane(quaternion):
 
     return snapped_rotation.as_quat()
 
-def floor_detection_and_snapping(detections):
-    snapped_detections = {}
-    for ts, detection in detections.items():
-        detection["pose"] = rectify_floor_portal(detection["pose"]) # Does nothing for non-floor portals
-        snapped_detections[ts] = detection
-    return snapped_detections
 
 def quaternion_to_rotation_matrix(q):
     x, y, z, w = q
@@ -425,7 +419,10 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None):
+def save_manifest_json(
+    portal_poses, json_path, job_root_path,
+    job_status=None, job_progress=None, job_status_details=None,
+    portal_sizes=None, scan_alignment_transforms=None):
 
     job_root_path = Path(job_root_path)
 
@@ -574,8 +571,13 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
     # For now we just take the first
     for short_id, poses_for_qr in portal_poses.items():
-
-        pose = poses_for_qr[0]
+        if isinstance(poses_for_qr, pycolmap.Rigid3d):
+            pose = poses_for_qr
+        else:
+            # list of one or many poses
+            # Don't run mean_pose if we already reduced to one pose before.
+            pose = poses_for_qr[0] if len(poses_for_qr) == 1 else mean_pose(poses_for_qr)
+            
         pose = rectify_portal_pose(pose)
 
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
@@ -616,10 +618,11 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     #-------------------------
     # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
     #-------------------------
+    # TODO: should verify this first and save transforms in OpenGL space
     """
-    if aligned_scans:
-        manifest_data["alignedScans"] = {}
-        for scan_id, sim3 in aligned_scans.items():
+    if scan_alignment_transforms:
+        manifest_data["scanAlignmentTransforms"] = {}
+        for scan_id, sim3 in scan_alignment_transforms.items():
             pos = sim3.translation
             quat = sim3.rotation.quat
             #pos, quat = convert_pose_colmap_to_opengl(pos, quat)
@@ -633,7 +636,7 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
             #R = scipy_Rotation.from_quat(quat).as_matrix()
             #R = colmap_to_gl @ R colmap_to_gl_inv
             #quat = scipy_Rotation.from_matrix(R).as_quat()
-            manifest_data["alignedScans"][scan_id] = {
+            manifest_data["scanAlignmentTransforms"][scan_id] = {
                 "localToDomain": {
                     "scale": str(float(sim3.scale)),
                     "position": {

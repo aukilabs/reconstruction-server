@@ -15,6 +15,7 @@ from utils.data_utils import (
 from utils.io import Model
 
 
+# TODO remove in favor of scan_alignment.py
 class NoOverlapException(Exception):
     def __init__(self, message='No overlaps!'):
         # Call the base class constructor with the parameters it needs
@@ -94,6 +95,7 @@ def _calculate_mean_qr_poses(
             for qr_id, poses in detections_per_qr.items()}
 
 
+# TODO remove in favor of scan_alignment.py
 def _calculate_alignment_transform(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],

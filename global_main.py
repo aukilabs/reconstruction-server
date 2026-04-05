@@ -3,8 +3,11 @@ import argparse
 import os
 from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
 from utils.point_cloud_utils import filter_ply, downsample_ply_to_max_size, reduce_decimals_ply, draco_compress_ply
-from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison
+from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans
 from utils.io import read_portal_csv
+import logging
+from typing import Dict
+import pycolmap
 
 def post_process_ply(output_path, logger):
     ply_path = output_path / "RefinedPointCloud.ply"
@@ -50,17 +53,29 @@ def collect_portal_sizes(scan_ids, job_root_path, logger):
     return portal_sizes
 
 
-def collect_refined_portal_poses(refined_aligned_scans):
+def get_mean_portal_poses(aligned_scans: AlignedScans, logger: logging.Logger) -> Dict[str, pycolmap.Rigid3d]:
+    """
+    Combines all portal detections across all aligned scans into one pose per portal.
+
+    Args:
+        portal_detections_per_scan: scan_id -> (qr_id -> poses[])
+    Returns:
+        Dict[str, pycolmap.Rigid3d]: qr_id -> mean pose
+    """
     poses_by_qr = {}
 
-    for scan_portals in refined_aligned_scans.aligned_portal_detections.values():
+    if not aligned_scans.aligned_portal_detections:
+        logger.warning("[get_mean_portal_poses] WARNING: No portal detections in aligned_scans. Returning empty dict.")
+        return {}
+
+    for scan_portals in aligned_scans.aligned_portal_detections.values():
         for qr_id, poses in scan_portals.items():
             if qr_id not in poses_by_qr:
                 poses_by_qr[qr_id] = []
             poses_by_qr[qr_id].extend(poses)
 
     return {
-        qr_id: [mean_pose(poses)]
+        qr_id: mean_pose(poses)
         for qr_id, poses in poses_by_qr.items()
         if poses
     }
@@ -106,14 +121,23 @@ def main(args):
         refined_aligned_scans,
         logger=logger
     )
-
+    
     combined_rec = merge_aligned_scans(
         refined_aligned_scans,
         job_root_path,
         logger=logger
     )
 
-    refined_portal_poses = collect_refined_portal_poses(refined_aligned_scans)
+    refined_portal_poses = get_mean_portal_poses(refined_aligned_scans, logger)
+
+    logger.debug("Aligned portal poses: ")
+    aligned_portal_poses = get_mean_portal_poses(aligned_scans, logger)
+    for qr_id in aligned_portal_poses.keys():
+        basic_pose = aligned_portal_poses[qr_id]
+        refined_pose = refined_portal_poses[qr_id]
+        logger.debug(f"Basic pose for QR {qr_id}: R={basic_pose.rotation.matrix()}, t={basic_pose.translation}")
+        logger.debug(f"Refined pose for QR {qr_id}: R={refined_pose.rotation.matrix()}, t={refined_pose.translation}")
+    
     portal_sizes = collect_portal_sizes(refined_aligned_scans.scan_ids, job_root_path, logger)
 
     manifest_path = output_path / "refined_manifest.json"
@@ -135,62 +159,6 @@ def main(args):
     combined_rec.export_PLY(ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
     logger.info(f"PLY exported -> {ply_path}")
 
-    post_process_ply(output_path, logger=logger)
-
-    return
-
-    result = stitching_helper(
-        dataset_paths=dataset_paths,
-        group_folder=args.data_dir,
-        truth_portal_poses=truth_portal_poses,
-        use_refined_outputs=args.use_refined_outputs,
-        with_3dpoints=args.add_3dpoints,
-        basic_stitch_only=args.basic_stitch_only,
-        logger_name="global_refinement"
-    )
-
-    if result is None:
-        logger.error("Stitching failed")
-        return
-    
-
-    post_process_ply(output_path, logger=logger)
-
-    return
-
-    result = stitching_helper(
-        dataset_paths=dataset_paths,
-        group_folder=args.data_dir,
-        truth_portal_poses=truth_portal_poses,
-        use_refined_outputs=args.use_refined_outputs,
-        with_3dpoints=args.add_3dpoints,
-        basic_stitch_only=args.basic_stitch_only,
-        logger_name="global_refinement"
-    )
-
-    if result is None:
-        logger.error("Stitching failed")
-        return
-    
-
-    post_process_ply(output_path, logger=logger)
-
-    return
-
-    result = stitching_helper(
-        dataset_paths=dataset_paths,
-        group_folder=args.data_dir,
-        truth_portal_poses=truth_portal_poses,
-        use_refined_outputs=args.use_refined_outputs,
-        with_3dpoints=args.add_3dpoints,
-        basic_stitch_only=args.basic_stitch_only,
-        logger_name="global_refinement"
-    )
-
-    if result is None:
-        logger.error("Stitching failed")
-        return
-    
     post_process_ply(output_path, logger=logger)
 
     logger.info("Global refinement completed successfully")
