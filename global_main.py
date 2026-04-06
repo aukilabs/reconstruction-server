@@ -154,7 +154,11 @@ def main(args):
     os.makedirs(sfm_dir, exist_ok=True)
     combined_rec.write(sfm_dir)
     
-    logger.info(f"Exporting colmap points to PLY...")
+    logger.info(f"Exporting colmap points to PLY")
+    obs = pycolmap.ObservationManager(combined_rec)
+    filtered_count = obs.filter_all_points3D(max_reproj_error=4.0, min_tri_angle=2.0)
+    logger.info(f"Filtered {filtered_count} points with large reprojection error or low triangulation angle.")
+    logger.info(f"Filtered reconstruction for PLY export: {combined_rec}")
     ply_path = output_path / "RefinedPointCloud.ply"
     combined_rec.export_PLY(ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
     logger.info(f"PLY exported -> {ply_path}")
