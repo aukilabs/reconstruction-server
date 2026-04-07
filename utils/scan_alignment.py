@@ -8,10 +8,10 @@ import pycolmap
 import pyceres
 import numpy as np
 from utils.io import read_portal_csv, portalPose
-from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap
+from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
 from utils.dataset_utils import transform_with_scale
 from utils.geometry_utils import QuaternionNormalizationCostFunction
-from src.cost_functions import RelativeTransformationSim3CostFunction # Custom ceres cost implementated in C++
+from src.cost_functions import RelativeTransformationSim3CostFunction # Custom ceres cost implemented in C++
 from src.reconstruction_merge import append_reconstruction
 
 @dataclass
@@ -32,7 +32,6 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
     np.array([0.0, 0.0, 0.0]))
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
-
 
 def rigid_to_sim3(transform: pycolmap.Rigid3d) -> pycolmap.Sim3d:
     return pycolmap.Sim3d(1.0, transform.rotation, transform.translation)
@@ -67,8 +66,30 @@ def calculate_alignment_transform(
         return mean_pose(alignment_transforms)
 
     if is_first_chunk:
-        origin_portal_id = list(scanned_poses.keys())[0]
-        return floor_origin_portal_pose * scanned_poses[origin_portal_id].inverse()
+        first_floor_portal_id = None
+        for qr_id, pose in scanned_poses.items():
+            if is_portal_almost_flat(pose.rotation.matrix()):
+                first_floor_portal_id = qr_id
+                break
+            logger.info(f"Skip non-horizontal origin portal candi: {qr_id}")
+        
+        if first_floor_portal_id is None:
+            # First scan must not align using a wall portal, as that would tilt the entire reconstruction!
+            logger.info("No floor portal found for origin alignment")
+            raise NoOverlapException("No floor portal found for origin alignment")
+
+        logger.info(f"Using {first_floor_portal_id} as origin portal to align the reconstruction. Pose: R={scanned_poses[first_floor_portal_id].rotation.matrix()}, t={scanned_poses[first_floor_portal_id].translation}")
+        
+        # Align only rotating around UP (x in our colmap space), if floor portal is not completely flat don't tilt the entire scan.
+        scanned_pose = scanned_poses[first_floor_portal_id]
+        rot = scanned_pose.rotation.matrix()
+        rot = flatten_portal_rotation(rot)
+        scanned_pose_flat = pycolmap.Rigid3d(pycolmap.Rotation3d(rot), scanned_pose.translation)
+        alignment_transform = floor_origin_portal_pose * scanned_pose_flat.inverse()
+        
+        return alignment_transform
+
+    raise NoOverlapException()
 
 def align_scans(
     scan_ids: List[str],
