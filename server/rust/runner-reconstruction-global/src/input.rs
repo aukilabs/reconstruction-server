@@ -56,7 +56,6 @@ pub async fn materialize_refined_scans(
     }
 
     let client_id = get_client_id();
-    let token = ctx.access_token.get();
 
     let mut scans = Vec::new();
     for name in &ctx.lease.task.inputs_cids {
@@ -67,6 +66,8 @@ pub async fn materialize_refined_scans(
             ));
         }
 
+        // Heartbeats can rotate the domain token while long input batches are materialized.
+        let token = ctx.access_token.get();
         let meta = resolve_by_name(&domain_url, &client_id, &token, &domain_id, name)
             .await
             .with_context(|| format!("resolve refined scan name {}", name))?;
@@ -78,6 +79,7 @@ pub async fn materialize_refined_scans(
             "resolved refined scan name to domain data ID"
         );
 
+        let token = ctx.access_token.get();
         let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, &meta.id)
             .await
             .map_err(|e| anyhow!("failed to download refined scan '{}': {}", name, e))?;

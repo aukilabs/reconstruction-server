@@ -2,7 +2,8 @@
     "name": "Reconstruction Server Devcontainer",
     "remoteUser": "reconstruction-server",
     "build": {
-        "dockerfile": "../docker/Dockerfile.dev"
+        "dockerfile": "../docker/Dockerfile.dev",
+        "context": ".."
     },
     "workspaceFolder": "/app",
     "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind",
@@ -15,7 +16,6 @@
             ]
         }
     },
-    "forwardPorts": [8080],
     "runArgs": [
         "--gpus", "all",
         "--shm-size", "512m"
@@ -26,9 +26,6 @@
     //     "DISPLAY": "unix:0"
     // },
     "mounts": [
-        // Modify this to your own data folder
-        // "source=/path/to/data,target=/data,type=bind",
-
         // Uncomment if you want display forward
         // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
     ],
