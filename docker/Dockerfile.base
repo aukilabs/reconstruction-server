@@ -149,7 +149,8 @@ RUN set -eux; \
     cd /tmp/build; \
     git clone --recursive https://github.com/aukilabs/Hierarchical-Localization.git; \
     cd Hierarchical-Localization; \
-    git checkout --recurse-submodules a698de1a09604b31a42ec21c95419018430a5db4; \
+    git checkout --recurse-submodules 87b266cdb3a894455a9c889276f4e5d5913eb0eb; \
+    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128; \
     python3 -m pip install .; \
     cd /; \
     rm -rf /tmp/build/*
@@ -161,8 +162,9 @@ RUN set -eux; \
     cd draco; \
     mkdir build; \
     cd build; \
-    cmake .. -GNinja; \
+    cmake .. -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local; \
     ninja -j"$(nproc)"; \
+    ninja install; \
     cd /; \
     rm -rf /tmp/build/*
 

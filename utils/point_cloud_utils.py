@@ -108,7 +108,9 @@ def filter_point_cloud(point_cloud, ply_remove_outliers=True, ply_downsample=Tru
 def draco_compress_ply(ply_path, draco_path, logger=None):
     # Command line tool (already compiled)
     # Quantizing with 13 bits, empirically selected for no visual difference.
-    subprocess.run(["/src/draco/build/draco_encoder", "-i", ply_path, "-qp", "13", "-o", draco_path])
+    subprocess.run(
+        ["/usr/local/bin/draco_encoder", "-i", ply_path, "-qp", "13", "-o", draco_path]
+    )
 
     if logger is not None:
         logger.info(f"Draco compressed point cloud saved: {draco_path}")

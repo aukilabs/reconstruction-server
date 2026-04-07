@@ -3,6 +3,7 @@ import json
 import numpy as np
 import csv
 import os
+import sys
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
@@ -270,12 +271,6 @@ def snap_to_yz_plane(quaternion):
 
     return snapped_rotation.as_quat()
 
-def floor_detection_and_snapping(detections):
-    snapped_detections = {}
-    for ts, detection in detections.items():
-        detection["pose"] = rectify_floor_portal(detection["pose"]) # Does nothing for non-floor portals
-        snapped_detections[ts] = detection
-    return snapped_detections
 
 def quaternion_to_rotation_matrix(q):
     x, y, z, w = q
@@ -424,7 +419,10 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
-def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, job_progress=None, job_status_details=None, portal_sizes=None):
+def save_manifest_json(
+    portal_poses, json_path, job_root_path,
+    job_status=None, job_progress=None, job_status_details=None,
+    portal_sizes=None, scan_alignment_transforms=None):
 
     job_root_path = Path(job_root_path)
 
@@ -573,8 +571,13 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
     # poses_for_qr has only one pose after refinement, but other parts of the code expects a list of poses per QR.
     # For now we just take the first
     for short_id, poses_for_qr in portal_poses.items():
-
-        pose = poses_for_qr[0]
+        if isinstance(poses_for_qr, pycolmap.Rigid3d):
+            pose = poses_for_qr
+        else:
+            # list of one or many poses
+            # Don't run mean_pose if we already reduced to one pose before.
+            pose = poses_for_qr[0] if len(poses_for_qr) == 1 else mean_pose(poses_for_qr)
+            
         pose = rectify_portal_pose(pose)
 
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
@@ -611,6 +614,45 @@ def save_manifest_json(portal_poses, json_path, job_root_path, job_status=None, 
         })
 
     #-------------------------
+
+    #-------------------------
+    # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
+    #-------------------------
+    # TODO: should verify this first and save transforms in OpenGL space
+    """
+    if scan_alignment_transforms:
+        manifest_data["scanAlignmentTransforms"] = {}
+        for scan_id, sim3 in scan_alignment_transforms.items():
+            pos = sim3.translation
+            quat = sim3.rotation.quat
+            #pos, quat = convert_pose_colmap_to_opengl(pos, quat)
+            #colmap_to_gl = np.array([
+            #    [0, 1, 0],
+            #    [1, 0, 0],
+            #    [0, 0, -1]
+            #])
+            #colmap_to_gl_inv = colmap_to_gl # Inverse is the same since it's symmetric
+            #pos = colmap_to_gl @ pos
+            #R = scipy_Rotation.from_quat(quat).as_matrix()
+            #R = colmap_to_gl @ R colmap_to_gl_inv
+            #quat = scipy_Rotation.from_matrix(R).as_quat()
+            manifest_data["scanAlignmentTransforms"][scan_id] = {
+                "localToDomain": {
+                    "scale": str(float(sim3.scale)),
+                    "position": {
+                        "x": str(float(pos[0])),
+                        "y": str(float(pos[1])),
+                        "z": str(float(pos[2])),
+                    },
+                    "rotation": {
+                        "x": str(float(quat[0])),
+                        "y": str(float(quat[1])),
+                        "z": str(float(quat[2])),
+                        "w": str(float(quat[3])),
+                    }
+                } 
+            }
+    """
 
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
@@ -685,8 +727,12 @@ def process_frames(
     return sorted(references), use_frames_from_video, original_image_count
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=False, logger_name=""):
-    logger = logging.getLogger(logger_name)
+def export_rec_as_ply(rec, path, convert_to_opengl=False, logger=None):
+    if logger is None:
+        logger = logging.getLogger("data_utils")
+        logger.setLevel(logging.INFO)
+        if not logger.hasHandlers():
+            logger.addHandler(logging.StreamHandler(sys.stdout))
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
     logger.info(f"convert_to_opengl = {convert_to_opengl}")

@@ -152,4 +152,4 @@ Here are some common issues you may encounter, with suggested fixes:
 💡 **Still stuck?**  
 If your issue remains, please:  
 1. Check `docker logs <container_id>` for error messages.
-2. Share logs and system specs with the [Auki Labs](https://www.aukilabs.com) team for support.
+2. Share logs and system specs with the [Auki](https://www.auki.com) team for support.
