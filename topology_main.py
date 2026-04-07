@@ -75,11 +75,18 @@ def main(args, logger=None):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(above_floor)
 
+    with timed_section_scope("Outlier Removal", logger):
+        old_count = len(pcd.points)
+        [pcd, _] = pcd.remove_statistical_outlier(
+            nb_neighbors=20, std_ratio=2.0
+        )
+        logger.info(f"Removed {len(pcd.points) - old_count} outlier points")
+
     meshes = []
     with timed_section_scope("Clustering", logger):
         logger.info(f"Clustering 'above floor' points")
 
-        labels = pcd.cluster_dbscan(eps=0.25, min_points=10)
+        labels = pcd.cluster_dbscan(eps=0.25, min_points=20)
         unique_labels = np.unique(labels)
         unique_labels = unique_labels[unique_labels != -1] # -1 are points which didn't end up in any cluster
 
@@ -117,7 +124,7 @@ def main(args, logger=None):
             # 1. Create low poly alpha mesh first to avoid holes and get good outward-facing normals
             # 2. Subdivide to more polygons
             # 3. "shrink wrap": snap each vertex onto the point cloud nearby.
-            lowpoly = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster_pcd, alpha=0.8)
+            lowpoly = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(cluster_pcd, alpha=0.7)
             lowpoly = lowpoly.filter_smooth_simple(number_of_iterations=1)
             lowpoly.compute_vertex_normals()
             
