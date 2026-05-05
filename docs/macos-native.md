@@ -68,7 +68,7 @@ If CMake fails finding OpenGL on Mac when COLMAP expects it, you may need a smal
 
 ## Smoke tests
 
-From **reconstruction-server** root with the same venv you use for jobs (see [`tests/README.md`](../tests/README.md)):
+From **reconstruction-server** root with the same venv you use for jobs:
 
 ```bash
 python tests/test_pyceres_smoke.py
