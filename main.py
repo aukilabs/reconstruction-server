@@ -2,6 +2,10 @@ from pathlib import Path
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 
+# Fixes a crash on macOS where OpenMP got initialized twice, causing OMP #15 abort.
+# Importing torch before pycolmap avoids the issue.
+import torch  # noqa: F401
+
 from local_main import main as local_main
 from global_main import main as global_main
 from topology_main import main as topology_main

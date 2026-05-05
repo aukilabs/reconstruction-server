@@ -30,7 +30,7 @@ def main() -> int:
     if tuple(c.shape) != (32, 64):
         print("FAIL: bad shape", c.shape, file=sys.stderr)
         return 1
-    # Touch result on host (forces sync for GPU-style backends).
+    # Touch result on host (sync for MPS/CUDA).
     _ = float(c.cpu().sum())
     print("OK: matmul on", name)
     return 0
