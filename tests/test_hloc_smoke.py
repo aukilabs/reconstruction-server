@@ -30,7 +30,7 @@ def main() -> int:
     if tuple(c.shape) != (32, 64):
         print("FAIL: bad shape", c.shape, file=sys.stderr)
         return 1
-    # Touch result on host (sync for MPS/CUDA).
+    # Touch result on host (forces sync for GPU-style backends).
     _ = float(c.cpu().sum())
     print("OK: matmul on", name)
     return 0
@@ -41,5 +41,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except ModuleNotFoundError as e:
         print("FAIL:", e, file=sys.stderr)
-        print("Install hloc per docs/macos-native.md (Auki fork with inference_device).", file=sys.stderr)
         raise SystemExit(1) from e
