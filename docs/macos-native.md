@@ -76,11 +76,11 @@ python tests/test_pycolmap_smoke.py
 python tests/test_hloc_smoke.py
 ```
 
-Optional **video** smoke (requires a DMT-style `dmt_recording_*.mp4`):
+Optional **feature/match** smoke (two images from a directory; committed fixtures under `tests/data/test_frames/`):
 
 ```bash
-python tests/test_hloc_feature_match_dmt_smoke.py --mp4 /path/to/dmt_recording.mp4
-# or:  export DMT_RECORDING_MP4=/path/to/dmt_recording.mp4
+python tests/test_hloc_feature_match_dmt_smoke.py --frames-dir tests/data/test_frames
+# optional: --plots-dir /tmp/hloc_plots  (or HLOC_SMOKE_PLOT_DIR) — one PNG per consecutive frame pair
 ```
 
 ## See also

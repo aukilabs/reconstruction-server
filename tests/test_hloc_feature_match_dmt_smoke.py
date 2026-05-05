@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
-"""Smoke: ALIKED + LightGlue extract+match on two frames from a DMT-style MP4.
+"""
+Smoke test for the feature extraction and matching, on a small set of images.
+Uses ALIKED + LightGlue in the same way as in triangulation.py.
+The test frames are committed to the repo under tests/data/test_frames/frame_*.jpg.
 
-Uses the same extractor/matcher keys as ``utils/triangulation.py`` (aliked-n16, aliked+lightglue).
-Inference follows normal torch/hloc device selection (override with ``HLOC_DEVICE``).
-First run may download weights (needs network).
+Note: The test may download model weights, which needs internet access.
 
-From the reconstruction-server repository root:
+Usage:
+    python tests/test_hloc_feature_match_dmt_smoke.py --frames-dir tests/data/test_frames
 
-  python tests/test_hloc_feature_match_dmt_smoke.py --mp4 /path/to/dmt_recording.mp4
-
-  python tests/test_hloc_feature_match_dmt_smoke.py --mp4 ... --plots-dir /tmp/hloc_dmt_plots
-
-Required: ``--mp4`` **or** env ``DMT_RECORDING_MP4`` pointing at an existing ``dmt_recording_*.mp4``.
-
-Optional env:
-  ``HLOC_DEVICE=cpu`` — force CPU.
-  ``DMT_SMOKE_PLOT_DIR`` — same as ``--plots-dir`` if the flag is omitted (directory for match visualization PNG).
+Optional: ``--plots-dir`` or env ``HLOC_SMOKE_PLOT_DIR`` — one match-line PNG per consecutive image pair
+(``frame_00.jpg`` / ``frame_01.jpg``, …).
 """
 
 from __future__ import annotations
@@ -28,53 +23,42 @@ import time
 from pathlib import Path
 from typing import Any
 
-
-def _resolve_mp4(args: argparse.Namespace) -> Path | None:
-    if getattr(args, "mp4", None) is not None:
-        return Path(args.mp4).expanduser().resolve()
-    env = os.environ.get("DMT_RECORDING_MP4")
-    if env:
-        return Path(env).expanduser().resolve()
-    return None
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 
-def _extract_two_jpegs(mp4: Path, out_dir: Path, verbose: bool) -> tuple[str, str]:
-    import cv2
-
-    cap = cv2.VideoCapture(str(mp4))
-    if not cap.isOpened():
-        raise RuntimeError(f"could not open video: {mp4}")
-    if verbose:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print(f"  video open: fps={fps:.2f} frame_count={nframes}")
-
+def _list_frame_filenames(frames_dir: Path) -> list[str]:
+    """Sorted basenames of image files directly under ``frames_dir``."""
+    if not frames_dir.is_dir():
+        raise FileNotFoundError(f"not a directory: {frames_dir}")
     names: list[str] = []
-    for i in range(2):
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            raise RuntimeError(f"failed to read frame {i} from {mp4}")
-        h, w = frame.shape[:2]
-        if verbose:
-            print(f"  frame {i} raw size: {w}x{h}")
-        if max(h, w) > 640:
-            scale = 640.0 / max(h, w)
-            frame = cv2.resize(
-                frame,
-                (int(w * scale), int(h * scale)),
-                interpolation=cv2.INTER_AREA,
-            )
-            if verbose:
-                nh, nw = frame.shape[:2]
-                print(f"  frame {i} resized to {nw}x{nh} (scale={scale:.4f})")
-        name = f"dmt_smoke_{i}.jpg"
-        out_path = out_dir / name
-        cv2.imwrite(str(out_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-        names.append(name)
-        if verbose:
-            print(f"  wrote {out_path} ({out_path.stat().st_size} bytes)")
-    cap.release()
-    return names[0], names[1]
+    for p in frames_dir.iterdir():
+        if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES:
+            names.append(p.name)
+    names.sort()
+    return names
+
+
+def _consecutive_pairs(names: list[str]) -> list[tuple[str, str]]:
+    return list(zip(names, names[1:]))
+
+
+def _list_frames_and_pairs(frames_dir: Path, verbose: bool) -> tuple[list[str], list[tuple[str, str]]]:
+    names = _list_frame_filenames(frames_dir)
+    if len(names) < 2:
+        raise RuntimeError(
+            f"need at least 2 images in {frames_dir}, found {len(names)}: {names!r}"
+        )
+    pairs = _consecutive_pairs(names)
+    if verbose:
+        print(f"  frames ({len(names)} in dir): {names!r}")
+        print(f"  consecutive pairs ({len(pairs)}): {pairs!r}")
+    return names, pairs
+
+
+def _pair_plot_path(plots_dir: Path, pair_key: str) -> Path:
+    """Filesystem-safe name from hloc pair key (may contain ``/``)."""
+    safe = pair_key.replace("/", "__").replace("\\", "_")
+    return plots_dir / f"hloc_smoke_matches__{safe}.png"
 
 
 def _h5_file_size(path: Path) -> int:
@@ -195,10 +179,10 @@ def _save_match_plot_cv2(
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument(
-        "--mp4",
+        "--frames-dir",
         type=Path,
-        default=None,
-        help="path to dmt_recording_*.mp4 (or set DMT_RECORDING_MP4)",
+        required=True,
+        help="directory with image files (JPEG/PNG/…); all are used, matched as consecutive pairs after sort",
     )
     p.add_argument(
         "-q",
@@ -210,7 +194,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--plots-dir",
         type=Path,
         default=None,
-        help="save match-line visualization PNG here (overrides DMT_SMOKE_PLOT_DIR)",
+        help="save match-line visualization PNG here (overrides HLOC_SMOKE_PLOT_DIR)",
     )
     return p.parse_args(argv)
 
@@ -219,18 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     verbose = not args.quiet
     plots_dir = args.plots_dir
-    if plots_dir is None and os.environ.get("DMT_SMOKE_PLOT_DIR"):
-        plots_dir = Path(os.environ["DMT_SMOKE_PLOT_DIR"]).expanduser().resolve()
+    if plots_dir is None and os.environ.get("HLOC_SMOKE_PLOT_DIR"):
+        plots_dir = Path(os.environ["HLOC_SMOKE_PLOT_DIR"]).expanduser().resolve()
 
-    mp4 = _resolve_mp4(args)
-    if mp4 is None:
-        print(
-            "FAIL: pass --mp4 /path/to/dmt_recording.mp4 or set DMT_RECORDING_MP4",
-            file=sys.stderr,
-        )
-        return 2
-    if not mp4.is_file():
-        print("FAIL: DMT recording not found:", mp4, file=sys.stderr)
+    frames_dir = args.frames_dir.expanduser().resolve()
+    if not frames_dir.is_dir():
+        print("FAIL: frames directory not found:", frames_dir, file=sys.stderr)
         return 1
 
     try:
@@ -247,28 +225,31 @@ def main(argv: list[str] | None = None) -> int:
     dev_name = select_inference_device()
     print("torch:", torch.__version__)
     print("inference device:", dev_name)
-    print("video:", mp4)
+    print("frames dir:", frames_dir)
     if verbose:
-        print("work dir: tempfile prefix hloc_dmt_smoke_*")
+        print("work dir: tempfile prefix hloc_feature_match_smoke_*")
         if plots_dir:
             print("plots dir:", plots_dir)
 
-    with tempfile.TemporaryDirectory(prefix="hloc_dmt_smoke_") as td:
+    with tempfile.TemporaryDirectory(prefix="hloc_feature_match_smoke_") as td:
         root = Path(td)
-        image_dir = root / "images"
-        image_dir.mkdir(parents=True)
+        image_dir = frames_dir
         if verbose:
-            print("extracting two JPEGs from mp4 …")
+            print("listing frames and consecutive pairs …")
         t0 = time.perf_counter()
-        n0, n1 = _extract_two_jpegs(mp4, image_dir, verbose)
-        t_decode = time.perf_counter() - t0
+        try:
+            image_names, pairs_list = _list_frames_and_pairs(image_dir, verbose)
+        except (FileNotFoundError, RuntimeError) as e:
+            print("FAIL:", e, file=sys.stderr)
+            return 1
+        t_pick = time.perf_counter() - t0
         if verbose:
-            print(f"  decode+write wall time: {t_decode:.2f}s")
+            print(f"  listing wall time: {t_pick:.3f}s")
 
         pairs_path = root / "pairs-sfm.txt"
-        pairs_path.write_text(f"{n0} {n1}\n", encoding="utf-8")
+        pairs_path.write_text("".join(f"{a} {b}\n" for a, b in pairs_list), encoding="utf-8")
         if verbose:
-            print("pairs file:", pairs_path.read_text().strip())
+            print("pairs file:\n" + pairs_path.read_text().rstrip())
 
         sfm_dir = root / "sfm"
         sfm_dir.mkdir(parents=True)
@@ -295,11 +276,11 @@ def main(argv: list[str] | None = None) -> int:
             sfm_dir,
             feature_path=features_path,
             as_half=True,
-            image_list=[n0, n1],
+            image_list=image_names,
         )
         t_extract = time.perf_counter() - t1
         print(f"extract done in {t_extract:.2f}s")
-        _describe_features_h5(features_path, (n0, n1), verbose)
+        _describe_features_h5(features_path, tuple(image_names), verbose)
 
         matcher_conf = match_features.confs["aliked+lightglue"]
         matcher_conf["model"]["compile_network"] = False
@@ -317,47 +298,64 @@ def main(argv: list[str] | None = None) -> int:
         print(f"match done in {t_match:.2f}s")
         print(f"matches.h5 size: {_h5_file_size(matches_path)} bytes")
 
-        with h5py.File(matches_path, "r") as f:
-            if not len(f.keys()):
+        per_pair_valid: list[tuple[str, int]] = []
+        saved_plot_paths: list[Path] = []
+
+        with h5py.File(matches_path, "r") as mat_f, h5py.File(features_path, "r") as feat_f:
+            if not len(mat_f.keys()):
                 print("FAIL: empty matches h5", file=sys.stderr)
                 return 1
-            root_keys = list(f.keys())
+            root_keys = list(mat_f.keys())
             if verbose:
-                print("match h5 root keys (first 5):", root_keys[:5], "…" if len(root_keys) > 5 else "")
-                pk = names_to_pair(n0, n1)
-                if pk not in root_keys and pk in f:
+                print("match h5 root keys (first 8):", root_keys[:8], "…" if len(root_keys) > 8 else "")
+                n0a, n1a = pairs_list[0]
+                pk = names_to_pair(n0a, n1a)
+                if pk not in root_keys and pk in mat_f:
                     print(
                         "  note: pair path",
                         repr(pk),
                         "is nested under h5py (slash in group name); using path access, not root key list.",
                     )
-            grp, pair_key = _resolve_hloc_match_group(f, n0, n1, names_to_pair, names_to_pair_old)
-            m0 = grp["matches0"][()]
-            n_valid = int(np.sum(np.asarray(m0) >= 0))
-            print(f"pair {pair_key!r}: matches0 len={len(m0)} valid={n_valid}")
-            if verbose and "matching_scores0" in grp:
-                sc = grp["matching_scores0"][()]
-                valid_mask = m0 >= 0
-                if valid_mask.any():
-                    sv = sc[valid_mask].astype("float64")
-                    print(f"  matching_scores0: min={sv.min():.4f} max={sv.max():.4f} mean={sv.mean():.4f}")
 
-        if plots_dir is not None:
-            with h5py.File(features_path, "r") as feat_f, h5py.File(matches_path, "r") as mat_f:
-                k0 = feat_f[n0]["keypoints"][()]
-                k1 = feat_f[n1]["keypoints"][()]
-                _g, _pk = _resolve_hloc_match_group(mat_f, n0, n1, names_to_pair, names_to_pair_old)
-                m0 = _g["matches0"][()]
-            out_png = plots_dir / "dmt_smoke_aliked_lightglue_matches.png"
+            for n0, n1 in pairs_list:
+                grp, pair_key = _resolve_hloc_match_group(
+                    mat_f, n0, n1, names_to_pair, names_to_pair_old
+                )
+                m0 = grp["matches0"][()]
+                n_valid = int(np.sum(np.asarray(m0) >= 0))
+                per_pair_valid.append((pair_key, n_valid))
+                if verbose:
+                    print(f"pair {pair_key!r}: matches0 len={len(m0)} valid={n_valid}")
+                if verbose and "matching_scores0" in grp:
+                    sc = grp["matching_scores0"][()]
+                    valid_mask = m0 >= 0
+                    if valid_mask.any():
+                        sv = sc[valid_mask].astype("float64")
+                        print(
+                            f"  matching_scores0: min={sv.min():.4f} max={sv.max():.4f} mean={sv.mean():.4f}"
+                        )
+
+                if plots_dir is not None:
+                    k0 = feat_f[n0]["keypoints"][()]
+                    k1 = feat_f[n1]["keypoints"][()]
+                    out_png = _pair_plot_path(plots_dir, pair_key)
+                    if verbose:
+                        print(f"writing match visualization → {out_png}")
+                    _save_match_plot_cv2(out_png, image_dir, n0, n1, k0, k1, m0)
+                    saved_plot_paths.append(out_png.resolve())
+
+        if plots_dir is not None and saved_plot_paths:
             if verbose:
-                print(f"writing match visualization → {out_png}")
-            _save_match_plot_cv2(out_png, image_dir, n0, n1, k0, k1, m0)
-            print("saved plot:", out_png.resolve())
+                for p in saved_plot_paths:
+                    print("saved plot:", p)
+            else:
+                print(f"saved {len(saved_plot_paths)} plot(s) under {plots_dir.resolve()}")
 
+        total_valid = sum(v for _pk, v in per_pair_valid)
         print(
             "OK:",
             f"extract {t_extract:.2f}s + match {t_match:.2f}s;",
-            f"{n_valid} valid correspondences on {pair_key!r}.",
+            f"{len(pairs_list)} pair(s), {total_valid} valid correspondences total.",
         )
     return 0
 
