@@ -1,5 +1,11 @@
 """Single-image localization against a prior COLMAP reconstruction.
 
+Design intent (see docs/single-image-localization-design.md): downstream use
+often cares more about **knowing when not to trust** a localization than about
+every frame achieving low error. Expose enough diagnostics (pairs, names,
+robust-fit signals) for callers to threshold uncertain results for pose
+refinement and related pipelines.
+
 Usage:
     # One-time setup (reusable across queries):
     loc = SingleImageLocalizer.from_reconstruction_dir(
@@ -28,6 +34,7 @@ import pycolmap
 
 from hloc import extract_features, match_features
 from hloc.utils.io import get_keypoints, get_matches
+from hloc.utils.inference_device import select_inference_device, use_hloc_device
 
 from utils.pointcloud_covisibility import PointcloudCovisibilityIndex
 
@@ -41,13 +48,6 @@ def _build_feature_conf():
     conf["model"]["detection_threshold"] = 0.3
     conf["model"]["nms_radius"] = 4
     conf["preprocessing"]["resize_max"] = 1024
-    return conf
-
-
-def _build_matcher_conf():
-    """Build LightGlue matcher config matching triangulation.py."""
-    conf = deepcopy(match_features.confs["aliked+lightglue"])
-    conf["model"]["compile_network"] = True
     return conf
 
 
@@ -205,15 +205,18 @@ class SingleImageLocalizer:
             )
 
             # --- Step 3: Match query against database images ---
-            matcher_conf = _build_matcher_conf()
-            match_features.main(
-                matcher_conf,
-                pairs_path,
-                features=query_features_path,
-                matches=query_matches_path,
-                features_ref=self.features_h5,
-            )
-
+            matcher_conf = match_features.confs["aliked+lightglue"]
+            device = select_inference_device()
+            matcher_conf["model"]["compile_network"] = device == "cuda"
+            with use_hloc_device("cpu"):
+                    match_features.main(
+                    matcher_conf,
+                    pairs_path,
+                    features=query_features_path,
+                    matches=query_matches_path,
+                    features_ref=self.features_h5,
+                )
+        
             # --- Step 4: Collect 2D<->3D correspondences and run PnP ---
             result = self._estimate_pose(
                 query_name=query_name,
