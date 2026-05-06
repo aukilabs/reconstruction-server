@@ -58,6 +58,7 @@ def main(args):
         domain_id=args.domain_id,
         job_id=args.job_id,
         level=args.log_level,
+        log_format=args.log_format
     )
 
     logger.info(f"Localizing query image: {args.query_image}")
