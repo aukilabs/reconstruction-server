@@ -12,6 +12,14 @@ Usage:
         --holdout_fraction 0.2 \
         --output_dir tests/localize_holdout_results/
 
+    # Hold out one or more full DMT scans (all frames per scan):
+    python tests/test_localize_holdout.py \
+        --scan_sfm_dir refined/global/<job_id>/sfm \
+        --image_dir datasets/<scan_id>/Frames/ \
+        --holdout_scan_id 2025-12-29_11-37-06 \
+        --holdout_scan_id 2025-12-29_11-44-10 \
+        --output_dir tests/localize_holdout_results/
+
 Test protocol -- run three times:
     1. Easy:      --noise_m 0.0   --noise_deg 0.0   (pipeline sanity)
     2. Realistic: --noise_m 0.5   --noise_deg 5.0   (ARKit-level drift)
@@ -37,6 +45,7 @@ import argparse
 import json
 import logging
 import math
+import re
 import sys
 from typing import Callable, List, Optional, Tuple
 import numpy as np
@@ -52,6 +61,36 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from localize_image import SingleImageLocalizer
 
 logger = logging.getLogger("holdout_test")
+
+
+def _normalize_scan_ids(values: Optional[List[str]]) -> List[str]:
+    """Parse repeated/comma-separated scan IDs and de-duplicate in-order."""
+    if not values:
+        return []
+    tokens: List[str] = []
+    for value in values:
+        for token in value.split(","):
+            token = token.strip()
+            if token:
+                tokens.append(token)
+    return list(dict.fromkeys(tokens))
+
+
+def _infer_scan_id(image_name: str) -> str:
+    """Infer a scan ID from a COLMAP image name."""
+    # For names like "<scan>/<frame>.jpg", use the top-level folder.
+    path_name = Path(image_name)
+    if len(path_name.parts) > 1:
+        return path_name.parts[0]
+
+    # For flat names like "<scan>_000123.jpg", drop trailing frame index.
+    stem = path_name.stem
+    m = re.match(r"^(.*)_\d{6,}$", stem)
+    if m is not None and m.group(1):
+        return m.group(1)
+
+    # Fallback: treat each image stem as its own scan ID.
+    return stem
 
 
 def _first_stat(res) -> float:
@@ -293,12 +332,50 @@ def build_holdout_reconstruction(
 def select_holdout_images(
     rec: pycolmap.Reconstruction,
     fraction: float = 0.2,
+    holdout_scan_ids: Optional[List[str]] = None,
 ) -> set:
     """Select held-out image IDs.
 
-    Takes every Nth image (where N ~ 1/fraction) to ensure spatial spread.
-    Never holds out the first or last two images (they anchor the BA gauge).
+    Two modes:
+      1) Scan mode: if ``holdout_scan_ids`` is provided, hold out *all* frames
+         whose inferred scan ID is in that list.
+      2) Fraction mode (default): take every Nth image (where N ~ 1/fraction)
+         to ensure spatial spread. Never holds out the first or last two images
+         (they anchor the BA gauge).
     """
+    scan_ids = _normalize_scan_ids(holdout_scan_ids)
+    if scan_ids:
+        scan_to_image_ids = {}
+        for img_id, image in rec.images.items():
+            scan_id = _infer_scan_id(image.name)
+            scan_to_image_ids.setdefault(scan_id, []).append(img_id)
+
+        missing_scan_ids = [scan_id for scan_id in scan_ids if scan_id not in scan_to_image_ids]
+        if missing_scan_ids:
+            available_scan_ids = sorted(scan_to_image_ids.keys())
+            available_preview = ", ".join(available_scan_ids[:12])
+            if len(available_scan_ids) > 12:
+                available_preview += ", ..."
+            logger.error(
+                "Requested holdout scan IDs not found: %s. Available scan IDs (%d): %s",
+                missing_scan_ids,
+                len(available_scan_ids),
+                available_preview,
+            )
+            return set()
+
+        holdout = set()
+        for scan_id in scan_ids:
+            holdout.update(scan_to_image_ids[scan_id])
+
+        logger.info(
+            "Selected %d holdout images from %d scan(s): %s",
+            len(holdout),
+            len(scan_ids),
+            ", ".join(scan_ids),
+        )
+        return holdout
+
     sorted_ids = sorted(rec.images.keys())
 
     # Don't hold out first/last two (BA gauge anchors)
@@ -351,6 +428,7 @@ def run_holdout_test(
     scan_sfm_dir: Path,
     image_dir: Path,
     holdout_fraction: float = 0.2,
+    holdout_scan_ids: Optional[List[str]] = None,
     output_dir: Path = None,
     add_noise_m: float = 0.0,
     add_noise_deg: float = 0.0,
@@ -363,7 +441,9 @@ def run_holdout_test(
         scan_sfm_dir: Path to the local refinement sfm dir
                       (contains cameras.bin, images.bin, points3D.bin, features.h5)
         image_dir: Path to the scan's Frames/ directory.
-        holdout_fraction: Fraction of images to hold out.
+        holdout_fraction: Fraction of images to hold out in fraction mode.
+        holdout_scan_ids: Optional scan IDs; when provided, hold out all frames
+            from those scan(s), overriding fraction mode.
         output_dir: Where to save results.
         add_noise_m: Gaussian position noise (metres) for approximate pose.
         add_noise_deg: Gaussian rotation noise (degrees) for approximate pose.
@@ -385,8 +465,14 @@ def run_holdout_test(
         f"{len(full_rec.points3D)} 3D points"
     )
 
+    normalized_scan_ids = _normalize_scan_ids(holdout_scan_ids)
+
     # Select holdout images
-    holdout_ids = select_holdout_images(full_rec, holdout_fraction)
+    holdout_ids = select_holdout_images(
+        full_rec,
+        fraction=holdout_fraction,
+        holdout_scan_ids=normalized_scan_ids,
+    )
     if not holdout_ids:
         logger.error("No holdout images selected. Aborting.")
         return None
@@ -475,6 +561,12 @@ def run_holdout_test(
         "noise_m": add_noise_m,
         "noise_deg": add_noise_deg,
     }
+    if normalized_scan_ids:
+        summary["holdout_mode"] = "scan_ids"
+        summary["holdout_scan_ids"] = normalized_scan_ids
+    else:
+        summary["holdout_mode"] = "fraction"
+        summary["holdout_fraction"] = holdout_fraction
 
     if pos_errors:
         summary["pos_error_cm"] = {
@@ -934,7 +1026,19 @@ if __name__ == "__main__":
         "--image_dir", type=Path, default=None,
         help="Path to datasets/<scan_id>/Frames/ (not used with --analyze_only)",
     )
-    parser.add_argument("--holdout_fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--holdout_fraction",
+        type=float,
+        default=0.2,
+        help="Fraction mode holdout ratio (ignored if --holdout_scan_id is used)",
+    )
+    parser.add_argument(
+        "--holdout_scan_id",
+        action="append",
+        default=None,
+        metavar="SCAN_ID",
+        help="Hold out all frames from this DMT scan ID. Repeat or pass comma-separated values.",
+    )
     parser.add_argument(
         "--output_dir", type=Path,
         default=Path("tests/localize_holdout_results"),
@@ -979,6 +1083,7 @@ if __name__ == "__main__":
             scan_sfm_dir=args.scan_sfm_dir,
             image_dir=args.image_dir,
             holdout_fraction=args.holdout_fraction,
+            holdout_scan_ids=args.holdout_scan_id,
             output_dir=args.output_dir,
             add_noise_m=args.noise_m,
             add_noise_deg=args.noise_deg,
