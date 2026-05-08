@@ -287,6 +287,7 @@ def refine_dataset(
     domain_id="",
     job_id="",
     log_level="INFO",
+    log_format="json",
     pool_executor=None
 ):
     """
@@ -300,6 +301,7 @@ def refine_dataset(
         domain_id: Domain identifier
         job_id: Job identifier
         log_level: Logging level
+        log_format: Logging format
         pool_executor: ThreadPoolExecutor instance for parallel processing
     Returns:
         Future object if pool_executor is provided, otherwise None
@@ -318,7 +320,8 @@ def refine_dataset(
         domain_id=domain_id, 
         job_id=job_id, 
         dataset_id=scan_folder_path.name,
-        level=log_level
+        level=log_level,
+        log_format=log_format
     )
     logger.info(f'Starting local refinement of {scan_folder_path.name}')
 

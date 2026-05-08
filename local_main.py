@@ -27,6 +27,7 @@ def main(args, pool_executor=None):
         args.domain_id,
         args.job_id,
         args.log_level,
+        args.log_format,
         pool_executor=pool_executor
     )
 
@@ -55,6 +56,7 @@ if __name__ == "__main__":
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
+    parser.add_argument('--log_format', choices=["text", "json"], default="json", help="Log output format (text or json)")
     args = parser.parse_args()
 
     main(args)
