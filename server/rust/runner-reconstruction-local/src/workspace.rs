@@ -59,6 +59,14 @@ impl Workspace {
         })
     }
 
+    /// When the workspace used a [`TempDir`] base, dropping `Self` would delete the entire tree.
+    /// Call this when retaining files on disk (e.g. `DISABLE_TASKS_CLEANUP`) so the base directory is not removed on drop.
+    pub fn persist_temp_base(&mut self) {
+        if let Some(dir) = self._temp_guard.take() {
+            let _ = dir.into_path();
+        }
+    }
+
     /// Root directory for the job workspace.
     pub fn root(&self) -> &Path {
         &self.root

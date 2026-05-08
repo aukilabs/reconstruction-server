@@ -88,6 +88,14 @@ fn load_config() -> RunnerConfig {
     })
 }
 
+/// When true, the job workspace directory is left on disk after the task finishes (same env semantics as splatter-server).
+fn tasks_cleanup_disabled() -> bool {
+    match env::var("DISABLE_TASKS_CLEANUP") {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
+}
+
 #[async_trait::async_trait]
 impl Runner for RunnerReconstructionLocal {
     fn capability(&self) -> &'static str {
@@ -107,15 +115,23 @@ impl Runner for RunnerReconstructionLocal {
             anyhow::bail!("task cancelled before execution");
         }
 
-        let workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
-        // Ensure stateless behavior: schedule workspace cleanup on function exit (success or error).
+        let mut workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
+        let retain_workspace_after_run = tasks_cleanup_disabled();
+        if retain_workspace_after_run {
+            workspace.persist_temp_base();
+        }
+        // By default remove the workspace on exit; set DISABLE_TASKS_CLEANUP to retain it for debugging.
         struct WorkspaceCleanup(std::path::PathBuf);
         impl Drop for WorkspaceCleanup {
             fn drop(&mut self) {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
-        let _workspace_cleanup = WorkspaceCleanup(workspace.root().to_path_buf());
+        let _workspace_cleanup = if retain_workspace_after_run {
+            None
+        } else {
+            Some(WorkspaceCleanup(workspace.root().to_path_buf()))
+        };
 
         let job_ctx = JobContext::from_lease(lease)?;
         job_ctx
@@ -134,6 +150,7 @@ impl Runner for RunnerReconstructionLocal {
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "<temp>".into()),
+            retain_workspace_after_run = retain_workspace_after_run,
             "workspace prepared"
         );
         let _ = ctx
