@@ -21,6 +21,7 @@ source .venv-hloc/bin/activate
 
 pip install --upgrade pip setuptools wheel
 pip install "pybind11[global]==3.0.1"
+pip install psutil gputil open3d trimesh alphashape
 
 cd reconstruction-server
 
