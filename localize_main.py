@@ -15,6 +15,11 @@ import argparse
 import json
 import logging
 import numpy as np
+
+# Fixes a crash on macOS where OpenMP got initialized twice, causing OMP #15 abort.
+# Importing torch before pycolmap avoids the issue.
+import torch  # noqa: F401
+
 import pycolmap
 
 from localize_image import SingleImageLocalizer
