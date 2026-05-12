@@ -28,7 +28,16 @@ Test protocol -- run three times:
 ``holdout_results.json`` includes ``correlation_vs_pose`` (Pearson/Spearman of
 errors vs ``num_inliers`` / ``num_matches`` / ``num_2d3d``) when enough
 successful rows exist. A scatter figure ``holdout_correlation_scatter.png`` is
-written to the same directory (needs matplotlib). Recompute from an existing JSON::
+written to the same directory (needs matplotlib). The run also writes
+``holdout_viewer.html`` (Three.js frame-by-frame demo) and a ``frames``
+symlink to the query image directory; serve that folder with::
+
+    cd tests/localize_holdout_results/<run_dir>
+    python -m http.server
+
+then open ``holdout_viewer.html``.
+
+Recompute from an existing JSON::
 
     python tests/test_localize_holdout.py --analyze_only tests/localize_holdout_results/holdout_results.json
     python tests/test_localize_holdout.py --analyze_only tests/localize_holdout_results/holdout_results.json --min_inliers_2d3d_ratio 0.25
@@ -61,6 +70,626 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from localize_image import SingleImageLocalizer
 
 logger = logging.getLogger("holdout_test")
+
+
+_THREEJS_HOLDOUT_VIEWER_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__HOLDOUT_TITLE__</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d11;
+      --panel: #131722;
+      --muted: #8b94a7;
+      --ok: #57d37f;
+      --err: #ff7b7b;
+      --est: #ffb74d;
+      --gt: #4fc3f7;
+      --dim: #7f8798;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: #f1f4fb;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      height: 100%;
+    }
+    .root {
+      display: grid;
+      grid-template-columns: minmax(560px, 2fr) minmax(320px, 1fr);
+      gap: 10px;
+      padding: 10px;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #1f2635;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .left {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    .title {
+      padding: 10px 12px;
+      border-bottom: 1px solid #1f2635;
+      font-weight: 600;
+      font-size: 14px;
+      color: #d8def0;
+    }
+    #sceneHost {
+      width: 100%;
+      height: 100%;
+      min-height: 360px;
+    }
+    .right {
+      display: grid;
+      grid-template-rows: auto auto auto 1fr auto;
+    }
+    .controls {
+      padding: 12px;
+      border-bottom: 1px solid #1f2635;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .row:last-child {
+      margin-bottom: 0;
+    }
+    button {
+      background: #1d2433;
+      color: #e8edfa;
+      border: 1px solid #2a3349;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #26304a;
+    }
+    input[type="range"] {
+      width: 100%;
+    }
+    .meta {
+      padding: 12px;
+      border-bottom: 1px solid #1f2635;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .frame {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 240px;
+    }
+    .frameLabel {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      border-bottom: 1px solid #1f2635;
+      word-break: break-all;
+    }
+    .frameHost {
+      padding: 8px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #0f131e;
+    }
+    #frameImg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+      border: 1px solid #20283a;
+    }
+    .status {
+      padding: 10px 12px;
+      border-top: 1px solid #1f2635;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .good { color: var(--ok); }
+    .bad { color: var(--err); }
+  </style>
+</head>
+<body>
+  <div class="root">
+    <div class="panel left">
+      <div class="title">3D pose trajectories + camera frustums (x-up display)</div>
+      <div id="sceneHost"></div>
+    </div>
+    <div class="panel right">
+      <div class="controls">
+        <div class="row">
+          <button id="prevBtn">Prev</button>
+          <button id="playBtn">Play</button>
+          <button id="nextBtn">Next</button>
+          <label style="font-size:12px;color:var(--muted);">FPS
+            <input id="fpsInput" type="number" min="1" max="30" value="6" style="width:58px; margin-left:4px;" />
+          </label>
+        </div>
+        <div class="row">
+          <input id="frameSlider" type="range" min="0" max="0" value="0" />
+        </div>
+      </div>
+      <div id="metaBox" class="meta">Loading holdout_results.json...</div>
+      <div class="frame">
+        <div id="frameLabel" class="frameLabel">Frame: -</div>
+        <div class="frameHost">
+          <img id="frameImg" alt="Held-out frame preview" />
+        </div>
+      </div>
+      <div id="statusBox" class="status">Initializing...</div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const sceneHost = document.getElementById("sceneHost");
+    const frameSlider = document.getElementById("frameSlider");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
+    const playBtn = document.getElementById("playBtn");
+    const fpsInput = document.getElementById("fpsInput");
+    const statusBox = document.getElementById("statusBox");
+    const metaBox = document.getElementById("metaBox");
+    const frameLabel = document.getElementById("frameLabel");
+    const frameImg = document.getElementById("frameImg");
+
+    function formatNum(v, digits = 3) {
+      if (v === null || v === undefined || Number.isNaN(v)) return "n/a";
+      return Number(v).toFixed(digits);
+    }
+
+    let viewerRatioThreshold = 0.3;
+
+    function posePos(pose) {
+      if (!pose || !Array.isArray(pose.position) || pose.position.length !== 3) return null;
+      // Display frame uses X-up from source coordinates:
+      // source (x, y, z) -> display (y, x, z)
+      return new THREE.Vector3(pose.position[1], pose.position[0], pose.position[2]);
+    }
+
+    function poseRot(pose) {
+      if (!pose || !Array.isArray(pose.rotation_matrix) || pose.rotation_matrix.length !== 3) return null;
+      const r = pose.rotation_matrix;
+      if (!Array.isArray(r[0]) || !Array.isArray(r[1]) || !Array.isArray(r[2])) return null;
+      return [
+        [r[1][0], r[1][1], r[1][2]],
+        [r[0][0], r[0][1], r[0][2]],
+        [r[2][0], r[2][1], r[2][2]],
+      ];
+    }
+
+    function inlierRatio(row) {
+      const d3 = Math.max(Number(row?.num_2d3d ?? 0), 1);
+      return Number(row?.num_inliers ?? 0) / d3;
+    }
+
+    function loadRows(data) {
+      const allRows = Array.isArray(data.per_image) ? data.per_image : [];
+      const rows = allRows.filter((row) => row.gt_world_from_cam && row.refined_world_from_cam);
+      rows.sort((a, b) => String(a.image_name || "").localeCompare(String(b.image_name || "")));
+      return rows;
+    }
+
+    let rows = [];
+    let currentIndex = 0;
+    let timer = null;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(sceneHost.clientWidth, sceneHost.clientHeight);
+    sceneHost.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d11);
+
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      Math.max(1, sceneHost.clientWidth) / Math.max(1, sceneHost.clientHeight),
+      0.01,
+      2000
+    );
+    camera.position.set(2, 2, 2);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.45);
+    dir.position.set(3, 4, 2);
+    scene.add(dir);
+
+    const worldGroup = new THREE.Group();
+    scene.add(worldGroup);
+
+    let gtMarker = null;
+    let estMarker = null;
+    let errLine = null;
+
+    function resetWorld() {
+      while (worldGroup.children.length > 0) {
+        worldGroup.remove(worldGroup.children[0]);
+      }
+      gtMarker = null;
+      estMarker = null;
+      errLine = null;
+    }
+
+    function fitCamera(points) {
+      const box = new THREE.Box3();
+      points.forEach((p) => box.expandByPoint(p));
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3()).length() || 1.0;
+
+      const grid = new THREE.GridHelper(size * 1.6, 20, 0x344055, 0x222a3a);
+      worldGroup.add(grid);
+      const axes = new THREE.AxesHelper(size * 0.25);
+      worldGroup.add(axes);
+
+      camera.position.copy(center).add(new THREE.Vector3(size * 0.7, size * 0.45, size * 0.7));
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    function trajectory(points, color) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({ color });
+      return new THREE.Line(geometry, material);
+    }
+
+    function makeMarker(radius, color) {
+      return new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 20, 14),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.0 })
+      );
+    }
+
+    function applyRotation(rot, vec) {
+      return new THREE.Vector3(
+        rot[0][0] * vec.x + rot[0][1] * vec.y + rot[0][2] * vec.z,
+        rot[1][0] * vec.x + rot[1][1] * vec.y + rot[1][2] * vec.z,
+        rot[2][0] * vec.x + rot[2][1] * vec.y + rot[2][2] * vec.z
+      );
+    }
+
+    function poseFrustumSegments(rows, poseKey, baseColorHex, badColorHex, scale, ratioThreshold) {
+      const edges = [
+        [0, 1], [0, 2], [0, 3], [0, 4],
+        [1, 2], [2, 3], [3, 4], [4, 1],
+      ];
+      const local = [
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(-scale * 0.55, -scale * 0.36, scale),
+        new THREE.Vector3(scale * 0.55, -scale * 0.36, scale),
+        new THREE.Vector3(scale * 0.55, scale * 0.36, scale),
+        new THREE.Vector3(-scale * 0.55, scale * 0.36, scale),
+      ];
+
+      const positions = [];
+      const colors = [];
+      const baseColor = new THREE.Color(baseColorHex);
+      const badColor = new THREE.Color(badColorHex);
+
+      for (const row of rows) {
+        const pose = row?.[poseKey];
+        const pos = posePos(pose);
+        const rot = poseRot(pose);
+        if (!pos || !rot) {
+          continue;
+        }
+        const color = inlierRatio(row) >= ratioThreshold ? baseColor : badColor;
+        const worldPts = local.map((p) => applyRotation(rot, p).add(pos));
+        for (const [a, b] of edges) {
+          const pa = worldPts[a];
+          const pb = worldPts[b];
+          positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+          colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+        }
+      }
+
+      if (!positions.length) {
+        return null;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      const material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.75 });
+      return new THREE.LineSegments(geometry, material);
+    }
+
+    function buildSceneData() {
+      resetWorld();
+      if (!rows.length) return;
+
+      const gtPoints = rows.map((r) => posePos(r.gt_world_from_cam)).filter(Boolean);
+      const estPoints = rows.map((r) => posePos(r.refined_world_from_cam)).filter(Boolean);
+      const allPoints = [...gtPoints, ...estPoints];
+      fitCamera(allPoints);
+
+      worldGroup.add(trajectory(gtPoints, 0x4fc3f7));
+      worldGroup.add(trajectory(estPoints, 0xffb74d));
+
+      const box = new THREE.Box3();
+      allPoints.forEach((p) => box.expandByPoint(p));
+      const size = box.getSize(new THREE.Vector3()).length() || 1.0;
+      const radius = Math.max(size * 0.012, 0.01);
+      const frustumScale = Math.max(size * 0.028, 0.02);
+      const badCamColor = 0x7f8798;
+
+      gtMarker = makeMarker(radius, 0x4fc3f7);
+      estMarker = makeMarker(radius, 0xffb74d);
+      worldGroup.add(gtMarker);
+      worldGroup.add(estMarker);
+
+      const gtFrusta = poseFrustumSegments(
+        rows,
+        "gt_world_from_cam",
+        0x4fc3f7,
+        badCamColor,
+        frustumScale,
+        viewerRatioThreshold
+      );
+      if (gtFrusta) {
+        worldGroup.add(gtFrusta);
+      }
+      const estFrusta = poseFrustumSegments(
+        rows,
+        "refined_world_from_cam",
+        0xffb74d,
+        badCamColor,
+        frustumScale,
+        viewerRatioThreshold
+      );
+      if (estFrusta) {
+        worldGroup.add(estFrusta);
+      }
+
+      const errGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      const errMat = new THREE.LineBasicMaterial({ color: 0xff7b7b });
+      errLine = new THREE.Line(errGeom, errMat);
+      worldGroup.add(errLine);
+    }
+
+    function setStatus(text) {
+      statusBox.textContent = text;
+    }
+
+    function updateFrame(index) {
+      if (!rows.length) return;
+      currentIndex = Math.max(0, Math.min(rows.length - 1, index));
+      frameSlider.value = String(currentIndex);
+      const row = rows[currentIndex];
+
+      const gt = posePos(row.gt_world_from_cam);
+      const est = posePos(row.refined_world_from_cam);
+      const ratio = inlierRatio(row);
+      const lowConfidence = ratio < viewerRatioThreshold;
+
+      if (gtMarker && gt) gtMarker.position.copy(gt);
+      if (estMarker && est) estMarker.position.copy(est);
+      if (gtMarker) {
+        gtMarker.material.color.setHex(lowConfidence ? 0x7f8798 : 0x4fc3f7);
+      }
+      if (estMarker) {
+        estMarker.material.color.setHex(lowConfidence ? 0x7f8798 : 0xffb74d);
+      }
+
+      if (errLine && gt && est) {
+        errLine.geometry.setFromPoints([gt, est]);
+      }
+
+      const posCm = row.pos_error_m == null ? "n/a" : formatNum(row.pos_error_m * 100.0, 2);
+      const rotDeg = row.rot_error_deg == null ? "n/a" : formatNum(row.rot_error_deg, 3);
+      frameLabel.textContent = `Frame ${currentIndex + 1}/${rows.length}: ${row.image_name || "?"}`;
+      metaBox.innerHTML =
+        `<div><strong>__HOLDOUT_TITLE__</strong></div>` +
+        `<div>Success: ${row.success ? "<span class='good'>true</span>" : "<span class='bad'>false</span>"}, ` +
+        `inliers=${row.num_inliers}, matches=${row.num_matches}, 2d3d=${row.num_2d3d}</div>` +
+        `<div>Position error: ${posCm} cm, Rotation error: ${rotDeg} deg</div>` +
+        `<div>inliers/2d3d ratio: ${formatNum(ratio, 4)} (threshold ${formatNum(viewerRatioThreshold, 4)})` +
+        `${lowConfidence ? " <span class='bad'>(greyed out)</span>" : ""}</div>` +
+        `<div class="legend">` +
+        `<span><span class="dot" style="background:var(--gt)"></span>GT trajectory</span>` +
+        `<span><span class="dot" style="background:var(--est)"></span>Localized trajectory</span>` +
+        `<span><span class="dot" style="background:var(--dim)"></span>Low-ratio camera frustums</span>` +
+        `<span><span class="dot" style="background:var(--err)"></span>Current GT→localized error</span>` +
+        `</div>`;
+
+      if (row.image_url) {
+        frameImg.style.display = "block";
+        frameImg.src = row.image_url;
+      } else {
+        frameImg.removeAttribute("src");
+        frameImg.style.display = "none";
+      }
+    }
+
+    function stopPlayback() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+      playBtn.textContent = "Play";
+    }
+
+    function togglePlayback() {
+      if (!rows.length) return;
+      if (timer !== null) {
+        stopPlayback();
+        return;
+      }
+      const fps = Math.max(1, Math.min(30, Number(fpsInput.value) || 6));
+      const intervalMs = Math.round(1000 / fps);
+      playBtn.textContent = "Pause";
+      timer = setInterval(() => {
+        if (!rows.length) return;
+        const next = (currentIndex + 1) % rows.length;
+        updateFrame(next);
+      }, intervalMs);
+    }
+
+    prevBtn.addEventListener("click", () => {
+      stopPlayback();
+      updateFrame(currentIndex - 1);
+    });
+    nextBtn.addEventListener("click", () => {
+      stopPlayback();
+      updateFrame(currentIndex + 1);
+    });
+    playBtn.addEventListener("click", () => {
+      togglePlayback();
+    });
+    frameSlider.addEventListener("input", () => {
+      stopPlayback();
+      updateFrame(Number(frameSlider.value));
+    });
+
+    window.addEventListener("resize", () => {
+      const w = Math.max(1, sceneHost.clientWidth);
+      const h = Math.max(1, sceneHost.clientHeight);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    async function main() {
+      try {
+        const response = await fetch("holdout_results.json");
+        if (!response.ok) {
+          throw new Error(`Failed to load holdout_results.json (${response.status})`);
+        }
+        const data = await response.json();
+        viewerRatioThreshold = Number(data?.viewer?.min_inliers_2d3d_ratio ?? 0.3);
+        if (!Number.isFinite(viewerRatioThreshold)) {
+          viewerRatioThreshold = 0.3;
+        }
+        rows = loadRows(data);
+        if (!rows.length) {
+          setStatus(
+            "No rows with gt_world_from_cam + refined_world_from_cam were found.\\n" +
+            "Re-run test_localize_holdout.py with this updated script to emit pose fields."
+          );
+          return;
+        }
+
+        frameSlider.max = String(Math.max(0, rows.length - 1));
+        frameSlider.value = "0";
+        buildSceneData();
+        updateFrame(0);
+        setStatus(
+          "Ready. Use Prev/Next/Play and slider to step through the held-out frames.\\n" +
+          `Low-ratio camera threshold: ${formatNum(viewerRatioThreshold, 4)}.\\n` +
+          "Tip: run `python -m http.server` in this folder, then open holdout_viewer.html."
+        );
+      } catch (err) {
+        setStatus(`Viewer init failed: ${err}`);
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
+"""
+
+
+def _pose_world_from_cam_dict(cam_from_world: pycolmap.Rigid3d) -> dict:
+    """Serialize pose as world-from-camera for downstream visualization."""
+    world_from_cam = cam_from_world.inverse()
+    return {
+        "position": [float(v) for v in world_from_cam.translation.tolist()],
+        "rotation_matrix": [
+            [float(v) for v in row] for row in world_from_cam.rotation.matrix().tolist()
+        ],
+        "quaternion_wxyz": [float(v) for v in world_from_cam.rotation.quat.tolist()],
+    }
+
+
+def _frame_index_from_name(image_name: str) -> Optional[int]:
+    """Extract trailing frame index from an image name when available."""
+    stem = Path(image_name).stem
+    m = re.search(r"_(\d+)$", stem)
+    if m is None:
+        return None
+    return int(m.group(1))
+
+
+def _ensure_frames_symlink(output_dir: Path, image_dir: Path) -> bool:
+    """Create/refresh output_dir/frames symlink for viewer image loading."""
+    link_path = output_dir / "frames"
+    target_dir = image_dir.resolve()
+
+    if link_path.is_symlink():
+        current = link_path.resolve()
+        if current == target_dir:
+            return True
+        link_path.unlink()
+    elif link_path.exists():
+        logger.warning(
+            "Cannot create viewer frames symlink: %s exists and is not a symlink",
+            link_path,
+        )
+        return False
+
+    link_path.symlink_to(target_dir, target_is_directory=True)
+    return True
+
+
+def write_threejs_holdout_viewer(output_dir: Path, title: str) -> Path:
+    """Write a small Three.js frame-by-frame holdout viewer HTML."""
+    viewer_path = output_dir / "holdout_viewer.html"
+    viewer_html = _THREEJS_HOLDOUT_VIEWER_HTML.replace("__HOLDOUT_TITLE__", title)
+    viewer_path.write_text(viewer_html)
+    return viewer_path
 
 
 def _normalize_scan_ids(values: Optional[List[str]]) -> List[str]:
@@ -433,6 +1062,8 @@ def run_holdout_test(
     add_noise_m: float = 0.0,
     add_noise_deg: float = 0.0,
     write_scatter_plots: bool = True,
+    write_threejs_viewer: bool = True,
+    viewer_min_inliers_2d3d_ratio: float = 0.3,
     plot_dir: Optional[Path] = None,
 ):
     """Run the holdout localization test.
@@ -449,6 +1080,10 @@ def run_holdout_test(
         add_noise_deg: Gaussian rotation noise (degrees) for approximate pose.
         write_scatter_plots: If True, write ``holdout_correlation_scatter.png``
             when correlation data exists (see ``plot_dir``).
+        write_threejs_viewer: If True, write ``holdout_viewer.html`` and a
+            ``frames`` symlink in ``output_dir`` for frame-by-frame demo playback.
+        viewer_min_inliers_2d3d_ratio: Viewer threshold for greying out low-
+            confidence camera frustums (inliers/max(num_2d3d, 1)).
         plot_dir: Directory for the scatter PNG; defaults to ``output_dir``.
             If only ``plot_dir`` is set (no ``output_dir``), scatter can still be written.
     """
@@ -522,10 +1157,14 @@ def run_holdout_test(
         entry = {
             "image_id": int(img_id),
             "image_name": image.name,
+            "frame_index": _frame_index_from_name(image.name),
+            "image_url": (Path("frames") / image.name).as_posix(),
             "success": result.success,
             "num_inliers": result.num_inliers,
             "num_matches": result.num_matches,
             "num_2d3d": result.num_2d3d_correspondences,
+            "gt_world_from_cam": _pose_world_from_cam_dict(gt_cam_from_world),
+            "approx_world_from_cam": _pose_world_from_cam_dict(approx_cfw),
         }
 
         if result.success:
@@ -534,6 +1173,9 @@ def run_holdout_test(
             )
             entry["pos_error_m"] = float(pos_err)
             entry["rot_error_deg"] = float(rot_err)
+            entry["refined_world_from_cam"] = _pose_world_from_cam_dict(
+                result.refined_cam_from_world
+            )
             logger.info(
                 f"  {image.name}: pos_err={pos_err*100:.1f}cm, "
                 f"rot_err={rot_err:.2f} deg, "
@@ -542,6 +1184,7 @@ def run_holdout_test(
         else:
             entry["pos_error_m"] = None
             entry["rot_error_deg"] = None
+            entry["refined_world_from_cam"] = None
             logger.warning(f"  {image.name}: FAILED")
 
         results.append(entry)
@@ -608,13 +1251,30 @@ def run_holdout_test(
 
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
+        frames_symlink_ok = _ensure_frames_symlink(output_dir, image_dir)
         result_path = output_dir / "holdout_results.json"
         payload = {"summary": summary, "per_image": results}
         if correlation:
             payload["correlation_vs_pose"] = correlation
+        payload["viewer"] = {
+            "html_file": "holdout_viewer.html",
+            "frames_symlink": "frames" if frames_symlink_ok else None,
+            "min_inliers_2d3d_ratio": float(viewer_min_inliers_2d3d_ratio),
+            "notes": (
+                "Run `python -m http.server` in this directory, then open "
+                "`holdout_viewer.html` for frame-by-frame 3D playback."
+            ),
+        }
         with open(result_path, "w") as f:
             json.dump(payload, f, indent=2)
         logger.info(f"Results saved to {result_path}")
+        if write_threejs_viewer:
+            viewer_title = (
+                f"Holdout Localization Demo — {summary['total_queries']} frames "
+                f"({summary['holdout_mode']})"
+            )
+            viewer_path = write_threejs_holdout_viewer(output_dir, viewer_title)
+            logger.info(f"Three.js viewer saved to {viewer_path}")
 
     scatter_dir = None
     if output_dir is not None:
@@ -1001,10 +1661,21 @@ if __name__ == "__main__":
         help="Do not write holdout_correlation_scatter.png",
     )
     parser.add_argument(
+        "--no_threejs_viewer",
+        action="store_true",
+        help="Do not write holdout_viewer.html / frames symlink demo artifacts",
+    )
+    parser.add_argument(
         "--min_inliers_2d3d_ratio",
         type=float,
         default=0.3,
         help="With --analyze_only: KEEP if num_inliers/max(num_2d3d,1) >= this (see design doc)",
+    )
+    parser.add_argument(
+        "--viewer_min_inliers_2d3d_ratio",
+        type=float,
+        default=0.3,
+        help="With holdout run: grey out frustums with inliers/max(num_2d3d,1) below this",
     )
     parser.add_argument(
         "--qc_good_max_pos_m",
@@ -1088,5 +1759,7 @@ if __name__ == "__main__":
             add_noise_m=args.noise_m,
             add_noise_deg=args.noise_deg,
             write_scatter_plots=not args.no_scatter_plots,
+            write_threejs_viewer=not args.no_threejs_viewer,
+            viewer_min_inliers_2d3d_ratio=args.viewer_min_inliers_2d3d_ratio,
             plot_dir=args.plot_dir,
         )
