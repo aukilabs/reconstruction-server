@@ -63,4 +63,4 @@ Pose refinement consumes trajectories or frame poses over time. A localization l
 - Use strong localizations as anchors.
 - Drop or isolate weak frames instead of letting them distort the refined solution.
 
-This document should stay aligned with implementation in `localize_image.py`, `localize_main.py`, and holdout or integration tests under `tests/`.
+This document should stay aligned with implementation in `localize_image.py`, `localize_main.py`, `pose_tracking_server.py` (HTTP / streaming entry), and holdout or integration tests under `tests/`.

@@ -2,6 +2,7 @@
 members = [
     "runner-reconstruction-global",
     "runner-reconstruction-local",
+    "runner-reconstruction-localize",
     "bin",
 ]
 resolver = "2"
