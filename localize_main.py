@@ -11,6 +11,7 @@ are only loaded once when the same process handles multiple queries.
 """
 
 from pathlib import Path
+from typing import Optional
 import argparse
 import json
 import logging
@@ -22,13 +23,19 @@ import torch  # noqa: F401
 
 import pycolmap
 
-from localize_image import SingleImageLocalizer
-from utils.data_utils import convert_pose_opengl_to_colmap, setup_logger
+from localize_image import SingleImageLocalizer, load_refined_manifest_portals
+from utils.data_utils import (
+    convert_pose_opengl_to_colmap,
+    convert_pose_colmap_to_opengl,
+    setup_logger,
+)
 
 
 # Module-level cache for the localizer (persists across calls within the same process)
 _cached_localizer: SingleImageLocalizer = None
 _cached_reconstruction_dir: Path = None
+_cached_manifest_key: str = ""
+_cached_min_inliers_2d3d_ratio: float = -1.0
 
 
 def get_or_create_localizer(
@@ -36,23 +43,40 @@ def get_or_create_localizer(
     image_dir: Path,
     features_h5: Path,
     voxel_size: float = 0.20,
+    refined_manifest: Optional[Path] = None,
+    min_inliers_2d3d_ratio: float = 0.3,
+    warmup_lightglue: bool = True,
 ) -> SingleImageLocalizer:
     """Return a cached localizer or build a new one."""
-    global _cached_localizer, _cached_reconstruction_dir
+    global _cached_localizer, _cached_reconstruction_dir, _cached_manifest_key
+    global _cached_min_inliers_2d3d_ratio
 
+    manifest_key = str(refined_manifest.resolve()) if refined_manifest else ""
     if (
         _cached_localizer is not None
         and _cached_reconstruction_dir == reconstruction_dir
+        and _cached_manifest_key == manifest_key
+        and _cached_min_inliers_2d3d_ratio == min_inliers_2d3d_ratio
     ):
         return _cached_localizer
+
+    portals = None
+    if refined_manifest is not None and refined_manifest.is_file():
+        portals = load_refined_manifest_portals(refined_manifest)
 
     _cached_localizer = SingleImageLocalizer.from_reconstruction_dir(
         reconstruction_dir=reconstruction_dir,
         image_dir=image_dir,
         features_h5=features_h5,
         voxel_size=voxel_size,
+        min_inliers_2d3d_ratio=min_inliers_2d3d_ratio,
+        portals=portals,
     )
+    if warmup_lightglue:
+        _cached_localizer.warmup_lightglue()
     _cached_reconstruction_dir = reconstruction_dir
+    _cached_manifest_key = manifest_key
+    _cached_min_inliers_2d3d_ratio = min_inliers_2d3d_ratio
     return _cached_localizer
 
 
@@ -69,12 +93,21 @@ def main(args):
     logger.info(f"Localizing query image: {args.query_image}")
     logger.info(f"Reconstruction: {args.reconstruction_dir}")
 
+    refined_manifest = args.refined_manifest
+    if refined_manifest is None:
+        cand = args.reconstruction_dir.parent / "refined_manifest.json"
+        if cand.is_file():
+            refined_manifest = cand
+            logger.info(f"Using refined manifest (auto): {refined_manifest}")
+
     # Build or retrieve cached localizer
     localizer = get_or_create_localizer(
         reconstruction_dir=args.reconstruction_dir,
         image_dir=args.image_dir,
         features_h5=args.features_h5,
         voxel_size=args.voxel_size,
+        refined_manifest=refined_manifest,
+        min_inliers_2d3d_ratio=args.min_inliers_2d3d_ratio,
     )
 
     # Parse camera intrinsics
@@ -114,15 +147,21 @@ def main(args):
         "num_inliers": result.num_inliers,
         "num_matches": result.num_matches,
         "num_2d3d_correspondences": result.num_2d3d_correspondences,
+        "from_portal_qr": result.from_portal_qr,
+        "portal_short_id": result.portal_short_id,
     }
 
     if result.success:
         cfw = result.refined_cam_from_world
         wtc = cfw.inverse()
+        pos_c = np.asarray(wtc.translation, dtype=np.float64)
+        quat_c = np.asarray(wtc.rotation.quat, dtype=np.float64)
+        pos_gl, quat_gl = convert_pose_colmap_to_opengl(pos_c, quat_c)
+        rot_gl = pycolmap.Rotation3d(quat_gl).matrix()
         output["refined_pose"] = {
-            "position": wtc.translation.tolist(),
-            "rotation_matrix": wtc.rotation.matrix().tolist(),
-            "quaternion_wxyz": wtc.rotation.quat.tolist(),
+            "position": pos_gl.tolist(),
+            "rotation_matrix": rot_gl.tolist(),
+            "quaternion_wxyz": quat_gl.tolist(),
         }
         logger.info(f"Localization succeeded: {result.num_inliers} inliers")
     else:
@@ -162,6 +201,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output_path", type=Path, default=Path("./localize_output"))
     parser.add_argument("--voxel_size", type=float, default=0.20)
+    parser.add_argument(
+        "--min_inliers_2d3d_ratio",
+        type=float,
+        default=0.3,
+        help="Reject feature-based localization if num_inliers/max(num_2d3d,1) is below this.",
+    )
+    parser.add_argument(
+        "--refined_manifest",
+        type=Path,
+        default=None,
+        help="refined/global/refined_manifest.json (portals). Default: parent of reconstruction_dir if present.",
+    )
     parser.add_argument("--domain_id", type=str, default="")
     parser.add_argument("--job_id", type=str, default="")
     parser.add_argument(

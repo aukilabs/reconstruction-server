@@ -6,7 +6,7 @@ import numpy as np
 from numpy.linalg import norm
 import pycolmap
 import pyceres
-from hloc.utils.inference_device import select_inference_device, use_hloc_device
+#from hloc.utils.inference_device import select_inference_device, use_hloc_device
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
@@ -370,9 +370,10 @@ def process_features_and_matching(
     # Feature matching
     logger.info("Matching features")
     matcher_conf = match_features.confs["aliked+lightglue"]
-    device = select_inference_device()
-    matcher_conf["model"]["compile_network"] = device == "cuda"
-
+    #device = select_inference_device()
+    matcher_conf["model"]["compile_network"] = True # device == "cuda"
+    
+    """
     if device == "mps":
         # Lightglue runs very slow on MPS so use CPU for now. Tested on Macbook Pro M1.
         with use_hloc_device("cpu"):
@@ -383,9 +384,10 @@ def process_features_and_matching(
                 matches=paths.matches,
             )
     else:
-        match_features.main(
-            matcher_conf,
-            paths.sfm_pairs,
-            features=paths.features,
-            matches=paths.matches,
-        )
+    """
+    match_features.main(
+        matcher_conf,
+        paths.sfm_pairs,
+        features=paths.features,
+        matches=paths.matches,
+    )

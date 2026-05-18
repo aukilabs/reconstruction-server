@@ -11,8 +11,8 @@ GET /api/v1/status, /api/v1/trajectory, /api/v1/health — same shape as slam_se
 
 Layout (typical global-refinement job workspace):
   --job_root            job directory (contains ``datasets/``)
-  --reconstruction_root directory with ``refined_sfm_combined/`` and ``features.h5`` inside it
-                        (usually ``<job_root>/refined/global``)
+  --reconstruction_root optional; default ``<job_root>/refined/global`` (contains
+                        ``refined_sfm_combined/`` and ``features.h5``)
 """
 
 from __future__ import annotations
@@ -43,10 +43,25 @@ import cv2
 import numpy as np
 import pycolmap
 
+from localize_image import ensure_inductor_cudagraph_tls
 from localize_main import get_or_create_localizer
 from utils.data_utils import convert_pose_opengl_to_colmap
 
 LOG = logging.getLogger("pose_tracking_server")
+
+# Same as slam_server.cc TwcToClientJson (ORB OpenCV Twc -> Three.js client pose).
+_CV_TO_THREE = np.array([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]], dtype=np.float64)
+
+
+def _twc_to_client_pose(twc: pycolmap.Rigid3d) -> Tuple[List[float], List[float]]:
+    """World-from-camera pose -> (position, orientation wxyz) for HTTP clients."""
+    r_three = twc.rotation.matrix() @ _CV_TO_THREE
+    t_three = np.asarray(twc.translation, dtype=np.float64)
+    q = pycolmap.Rotation3d(r_three).quat
+    return (
+        [float(t_three[0]), float(t_three[1]), float(t_three[2])],
+        [float(q[0]), float(q[1]), float(q[2]), float(q[3])],
+    )
 
 
 def _resolve_paths(
@@ -83,18 +98,17 @@ def _resolve_paths(
     return reconstruction_dir, image_dir, features_h5
 
 
+def _infer_reconstruction_root(job_root: Path) -> Path:
+    """Default global-refinement bundle location relative to job workspace."""
+    return job_root.resolve() / "refined" / "global"
+
+
 def _fallback_approx_cam_from_world(rec: pycolmap.Reconstruction) -> pycolmap.Rigid3d:
     """Rough pose when client sends none and we have no prior (first frame)."""
     if not rec.images:
         return pycolmap.Rigid3d()
     first = next(iter(rec.images.values()))
     return first.cam_from_world()
-
-
-def _quat_wxyz_from_pycolmap_rot(rot: pycolmap.Rotation3d) -> Tuple[float, float, float, float]:
-    q = np.array(rot.quat, dtype=np.float64)
-    # pycolmap: Hamilton w,x,y,z
-    return float(q[0]), float(q[1]), float(q[2]), float(q[3])
 
 
 def _gl_pose_to_cam_from_world(
@@ -110,8 +124,8 @@ class TrackRecord:
     success: bool
     timestamp: float
     frame_id: int
-    position: Optional[List[float]] = None
-    orientation: Optional[List[float]] = None  # wxyz
+    position: Optional[List[float]] = None  # Twc translation (Three.js / slam_server client frame)
+    orientation: Optional[List[float]] = None  # wxyz from R_wc * cv_to_three
     processing_time_ms: float = 0.0
     num_inliers: int = 0
     num_matches: int = 0
@@ -178,18 +192,22 @@ class ServerState:
             tmp_path = Path(tmpd) / "query.jpg"
             cv2.imwrite(str(tmp_path), bgr)
 
-            with self.lock:
-                prior = self.last_cam_from_world
-
-            if approx_gl is not None and len(approx_gl) >= 7:
-                pos_gl = np.array(approx_gl[0:3], dtype=np.float64)
-                qw, qx, qy, qz = [float(x) for x in approx_gl[3:7]]
-                quat_gl = np.array([qw, qx, qy, qz], dtype=np.float64)
-                approx_cfw = _gl_pose_to_cam_from_world(pos_gl, quat_gl)
-            elif prior is not None:
-                approx_cfw = prior
-            else:
-                approx_cfw = _fallback_approx_cam_from_world(self.localizer.reconstruction)
+            # Approximate pose is for feature-based localization only, not portal QR.
+            approx_cfw = None
+            if not self.localizer.portals:
+                with self.lock:
+                    prior = self.last_cam_from_world
+                if approx_gl is not None and len(approx_gl) >= 7:
+                    pos_gl = np.array(approx_gl[0:3], dtype=np.float64)
+                    qw, qx, qy, qz = [float(x) for x in approx_gl[3:7]]
+                    quat_gl = np.array([qw, qx, qy, qz], dtype=np.float64)
+                    approx_cfw = _gl_pose_to_cam_from_world(pos_gl, quat_gl)
+                elif prior is not None:
+                    approx_cfw = prior
+                else:
+                    approx_cfw = _fallback_approx_cam_from_world(
+                        self.localizer.reconstruction
+                    )
 
             result = self.localizer.localize(
                 image_path=tmp_path,
@@ -207,17 +225,15 @@ class ServerState:
             rec.error_message = "localization failed"
             return rec
 
-        cfw = result.refined_cam_from_world
-        wfc = cfw.inverse()
-        pos = wfc.translation
-        qw, qx, qy, qz = _quat_wxyz_from_pycolmap_rot(wfc.rotation)
+        twc = result.refined_cam_from_world.inverse()
+        pos, orient = _twc_to_client_pose(twc)
 
         rec.success = True
-        rec.position = [float(pos[0]), float(pos[1]), float(pos[2])]
-        rec.orientation = [qw, qx, qy, qz]
+        rec.position = pos
+        rec.orientation = orient
 
         with self.lock:
-            self.last_cam_from_world = cfw
+            self.last_cam_from_world = result.refined_cam_from_world
 
         return rec
 
@@ -226,11 +242,19 @@ STATE: Optional[ServerState] = None
 
 
 def _worker(state: ServerState) -> None:
+    # LightGlue torch.compile needs inductor CUDA-graph TLS in this thread.
+    ensure_inductor_cudagraph_tls()
+    i = 0
+    every_nth = 2
     while True:
         item = state.image_queue.get()
         if item is None:
             break
         try:
+            if i % every_nth != 0:
+                i += 1
+                continue
+            i += 1
             bgr = item["image"]
             ts = float(item["timestamp"])
             fid = int(item["frame_id"])
@@ -324,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
                     {
                         "timestamp": r.timestamp,
                         "frame_id": r.frame_id,
+                        "is_keyframe": False,
                         "position": r.position,
                         "orientation": r.orientation,
                         "processing_time_ms": r.processing_time_ms,
@@ -427,8 +452,8 @@ def main() -> None:
     ap.add_argument(
         "--reconstruction_root",
         type=Path,
-        required=True,
-        help="e.g. <job>/refined/global (contains refined_sfm_combined/)",
+        default=None,
+        help="Global refinement bundle (default: <job_root>/refined/global)",
     )
     ap.add_argument(
         "--job_root",
@@ -446,22 +471,66 @@ def main() -> None:
         help="Override merged features.h5 (default: <reconstruction_dir>/features.h5)",
     )
     ap.add_argument("--voxel_size", type=float, default=0.20)
+    ap.add_argument(
+        "--min-inliers-2d3d-ratio",
+        type=float,
+        default=0.3,
+        dest="min_inliers_2d3d_ratio",
+        help="Reject localization if num_inliers/max(num_2d3d,1) is below this (default 0.3).",
+    )
+    ap.add_argument(
+        "--refined_manifest",
+        type=Path,
+        default=None,
+        help="Portals JSON (default: <reconstruction_root>/refined_manifest.json if it exists).",
+    )
+    ap.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Include localize_image; use DEBUG for QR detect failures every frame.",
+    )
+    ap.add_argument(
+        "--no-lightglue-warmup",
+        action="store_true",
+        help="Skip one LightGlue pair at startup (JIT precompile / model cache).",
+    )
     args = ap.parse_args()
 
+    log_level = getattr(logging, args.log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    logging.getLogger("localize_image").setLevel(log_level)
+
+    reconstruction_root = (
+        args.reconstruction_root
+        if args.reconstruction_root is not None
+        else _infer_reconstruction_root(args.job_root)
+    )
+    if args.reconstruction_root is None:
+        LOG.info("Inferred reconstruction_root: %s", reconstruction_root)
 
     recon_dir, image_dir, features_h5 = _resolve_paths(
-        args.reconstruction_root, args.job_root, args.features_h5
+        reconstruction_root, args.job_root, args.features_h5
     )
+
+    manifest = (
+        args.refined_manifest
+        if args.refined_manifest is not None
+        else reconstruction_root / "refined_manifest.json"
+    )
+    refined_manifest = manifest if manifest.is_file() else None
 
     loc = get_or_create_localizer(
         reconstruction_dir=recon_dir,
         image_dir=image_dir,
         features_h5=features_h5,
         voxel_size=args.voxel_size,
+        refined_manifest=refined_manifest,
+        min_inliers_2d3d_ratio=args.min_inliers_2d3d_ratio,
+        warmup_lightglue=not args.no_lightglue_warmup,
     )
 
     state = ServerState(max_queue_size=max(1, args.max_queue))
