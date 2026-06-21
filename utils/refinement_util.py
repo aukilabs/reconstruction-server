@@ -17,6 +17,7 @@ from utils.data_utils import (
     process_frames,
     rectify_portal_pose
 )
+from utils.aruco_detection import detect_aruco_in_frames
 
 class RefinementPaths(NamedTuple):
     """Container for all paths used in refinement."""
@@ -325,6 +326,16 @@ def refine_dataset(
     # Process frames and load data
     references, use_frames_from_video, original_image_count = process_frames(
         paths, every_nth_image, logger
+    )
+
+    detect_aruco_in_frames(
+        images_dir=paths.images,
+        frames_csv_path=paths.scan_folder / "Frames.csv",
+        intrinsics_csv_path=paths.scan_folder / "CameraIntrinsics.csv",
+        output_csv_path=paths.scan_folder / "ArUcoDetections.csv",
+        use_frames_from_video=use_frames_from_video,
+        scan_folder_name=paths.scan_folder.name,
+        logger=logger,
     )
 
     # Load scan from folder
