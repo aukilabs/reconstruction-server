@@ -65,11 +65,9 @@ cd ..
 pip install -e .
 cd ..
 
-# In Hierarchical-Localization clone (right now used local folder in my exocortex)
-# Normally:
-# git clone --recursive https://github.com/aukilabs/Hierarchical-Localization
-# cd Hierarchical-Localization; \
-# git checkout --recurse-submodules 87b266cdb3a894455a9c889276f4e5d5913eb0eb
+git clone --recursive https://github.com/aukilabs/Hierarchical-Localization
+cd Hierarchical-Localization; \
+git checkout --recurse-submodules ef172a73f899e23a690b7cc7f39a143ae14c391b
 pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1
 pip install -e . --config-settings editable_mode=compat
 cd ../..
