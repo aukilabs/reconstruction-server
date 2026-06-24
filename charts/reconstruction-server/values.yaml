@@ -3,13 +3,14 @@ reconstruction-server:
     pullPolicy: Always
     tag: latest
   ingress:
-    enabled: true
-    annotations:
-      kubernetes.io/ingress.class: alb
-      alb.ingress.kubernetes.io/scheme: internet-facing
-      alb.ingress.kubernetes.io/group.name: default
-      alb.ingress.kubernetes.io/target-type: ip
-      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    enabled: false
+    # Re-enable for specific environments via overlay files if needed.
+    # annotations:
+    #   kubernetes.io/ingress.class: alb
+    #   alb.ingress.kubernetes.io/scheme: internet-facing
+    #   alb.ingress.kubernetes.io/group.name: default
+    #   alb.ingress.kubernetes.io/target-type: ip
+    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
   resources:
     limits:
       cpu: 8
