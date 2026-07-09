@@ -9,6 +9,7 @@ compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "
 posemesh-compute-node = { version = "=0.3.2" }
 runner-reconstruction-local = { path = "../runner-reconstruction-local" }
 runner-reconstruction-global = { path = "../runner-reconstruction-global" }
+runner-reconstruction-update = { path = "../runner-reconstruction-update" }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 

@@ -15,6 +15,9 @@ async fn main() -> anyhow::Result<()> {
     for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
         reg = reg.register(runner);
     }
+    for runner in runner_reconstruction_update::RunnerReconstructionUpdate::for_all_capabilities() {
+        reg = reg.register(runner);
+    }
 
     let capabilities = reg.capabilities();
     posemesh_compute_node::dds::register::spawn_registration_if_configured(&cfg, &capabilities)?;
