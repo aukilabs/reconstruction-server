@@ -70,7 +70,7 @@ def align_reconstruction_chunks(
         assert qr_id in image_ids_per_qr and len(image_ids_per_qr[qr_id]) == len(cam_space_detections)
         image_ids = image_ids_per_qr[qr_id]
 
-        for (image_id_ref, t_refcam_qr), (image_id_tgt, t_tgtcam_qr) in set(itertools.combinations(zip(image_ids, cam_space_detections), 2)):
+        for (image_id_ref, t_refcam_qr), (image_id_tgt, t_tgtcam_qr) in itertools.combinations(zip(image_ids, cam_space_detections), 2):
             assert image_id_ref != image_id_tgt
 
             chunk_id_ref, chunk_id_tgt = image_id_to_chunk_id[image_id_ref], image_id_to_chunk_id[image_id_tgt]

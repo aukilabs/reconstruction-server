@@ -145,10 +145,8 @@ class RelativeTransformationSE3CostFunction {
     return (
         new ceres::AutoDiffCostFunction<RelativeTransformationSE3CostFunction,
                                         residuals_num,
-                                        4,
-                                        3,
-                                        4,
-                                        3>(
+                                        7,
+                                        7>(
             new RelativeTransformationSE3CostFunction(
                 t_target_reference_quat,
                 t_target_reference_translation,
@@ -156,17 +154,15 @@ class RelativeTransformationSE3CostFunction {
   }
 
   template <typename T>
-  bool operator()(const T* const t_target_local_quat,
-                  const T* const t_target_local_translation, // pose
-                  const T* const t_reference_local_quat,
-                  const T* const t_reference_local_translation, // prev_pose
+  bool operator()(const T* const t_target_local_pose, // pose: quat[0:4], translation[4:7]
+                  const T* const t_reference_local_pose, // prev_pose: quat[0:4], translation[4:7]
                   T* residuals) const {
     const Sophus::SE3<T> t_target_local =
-        Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_quat),
-                       Eigen::Matrix<T, 3, 1>(t_target_local_translation));
+        Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_pose),
+                       Eigen::Matrix<T, 3, 1>(t_target_local_pose + 4));
     const Sophus::SE3<T> t_reference_local =
-        Sophus::SE3<T>(EigenQuaternionMap<T>(t_reference_local_quat),
-                       Eigen::Matrix<T, 3, 1>(t_reference_local_translation));
+        Sophus::SE3<T>(EigenQuaternionMap<T>(t_reference_local_pose),
+                       Eigen::Matrix<T, 3, 1>(t_reference_local_pose + 4));
 
     Eigen::Matrix<T, residuals_num, 1> parameters =
         (
@@ -216,10 +212,8 @@ class RelativeTransformationSE3ViaObservationsCostFunction {
     return (new ceres::AutoDiffCostFunction<
             RelativeTransformationSE3ViaObservationsCostFunction,
             residuals_num,
-            4,
-            3,
-            4,
-            3>(new RelativeTransformationSE3ViaObservationsCostFunction(
+            7,
+            7>(new RelativeTransformationSE3ViaObservationsCostFunction(
         t_reference_observation_quat,
         t_reference_observation_translation,
         t_target_observation_quat,
@@ -228,17 +222,15 @@ class RelativeTransformationSE3ViaObservationsCostFunction {
   }
 
   template <typename T>
-  bool operator()(const T* const t_target_local_quat,
-                  const T* const t_target_local_translation,
-                  const T* const t_reference_local_quat,
-                  const T* const t_reference_local_translation,
+  bool operator()(const T* const t_target_local_pose,
+                  const T* const t_reference_local_pose,
                   T* residuals) const {
     const Sophus::SE3<T> t_target_local =
-        Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_quat),
-                       Eigen::Matrix<T, 3, 1>(t_target_local_translation));
+        Sophus::SE3<T>(EigenQuaternionMap<T>(t_target_local_pose),
+                       Eigen::Matrix<T, 3, 1>(t_target_local_pose + 4));
     const Sophus::SE3<T> t_reference_local =
-        Sophus::SE3<T>(EigenQuaternionMap<T>(t_reference_local_quat),
-                       Eigen::Matrix<T, 3, 1>(t_reference_local_translation));
+        Sophus::SE3<T>(EigenQuaternionMap<T>(t_reference_local_pose),
+                       Eigen::Matrix<T, 3, 1>(t_reference_local_pose + 4));
 
     const Sophus::SE3<T> t_local_observation_reference =
         t_reference_local.inverse() * t_reference_observation_;
@@ -357,18 +349,17 @@ class PoseCenterConstraintCostFunction {
       const Eigen::Vector3d& pose_center_constraint,
       const Eigen::Vector3d& weight) {
     return (new ceres::
-                AutoDiffCostFunction<PoseCenterConstraintCostFunction, 3, 4, 3>(
+                AutoDiffCostFunction<PoseCenterConstraintCostFunction, 3, 7>(
                     new PoseCenterConstraintCostFunction(pose_center_constraint,
                                                          weight)));
   }
 
   template <typename T>
-  bool operator()(const T* const cam_from_world_rotation,
-                  const T* const cam_from_world_translation,
+  bool operator()(const T* const cam_from_world_pose,
                   T* residuals) const {
     const Eigen::Matrix<T, 3, 1> pose_center =
-        EigenQuaternionMap<T>(cam_from_world_rotation).inverse() *
-        -EigenVector3Map<T>(cam_from_world_translation);
+        EigenQuaternionMap<T>(cam_from_world_pose).inverse() *
+        -EigenVector3Map<T>(cam_from_world_pose + 4);
 
     Eigen::Map<Eigen::Matrix<T, 3, 1>> residuals_eigen(residuals);
     residuals_eigen = weight_.cast<T>().cwiseProduct(
@@ -399,20 +390,19 @@ class FloorAlignmentCostFunction {
       const Eigen::Vector3d& detection_translation,
       const double height_weight = 1.0,
       const double direction_weight = 1.0) {
-    return new ceres::AutoDiffCostFunction<FloorAlignmentCostFunction, 2, 4, 3>(
+    return new ceres::AutoDiffCostFunction<FloorAlignmentCostFunction, 2, 7>(
         new FloorAlignmentCostFunction(detection_rotation, detection_translation,
                                      height_weight, direction_weight));
   }
 
   template <typename T>
-  bool operator()(const T* const cam_from_world_rotation,
-                 const T* const cam_from_world_translation,
+  bool operator()(const T* const cam_from_world_pose,
                  T* residuals) const {
 
     // Create SE3 object and store it
     const Sophus::SE3<T> cam_from_world = Sophus::SE3<T>(
-        EigenQuaternionMap<T>(cam_from_world_rotation),
-        Eigen::Matrix<T, 3, 1>(cam_from_world_translation));
+        EigenQuaternionMap<T>(cam_from_world_pose),
+        Eigen::Matrix<T, 3, 1>(cam_from_world_pose + 4));
 
     // Transform detection from camera to world space
     const Sophus::SE3<T> world_from_qr = 

@@ -33,7 +33,12 @@ def run_triangulation(
         min_num_matches = 15
         ignore_watermarks = True
         image_names = set()
-        database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+        database_cache_options = pycolmap.DatabaseCacheOptions(
+            min_num_matches=min_num_matches,
+            ignore_watermarks=ignore_watermarks,
+            image_names=image_names,
+        )
+        database_cache = pycolmap.DatabaseCache.create(database, database_cache_options)
         reconstruction = deepcopy(reference_model)
 
         # Instead of deepcopy.
@@ -126,9 +131,9 @@ def run_triangulation(
         ba_options.refine_extra_params = False
         ba_options.refine_sensor_from_rig = False
         ba_options.refine_rig_from_world = True
-        ba_options.solver_options.max_num_iterations = 100
-        ba_options.solver_options.gradient_tolerance = 1.0
-        ba_options.solver_options.logging_type = pyceres.LoggingType.SILENT
+        ba_options.ceres.solver_options.max_num_iterations = 100
+        ba_options.ceres.solver_options.gradient_tolerance = 1.0
+        ba_options.ceres.solver_options.logging_type = pyceres.LoggingType.SILENT
 
         num_ba_iterations_total = 4
 
@@ -149,7 +154,7 @@ def run_triangulation(
                 #logger.info(f"Adding image {image_id} to bundle adjustment")
                 ba_config.add_image(image_id)
 
-            loss = ba_options.create_loss_function()
+            loss = ba_options.ceres.create_loss_function()
 
             # Fix 7-DOFs of the bundle adjustment problem
             ba_config.set_constant_rig_from_world_pose(sorted_image_ids[0])
@@ -185,7 +190,7 @@ def run_triangulation(
 
             logger.debug(f"Setting up solver options...")
             solver_options = bundle_adjuster.set_up_solver_options(
-                bundle_adjuster.problem, ba_options.solver_options
+                bundle_adjuster.problem, ba_options.ceres.solver_options
             )
             solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
             #solver_options.linear_solver_type = pyceres.LinearSolverType.DENSE_SCHUR
