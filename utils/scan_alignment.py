@@ -634,7 +634,7 @@ def _run_ceres_alignment_solve(
             )
 
     for qr_id, world_space_detections in detections_per_qr.items():
-        scan_pairs = set(itertools.combinations(world_space_detections, 2))
+        scan_pairs = itertools.combinations(world_space_detections, 2)
         for (scan_idx_ref, t_refworld_qr), (scan_idx_tgt, t_tgtworld_qr) in scan_pairs:
             if scan_idx_ref == scan_idx_tgt:
                 continue
