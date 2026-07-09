@@ -38,11 +38,17 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
     for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
         reg = reg.register(runner);
     }
+    for runner in runner_reconstruction_update::RunnerReconstructionUpdate::for_all_capabilities() {
+        reg = reg.register(runner);
+    }
 
     for cap in runner_reconstruction_local::CAPABILITIES {
         assert!(reg.get(cap).is_some());
     }
     for cap in runner_reconstruction_global::CAPABILITIES {
+        assert!(reg.get(cap).is_some());
+    }
+    for cap in runner_reconstruction_update::CAPABILITIES {
         assert!(reg.get(cap).is_some());
     }
 
