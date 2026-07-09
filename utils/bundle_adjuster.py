@@ -130,9 +130,10 @@ class PyBundleAdjuster(object):
             # If an image is not part of any losses, it is not a parameter and we cannot add manifolds.
             # If it is part of any (or more), we must add it. (makes sure quaterions stay valid etc)
 
-            if needs_manifold(pose.rotation.quat):
+            if needs_manifold(pose.params):
                 self.problem.set_manifold(
-                    pose.rotation.quat, pyceres.QuaternionManifold()
+                    pose.params,
+                    pyceres.ProductManifold(pyceres.QuaternionManifold(), pyceres.EuclideanManifold(3)),
                 )
             """
             if needs_manifold(pose.translation):
@@ -158,7 +159,7 @@ class PyBundleAdjuster(object):
     def set_up_solver_options(
         self, problem: pyceres.Problem, solver_options: pyceres.SolverOptions
     ):
-        return self.options.create_solver_options(self.config, problem)
+        return self.options.ceres.create_solver_options(self.config, problem)
     #    bundle_adjuster = pycolmap.BundleAdjuster(self.options, self.config)
     #    return bundle_adjuster.set_up_solver_options(problem, solver_options)
 
@@ -267,16 +268,16 @@ class PyBundleAdjuster(object):
                     camera.model, point2D.xy
                 )
                 self.add_residual_block("3DPointReproj", cost, loss, [
-                        pose.rotation.quat,
-                        pose.translation,
                         point3D.xyz,
+                        pose.params,
                         camera.params], image_id)
         if num_observations > 0:
             self.camera_ids.add(image.camera_id)
             # Set pose parameterization
             if not constant_cam_pose:
                 self.problem.set_manifold(
-                    pose.rotation.quat, pyceres.QuaternionManifold()
+                    pose.params,
+                    pyceres.ProductManifold(pyceres.QuaternionManifold(), pyceres.EuclideanManifold(3)),
                 )
                 #if self.config.has_constant_cam_positions(image_id):
                 #    constant_position_idxs = self.config.constant_cam_positions(
@@ -297,8 +298,7 @@ class PyBundleAdjuster(object):
             centerdist_weight = self.refinement_config.get('centerdist_weight', 1.0)
             cost = PoseCenterConstraintCostFunction(arkit_cam_center, (centerdist_weight, centerdist_weight, centerdist_weight))
             params = [
-                pose.rotation.quat,
-                pose.translation
+                pose.params
             ]
 
             self.add_residual_block("OffsetFromUnrefinedCenter", cost, None, params, image_id)
@@ -337,17 +337,14 @@ class PyBundleAdjuster(object):
             cov[3:,3:] /= cov_scale
             cost = RelativeTransformationSE3CostFunction(relpose.rotation.quat, relpose.translation, cov)
             params = [
-                pose.rotation.quat,
-                pose.translation,
-                prev_pose.rotation.quat,
-                prev_pose.translation
+                pose.params,
+                prev_pose.params
             ]
 
             self.add_residual_block("OffsetFromUnrefined", cost, None, params, image_id)
 
             if self.is_constant_cam_pose(image.image_id - 1):
-                self.problem.set_parameter_block_constant(prev_pose.rotation.quat)
-                self.problem.set_parameter_block_constant(prev_pose.translation)
+                self.problem.set_parameter_block_constant(prev_pose.params)
             #elif self.is_constant_cam_position(image.image_id - 1):
             #    self.problem.set_parameter_block_constant(prev_pose.translation)
 
@@ -382,10 +379,9 @@ class PyBundleAdjuster(object):
             )
             
             params = [
-                reconstruction.images[image_id].frame.rig_from_world.rotation.quat,
-                reconstruction.images[image_id].frame.rig_from_world.translation
+                reconstruction.images[image_id].frame.rig_from_world.params
             ]
-            
+
             self.add_residual_block("QrFloorAlignment", cost, None, params, image_id)
             
             if debugging:
@@ -405,10 +401,8 @@ class PyBundleAdjuster(object):
                     np.eye(6) / cov_scale
                 )
                 params = [
-                    reconstruction.images[image_id_j].frame.rig_from_world.rotation.quat,
-                    reconstruction.images[image_id_j].frame.rig_from_world.translation,
-                    reconstruction.images[image_id_i].frame.rig_from_world.rotation.quat,
-                    reconstruction.images[image_id_i].frame.rig_from_world.translation
+                    reconstruction.images[image_id_j].frame.rig_from_world.params,
+                    reconstruction.images[image_id_i].frame.rig_from_world.params
                 ]
 
                 self.add_residual_block("QrLoopClosure", cost, None, params, image_id_i)

@@ -27,19 +27,25 @@ RUN set -eux; \
       libboost-system-dev \
       libeigen3-dev \
       libflann-dev \
-      libfreeimage-dev \
+      libopenimageio-dev \
+      openimageio-tools \
+      libopenexr-dev \
       libmetis-dev \
       libgtest-dev \
       libsqlite3-dev \
       libglew-dev \
       qtbase5-dev \
       libqt5opengl5-dev \
+      libqt5svg5-dev \
       libcgal-dev \
       libsuitesparse-dev \
       python3-pip \
       python3-tk \
       python3-dev \
       libmkl-full-dev \
+      cuda-nvcc-12-8 \
+      cuda-cudart-dev-12-8 \
+      libcurand-dev-12-8 \
       ssh \
       netcat-openbsd \
       ca-certificates \
@@ -49,10 +55,14 @@ RUN set -eux; \
     ; \
     rm -rf /var/lib/apt/lists/*
 
+# Ubuntu's OpenImageIO CMake config references an OpenCV include directory
+# for its (unused by COLMAP) OpenCV integration; the dir must merely exist.
+RUN mkdir -p /usr/include/opencv4
+
 # Python toolchain + base Python deps
 RUN set -eux; \
     python3 -m pip install --upgrade pip setuptools wheel; \
-    python3 -m pip install "pybind11[global]==3.0.1" \
+    python3 -m pip install "pybind11[global]==3.0.2" \
                            psutil gputil \
                            enlighten \
                            open3d \
@@ -117,10 +127,21 @@ RUN set -eux; \
     rm -rf /tmp/build/*
 
 # pyCeres
+# Pinned to a commit past v2.6 (no tagged release yet) because it adds Python
+# bindings for ceres::ProductManifold, required to parameterize COLMAP 4.x's
+# combined 7-dim (quaternion + translation) pose parameter blocks.
 RUN set -eux; \
     cd /tmp/build; \
-    git clone --depth 1 --branch v2.5 https://github.com/cvg/pyceres.git; \
+    git clone https://github.com/cvg/pyceres.git; \
     cd pyceres; \
+    git checkout 7339d790f364accf3e8f2204d2342a621516a359; \
+    # Work around a pybind11>=3.0 strict-return-type-deduction build failure in
+    # CostFunction::evaluate's lambda (two branches returning differently-typed
+    # py::tuple specializations); not yet fixed upstream.
+    sed -i \
+      -e 's/return py::make_tuple(residuals, jacobians);/return py::tuple(py::make_tuple(residuals, jacobians));/' \
+      -e 's/return py::make_tuple(py::none(), py::none());/return py::tuple(py::make_tuple(py::none(), py::none()));/' \
+      _pyceres/core/cost_functions.h; \
     python3 -m pip install .; \
     cd /; \
     rm -rf /tmp/build/*
@@ -128,9 +149,8 @@ RUN set -eux; \
 # COLMAP (+ its Python bindings)
 RUN set -eux; \
     cd /tmp/build; \
-    git clone https://github.com/colmap/colmap.git; \
+    git clone --depth 1 --branch 4.1.0 https://github.com/colmap/colmap.git; \
     cd colmap; \
-    git checkout 20b2777186654f20745f6c57974924d145bbbd6f; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \

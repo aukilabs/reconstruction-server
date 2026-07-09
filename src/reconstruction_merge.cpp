@@ -69,7 +69,7 @@ void AppendReconstruction(colmap::Reconstruction& destination,
     new_frame.ResetRigPtr();
     new_frame.SetRigId(new_id);
     new_frame.SetFrameId(new_id);
-    new_frame.DataIds().clear();
+    new_frame.ClearDataIds();
     new_frame.AddDataId(colmap::data_t(new_sensor, new_id));
     destination.AddFrame(std::move(new_frame));
 
