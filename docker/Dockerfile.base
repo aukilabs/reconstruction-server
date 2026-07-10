@@ -46,6 +46,10 @@ RUN set -eux; \
       cuda-nvcc-12-8 \
       cuda-cudart-dev-12-8 \
       libcurand-dev-12-8 \
+      libcublas-dev-12-8 \
+      libcusolver-dev-12-8 \
+      libcusparse-dev-12-8 \
+      libnvjitlink-12-8 \
       ssh \
       netcat-openbsd \
       ca-certificates \
