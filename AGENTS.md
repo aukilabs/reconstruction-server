@@ -28,7 +28,7 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
 
 ## Runtime and deployment cautions
 
-- The node is environment-driven. Public docs list `REG_SECRET`, `SECP256K1_PRIVHEX`, `DMS_BASE_URL`, `DDS_BASE_URL`, `REQUEST_TIMEOUT_SECS`, `REGISTER_INTERVAL_SECS`, `REGISTER_MAX_RETRY`, `LOG_FORMAT`, `LOCAL_RUNNER_CPU_WORKERS`, and `GLOBAL_RUNNER_CPU_WORKERS` as relevant runtime settings. Use placeholder values only.
+- The node is environment-driven. Public docs list `REG_SECRET`, `SECP256K1_PRIVHEX`, `DMS_BASE_URL`, `DDS_BASE_URL`, `REQUEST_TIMEOUT_SECS`, `REGISTER_INTERVAL_SECS`, `REGISTER_MAX_RETRY`, `LOG_FORMAT`, `LOCAL_RUNNER_CPU_WORKERS`, `GLOBAL_RUNNER_CPU_WORKERS`, and `USE_GPU_BUNDLE_ADJUSTMENT` as relevant runtime settings. Use placeholder values only.
 - DDS/DMS settings affect registration, task leasing, heartbeats, and result reporting. Be careful when changing config parsing, URL defaults, retry behavior, or capability registration.
 - The chart defaults request substantial CPU/memory and a GPU (`nvidia.com/gpu: 1`) and include a `dedicated=karpenterGPU` toleration. Treat replicas, StatefulSet behavior, GPU resources, tolerations, ingress, and secret pool wiring as operationally sensitive.
 - Dev deployment context observed by the broader Auki v0 workspace maps this repo to the `reconstruction-server` StatefulSet and `reconstruction-<n>.dev.aukiverse.com` host pattern. Treat that as context, not permission to mutate the cluster.

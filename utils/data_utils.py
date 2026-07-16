@@ -23,7 +23,37 @@ from typing import List, NamedTuple, Dict, Tuple
 
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
-VERSION = "develop"
+VERSION = "gpu-bundle-adjustment"
+
+
+def use_gpu_bundle_adjustment():
+    """Whether bundle adjustment should use the CUDA-accelerated ceres sparse solver, per USE_GPU_BUNDLE_ADJUSTMENT."""
+    return os.environ.get("USE_GPU_BUNDLE_ADJUSTMENT", "false").strip().lower() in ("1", "true", "yes")
+
+
+def log_ceres_solver_diagnostics(logger, solver_options, summary, wall_clock_seconds=None):
+    """Log which linear solver/library ceres actually ran (CPU vs GPU) and where the solve time went."""
+    logger.info(
+        f"[ceres] linear_solver requested={solver_options.linear_solver_type} "
+        f"given={summary.linear_solver_type_given} used={summary.linear_solver_type_used} | "
+        f"sparse_lib={summary.sparse_linear_algebra_library_type} "
+        f"dense_lib={summary.dense_linear_algebra_library_type} | "
+        f"threads_given={summary.num_threads_given} threads_used={summary.num_threads_used}"
+    )
+    logger.info(
+        f"[ceres] problem size: parameters={summary.num_parameters} "
+        f"(reduced={summary.num_parameters_reduced}), "
+        f"residual_blocks={summary.num_residual_blocks}, residuals={summary.num_residuals}"
+    )
+    logger.info(
+        f"[ceres] timing (s): total={summary.total_time_in_seconds:.3f} "
+        f"preprocess={summary.preprocessor_time_in_seconds:.3f} "
+        f"linear_solve={summary.linear_solver_time_in_seconds:.3f} "
+        f"jacobian_eval={summary.jacobian_evaluation_time_in_seconds:.3f} "
+        f"residual_eval={summary.residual_evaluation_time_in_seconds:.3f} "
+        f"minimizer={summary.minimizer_time_in_seconds:.3f}"
+        + (f" | wall_clock={wall_clock_seconds:.3f}" if wall_clock_seconds is not None else "")
+    )
 
 
 def convert_pose_opengl_to_colmap(position, quaternion):

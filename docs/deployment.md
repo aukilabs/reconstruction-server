@@ -37,6 +37,7 @@ Notes:
 - Optional runner tuning:
   - `LOCAL_RUNNER_CPU_WORKERS` (default `2`)
   - `GLOBAL_RUNNER_CPU_WORKERS` (default `2`)
+  - `USE_GPU_BUNDLE_ADJUSTMENT` (default `false`) — use the CUDA-accelerated ceres sparse solver for bundle adjustment in local and global refinement. Requires a GPU and a CUDA-enabled ceres/pyceres build (see `docker/Dockerfile.base`).
 
 How to get the registration secret + wallet key:
 1. Log in to the Posemesh Console at `https://console.auki.network/`.

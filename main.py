@@ -6,7 +6,7 @@ from local_main import main as local_main
 from global_main import main as global_main
 from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
-from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.data_utils import save_failed_manifest_json, setup_logger, use_gpu_bundle_adjustment
 from utils.io import load_yaml, save_to_yaml
 
 
@@ -68,6 +68,16 @@ def local_main_wrapper(args, logger):
     logger.info(f"Output path: {args.output_path}")
     logger.info(f"Scans: {args.scans}")
     logger.info("--------------------------------")
+
+    if use_gpu_bundle_adjustment() and args.local_refinement_workers:
+        # The worker pool forks after this process has already initialized CUDA (via feature
+        # extraction), which corrupts CUDA in the forked child and crashes GPU bundle adjustment.
+        # Running single-process avoids the fork entirely.
+        logger.info(
+            f"USE_GPU_BUNDLE_ADJUSTMENT is set; forcing local_refinement_workers to 0 "
+            f"(was {args.local_refinement_workers}) to avoid forking after CUDA is initialized"
+        )
+        args.local_refinement_workers = 0
 
     def process_all(pool_executor=None):
         futures = []

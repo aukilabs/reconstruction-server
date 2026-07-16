@@ -2,6 +2,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 import logging
+import os
+import time
 import numpy as np
 from numpy.linalg import norm
 import pycolmap
@@ -10,6 +12,7 @@ import pyceres
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
 from utils.bundle_adjuster import PyBundleAdjuster
+from utils.data_utils import use_gpu_bundle_adjustment, log_ceres_solver_diagnostics
 
 
 def run_triangulation(
@@ -135,6 +138,9 @@ def run_triangulation(
         ba_options.ceres.solver_options.gradient_tolerance = 1.0
         ba_options.ceres.solver_options.logging_type = pyceres.LoggingType.SILENT
 
+        if use_gpu_bundle_adjustment():
+            ba_options.ceres.use_gpu = True
+
         num_ba_iterations_total = 4
 
         sorted_image_ids = sorted(reconstruction.reg_image_ids())
@@ -142,11 +148,13 @@ def run_triangulation(
         retriangulated = False
         ba_iterations_remaining = num_ba_iterations_total
         while ba_iterations_remaining > 0:
+            _iter_t0 = time.perf_counter()
             mapper.observation_manager.filter_observations_with_negative_depth()
 
             num_observations = reconstruction.compute_num_observations()
 
-            logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total})')
+            logger.info(f'Bundle adjustment ({num_ba_iterations_total - ba_iterations_remaining + 1}/{num_ba_iterations_total}) '
+                        f'-- {len(sorted_image_ids)} images, {reconstruction.num_points3D()} points, use_gpu_bundle_adjustment={use_gpu_bundle_adjustment()}')
 
             ba_config = pycolmap.BundleAdjustmentConfig()
 
@@ -179,31 +187,49 @@ def run_triangulation(
             }
 
             bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
+            _setup_t0 = time.perf_counter()
             bundle_adjuster.set_up_problem(
-                reconstruction, 
-                loss, 
-                timestamp_per_image=timestamp_per_image, 
-                arkit_precomputed=arkit_precomputed, 
+                reconstruction,
+                loss,
+                timestamp_per_image=timestamp_per_image,
+                arkit_precomputed=arkit_precomputed,
                 detections_per_qr=detections_per_qr,
                 image_ids_per_qr=image_ids_per_qr
             )
+            _setup_wall_clock = time.perf_counter() - _setup_t0
 
             logger.debug(f"Setting up solver options...")
             solver_options = bundle_adjuster.set_up_solver_options(
                 bundle_adjuster.problem, ba_options.ceres.solver_options
             )
-            solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
-            #solver_options.linear_solver_type = pyceres.LinearSolverType.DENSE_SCHUR
-            #solver_options.dense_linear_algebra_library_type = pyceres.DenseLinearAlgebraLibraryType.CUDA
+            if use_gpu_bundle_adjustment():
+                # Leave linear_solver_type/sparse_linear_algebra_library_type as chosen by
+                # create_solver_options() above (driven by ba_options.ceres.use_gpu): COLMAP's
+                # own size heuristic picks DENSE_SCHUR+CUDA for small/medium problems and
+                # SPARSE_SCHUR+CUDA_SPARSE for large ones. Forcing SPARSE_SCHUR unconditionally
+                # (as the CPU path below does) would discard that choice.
+                # local_refinement_workers is forced to 0 whenever this flag is set (see
+                # main.py), so nothing else is contending for CPU here -- safe to use every
+                # core for the (GPU-unaccelerated) residual/Jacobian evaluation phase.
+                solver_options.num_threads = os.cpu_count() or 1
+            else:
+                solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
 
+            _loss_before_t0 = time.perf_counter()
             initial_loss_breakdown, initial_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
+            _loss_before_wall_clock = time.perf_counter() - _loss_before_t0
 
             summary = pyceres.SolverSummary()
             logger.debug("calling pyceres.solve() ...")
+            _solve_t0 = time.perf_counter()
             pyceres.solve(solver_options, bundle_adjuster.problem, summary)
+            _solve_wall_clock = time.perf_counter() - _solve_t0
             logger.info("Solved!")
+            log_ceres_solver_diagnostics(logger, solver_options, summary, wall_clock_seconds=_solve_wall_clock)
 
+            _loss_after_t0 = time.perf_counter()
             final_loss_breakdown, final_loss_breakdown_per_image_id = bundle_adjuster.evaluate_loss_breakdown()
+            _loss_after_wall_clock = time.perf_counter() - _loss_after_t0
 
             logger.info("------------")
             logger.info("INITIAL LOSS BREAKDOWN:")
@@ -220,9 +246,11 @@ def run_triangulation(
             else:
                 logger.info(f"{summary.BriefReport()}")
 
+            _track_filter_t0 = time.perf_counter()
             num_changed_observations = 0
             num_changed_observations += mapper.complete_and_merge_tracks(tri_options)
             num_changed_observations += mapper.filter_points(mapper_options)
+            _track_filter_wall_clock = time.perf_counter() - _track_filter_t0
 
             changed = num_changed_observations / num_observations
             logger.info(f'Changed observations: {changed}')
@@ -230,9 +258,12 @@ def run_triangulation(
             ba_iterations_remaining -= 1
 
             # Retriangulate underreconstructed image pairs after first BA success
+            _retriangulate_wall_clock = 0.0
             if not retriangulated and summary.termination_type == pyceres.TerminationType.CONVERGENCE:
                 logger.info('Retriangulating...')
+                _retriangulate_t0 = time.perf_counter()
                 num_retriangulated = mapper.retriangulate(tri_options)
+                _retriangulate_wall_clock = time.perf_counter() - _retriangulate_t0
                 logger.info(f'Retriangulated {num_retriangulated} observations')
                 retriangulated = True
 
@@ -242,6 +273,16 @@ def run_triangulation(
                 num_ba_iterations_total += additional_iterations
                 ba_iterations_remaining += additional_iterations
 
+            _iter_wall_clock = time.perf_counter() - _iter_t0
+            logger.info(
+                f"[timing] BA iteration breakdown (s): total={_iter_wall_clock:.3f} "
+                f"setup_problem={_setup_wall_clock:.3f} "
+                f"loss_eval_before={_loss_before_wall_clock:.3f} "
+                f"solve={_solve_wall_clock:.3f} "
+                f"loss_eval_after={_loss_after_wall_clock:.3f} "
+                f"track_complete_and_filter={_track_filter_wall_clock:.3f} "
+                f"retriangulate={_retriangulate_wall_clock:.3f}"
+            )
 
         logger.info('Extracting colors...')
         reconstruction.extract_colors_for_all_images(image_dir)

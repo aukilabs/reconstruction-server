@@ -1,6 +1,7 @@
 import itertools
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ import pycolmap
 import pyceres
 import numpy as np
 from utils.io import read_portal_csv, portalPose
-from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
+from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation, use_gpu_bundle_adjustment, log_ceres_solver_diagnostics
 from utils.dataset_utils import transform_with_scale
 from utils.geometry_utils import QuaternionNormalizationCostFunction
 from src.cost_functions import RelativeTransformationSim3CostFunction # Custom ceres cost implemented in C++
@@ -269,6 +270,8 @@ def refine_alignment(
 
     solver_options = pyceres.SolverOptions()
     solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_NORMAL_CHOLESKY
+    if use_gpu_bundle_adjustment():
+        solver_options.sparse_linear_algebra_library_type = pyceres.SparseLinearAlgebraLibraryType.CUDA_SPARSE
     solver_options.minimizer_progress_to_stdout = False
     solver_options.function_tolerance = 0.0
     solver_options.gradient_tolerance = 0.0
@@ -277,7 +280,11 @@ def refine_alignment(
     solver_options.logging_type = pyceres.LoggingType.SILENT
 
     summary = pyceres.SolverSummary()
+    logger.info(f"[ceres] scan alignment problem -- {len(scan_ids)} scans, use_gpu_bundle_adjustment={use_gpu_bundle_adjustment()}")
+    _solve_t0 = time.perf_counter()
     pyceres.solve(solver_options, problem, summary)
+    _solve_wall_clock = time.perf_counter() - _solve_t0
+    log_ceres_solver_diagnostics(logger, solver_options, summary, wall_clock_seconds=_solve_wall_clock)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"{summary.FullReport()}")
     else:
