@@ -43,6 +43,7 @@ RUN set -eux; \
       python3-tk \
       python3-dev \
       libmkl-full-dev \
+      libatomic1 \
       cuda-nvcc-12-8 \
       cuda-cudart-dev-12-8 \
       libcurand-dev-12-8 \
@@ -50,6 +51,8 @@ RUN set -eux; \
       libcusolver-dev-12-8 \
       libcusparse-dev-12-8 \
       libnvjitlink-12-8 \
+      libcudss0-dev-cuda-12 \
+      libcudss0-static-cuda-12 \
       ssh \
       netcat-openbsd \
       ca-certificates \
@@ -112,19 +115,44 @@ RUN set -eux; \
 # See: https://bugs.launchpad.net/ubuntu/+source/intel-mkl/+bug/1947626
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
+
+# apt's cuDSS packages (libcudss0-dev-cuda-12 / libcudss0-static-cuda-12) ship a CMake
+# config (cudss-config.cmake) that expects its own headers/libs at paths *relative to
+# itself* that don't match Debian's actual package layout (headers land at
+# /usr/include/libcudss/12, but the config looks for them under
+# /usr/lib/x86_64-linux-gnu/libcudss/12/../include etc.) -- create the symlink the
+# config expects so `find_package(cudss CONFIG)` (used by Ceres below) succeeds.
+RUN ln -sf /usr/include/libcudss/12 /usr/lib/x86_64-linux-gnu/libcudss/include
+
+# cuDSS's shared libraries (/usr/lib/x86_64-linux-gnu/libcudss/12/) aren't on the
+# default dynamic linker search path -- anything linking against Ceres's CUDA_SPARSE
+# solver (pyceres, pycolmap) needs libcudss.so.0 findable at runtime, not just at
+# link time.
+RUN echo "/usr/lib/x86_64-linux-gnu/libcudss/12" > /etc/ld.so.conf.d/cudss.conf && ldconfig
+
 # Ceres
+# Pinned to a specific commit on master (no tagged release with cuDSS support exists
+# yet -- 2.2.0 predates it entirely) because we need CUDA_SPARSE (GPU-accelerated
+# SPARSE_SCHUR / SPARSE_NORMAL_CHOLESKY via cuDSS) for bundle adjustment: on this
+# machine, Ceres's CPU sparse solver path routes through the broken system MKL above
+# once a problem is large enough to need it, crashing bundle adjustment outright.
+# cudss_DIR points cudss-config.cmake's `find_package(cudss CONFIG)` at the package
+# installed above (its odd relative-path layout means CMAKE_PREFIX_PATH alone isn't
+# enough -- see the symlink fix above too).
 RUN set -eux; \
     cd /tmp/build; \
     git clone --recursive https://ceres-solver.googlesource.com/ceres-solver; \
     cd ceres-solver; \
-    git checkout tags/2.2.0; \
+    git checkout bac1127f9ef672405bd0d2d9c84e809ae89bd239; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \
       -DBUILD_TESTING=OFF \
       -DBUILD_EXAMPLES=OFF \
       -DLAPACK=ON \
-      -DBLA_VENDOR=Intel10_64lp; \
+      -DBLA_VENDOR=Intel10_64lp \
+      -DUSE_CUDA=ON \
+      -Dcudss_DIR=/usr/lib/x86_64-linux-gnu/libcudss/12/cmake/cudss; \
     ninja -j"$(nproc)"; \
     ninja install; \
     cd /; \
@@ -146,7 +174,15 @@ RUN set -eux; \
       -e 's/return py::make_tuple(residuals, jacobians);/return py::tuple(py::make_tuple(residuals, jacobians));/' \
       -e 's/return py::make_tuple(py::none(), py::none());/return py::tuple(py::make_tuple(py::none(), py::none()));/' \
       _pyceres/core/cost_functions.h; \
-    python3 -m pip install .; \
+    # pyceres's own bindings leave ceres::SparseLinearAlgebraLibraryType::CUDA_SPARSE
+    # commented out (predates Ceres having cuDSS support); enable it so Python can
+    # actually select the GPU sparse solver.
+    sed -i \
+      -e 's|//   .value("CUDA_SPARSE",|.value("CUDA_SPARSE",|' \
+      -e 's|//           ceres::SparseLinearAlgebraLibraryType::CUDA_SPARSE)|ceres::SparseLinearAlgebraLibraryType::CUDA_SPARSE)|' \
+      _pyceres/core/types.h; \
+    CMAKE_ARGS="-Dcudss_DIR=/usr/lib/x86_64-linux-gnu/libcudss/12/cmake/cudss" \
+      python3 -m pip install .; \
     cd /; \
     rm -rf /tmp/build/*
 
@@ -160,11 +196,13 @@ RUN set -eux; \
     cmake .. -GNinja \
       -DCUDA_ENABLED=ON \
       -DBLA_VENDOR=Intel10_64lp \
-      -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"; \
+      -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120" \
+      -Dcudss_DIR=/usr/lib/x86_64-linux-gnu/libcudss/12/cmake/cudss; \
     ninja -j"$(nproc)"; \
     ninja install; \
     cd ..; \
-    python3 -m pip install .; \
+    CMAKE_ARGS="-Dcudss_DIR=/usr/lib/x86_64-linux-gnu/libcudss/12/cmake/cudss -DCMAKE_CUDA_ARCHITECTURES=60;61;70;75;80;86;89;90;120 -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc" \
+      python3 -m pip install .; \
     cd /; \
     rm -rf /tmp/build/*
 
