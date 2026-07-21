@@ -4,7 +4,7 @@ set -euo pipefail
 # Clean build of server binary
 sudo rm -rf build
 mkdir -p build
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON -Dcudss_DIR=/usr/lib/x86_64-linux-gnu/libcudss/12/cmake/cudss
 cmake --build build
 
 # Clean up old build output first to avoid permission error
