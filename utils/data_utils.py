@@ -73,10 +73,21 @@ def convert_pose_opengl_to_colmap(position, quaternion):
     return position, quaternion
 
 
-def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
+# Default reference axis a flat/floor portal's local Z axis (its marker-plane normal,
+# expressed in world/colmap-world axes) is expected to align with in order to count as
+# "flat" here -- calibrated for the ARKit/DMT pipeline's own QR pose convention, where a
+# correctly-oriented floor portal's normal points down. NOT universal: pnp-lab/qr-lab's
+# own marker-normal convention (used by the Auki reconstruction pipeline,
+# utils/auki_data_utils.py) points the opposite way -- verified against a real
+# floor-mounted marker's visible grout lines, a floor marker's normal there points UP.
+# Callers on that convention must pass reference_axis=np.array([1, 0, 0]) explicitly;
+# every existing caller keeps this default and is unaffected.
+_DEFAULT_PORTAL_FLAT_REFERENCE_AXIS = np.array([-1, 0, 0])
+
+
+def is_portal_almost_flat(rotation_matrix, angle_threshold=20, reference_axis=_DEFAULT_PORTAL_FLAT_REFERENCE_AXIS):
     current_z = rotation_matrix[:, 2]
-    downwards = np.array([-1, 0, 0])
-    angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+    angle = np.arccos(np.clip(np.dot(current_z, reference_axis), -1.0, 1.0))
     return np.rad2deg(angle) < angle_threshold
 
 
@@ -84,32 +95,31 @@ def is_portal_near_floor_height(position, height_threshold=0.5):
     return np.abs(position[0]) < height_threshold
 
 
-def is_floor_portal(pose, height_threshold=0.5, angle_threshold=20):
+def is_floor_portal(pose, height_threshold=0.5, angle_threshold=20, reference_axis=_DEFAULT_PORTAL_FLAT_REFERENCE_AXIS):
     return is_portal_near_floor_height(pose.translation, height_threshold) and \
-           is_portal_almost_flat(pose.rotation.matrix(), angle_threshold)
+           is_portal_almost_flat(pose.rotation.matrix(), angle_threshold, reference_axis)
 
 
-def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
+def flatten_portal_rotation(rotation_matrix, angle_threshold=20, reference_axis=_DEFAULT_PORTAL_FLAT_REFERENCE_AXIS):
     if rotation_matrix.shape != (3, 3):
         raise ValueError("Input must be a 3x3 matrix")
 
     # Extract the current Z-axis from the rotation matrix
     current_z = rotation_matrix[:, 2]
-    downwards = np.array([-1, 0, 0])
 
     # If clearly not flat don't change
-    if not is_portal_almost_flat(rotation_matrix, angle_threshold):
+    if not is_portal_almost_flat(rotation_matrix, angle_threshold, reference_axis):
         return rotation_matrix
 
     # Compute the rotation axis to align current Z with desired Z
-    rotation_axis = np.cross(current_z, downwards)
+    rotation_axis = np.cross(current_z, reference_axis)
     rotation_axis_norm = np.linalg.norm(rotation_axis)
 
     if rotation_axis_norm > 1e-6:  # Avoid division by zero
         rotation_axis /= rotation_axis_norm
 
         # Compute the angle to rotate current Z to desired Z
-        angle = np.arccos(np.clip(np.dot(current_z, downwards), -1.0, 1.0))
+        angle = np.arccos(np.clip(np.dot(current_z, reference_axis), -1.0, 1.0))
 
         # Create the rotation matrix to align Z
         K = np.array([
@@ -123,23 +133,23 @@ def flatten_portal_rotation(rotation_matrix, angle_threshold=20):
 
     # Adjust X and Y to ensure orthonormality
     x_axis = rotation_matrix[:, 0]
-    y_axis = np.cross(downwards, x_axis)
+    y_axis = np.cross(reference_axis, x_axis)
     y_axis /= np.linalg.norm(y_axis)
-    x_axis = np.cross(y_axis, downwards)
+    x_axis = np.cross(y_axis, reference_axis)
     x_axis /= np.linalg.norm(x_axis)
 
     # Reconstruct the rotation matrix
-    flattened_rotation = np.column_stack((x_axis, y_axis, downwards))
+    flattened_rotation = np.column_stack((x_axis, y_axis, reference_axis))
     return flattened_rotation
 
 
-def rectify_portal_pose(qr_pose, angle_threshold=20, height_threshold=0.5):
+def rectify_portal_pose(qr_pose, angle_threshold=20, height_threshold=0.5, reference_axis=_DEFAULT_PORTAL_FLAT_REFERENCE_AXIS):
     pos = qr_pose.translation
     rot3d = qr_pose.rotation
 
-    if is_portal_almost_flat(rot3d.matrix(), angle_threshold):
-        rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold))
-        
+    if is_portal_almost_flat(rot3d.matrix(), angle_threshold, reference_axis):
+        rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold, reference_axis))
+
         # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
         if is_portal_near_floor_height(pos, height_threshold):
             pos = pos.copy() # avoid modifying input pose

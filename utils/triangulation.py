@@ -22,7 +22,10 @@ def run_triangulation(
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
-    image_ids_per_qr=None
+    image_ids_per_qr=None,
+    filter_spikes: bool = True,
+    ba_options_overrides: Optional[Dict] = None,
+    refinement_config_overrides: Optional[Dict] = None,
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
@@ -61,7 +64,11 @@ def run_triangulation(
         #    for point3D_id in reconstruction.point3D_ids():
         #        reconstruction.delete_point3D(point3D_id)
 
-        filter_spikes = True
+        # ARKit-tracking-loss heuristic: assumes consecutive image_ids are temporally-
+        # adjacent samples of one smoothly-moving camera. Not valid once multiple
+        # cameras' images interleave by image_id (multi-sensor rig data) -- pass
+        # filter_spikes=False for that case and rely on real reprojection BA (+ QR
+        # loop closure, if enabled) instead.
         if filter_spikes:
             prev_pose = None
             prev_pose_new = None
@@ -138,6 +145,9 @@ def run_triangulation(
         ba_options.ceres.solver_options.gradient_tolerance = 1.0
         ba_options.ceres.solver_options.logging_type = pyceres.LoggingType.SILENT
 
+        for key, value in (ba_options_overrides or {}).items():
+            setattr(ba_options, key, value)
+
         if use_gpu_bundle_adjustment():
             ba_options.ceres.use_gpu = True
 
@@ -185,6 +195,7 @@ def run_triangulation(
                 'floor_height_weight': 1e4,
                 'floor_direction_weight': 1e2,
             }
+            refinement_config.update(refinement_config_overrides or {})
 
             bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
             _setup_t0 = time.perf_counter()
@@ -294,6 +305,23 @@ def run_triangulation(
         return reconstruction
 
 
+def _write_rigs_and_frames_to_db(reference: pycolmap.Reconstruction, database_path: Path):
+    """hloc.triangulation.create_db_from_model only writes cameras + images (the classic
+    pre-Rig COLMAP schema hloc's own COLMAPDatabase creates) -- it has no rigs/frames
+    tables at all, so a genuine multi-sensor Rig's calibration never reaches the
+    IncrementalMapper's DatabaseCache and `begin_reconstruction` rejects the mismatch
+    ("existing_rig.RefSensorId() == rig.RefSensorId()" check failure). Confirmed live:
+    reopening the same database file via pycolmap.Database.open() auto-creates the
+    missing rigs/rig_sensors/frames/frame_data/pose_priors tables (IF NOT EXISTS-style
+    migration) on top of hloc's existing cameras/images tables, so writing rig/frame data
+    here afterwards is safe and doesn't touch what hloc already wrote."""
+    with pycolmap.Database.open(str(database_path)) as db:
+        for rig in reference.rigs.values():
+            db.write_rig(rig, use_rig_id=True)
+        for frame in reference.frames.values():
+            db.write_frame(frame, use_frame_id=True)
+
+
 def triangulate_model(
     sfm_dir: Path,
     reference_model: Path,
@@ -308,7 +336,10 @@ def triangulate_model(
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
-    image_ids_per_qr=None
+    image_ids_per_qr=None,
+    filter_spikes: bool = True,
+    ba_options_overrides: Optional[Dict] = None,
+    refinement_config_overrides: Optional[Dict] = None,
 ) -> pycolmap.Reconstruction:
     assert reference_model.exists(), reference_model
     assert features.exists(), features
@@ -320,6 +351,7 @@ def triangulate_model(
     reference = pycolmap.Reconstruction(reference_model)
 
     image_ids = create_db_from_model(reference, database_path)
+    _write_rigs_and_frames_to_db(reference, database_path)
     import_features(image_ids, database_path, features)
     import_matches(
         image_ids,
@@ -334,7 +366,10 @@ def triangulate_model(
 
     reconstruction = run_triangulation(
         database_path, image_dir, reference,
-        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr
+        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr,
+        filter_spikes=filter_spikes,
+        ba_options_overrides=ba_options_overrides,
+        refinement_config_overrides=refinement_config_overrides,
     )
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')

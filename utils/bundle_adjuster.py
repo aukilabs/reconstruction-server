@@ -231,6 +231,18 @@ class PyBundleAdjuster(object):
     def is_constant_cam_pose(self, image_id):
         return (not self.options.refine_rig_from_world) or self.config.has_constant_rig_from_world_pose(image_id)
 
+    def non_ref_sensor_from_rig(self, image, reconstruction):
+        """Return the fixed cam_from_rig extrinsic if `image`'s camera is a non-ref
+        sensor of a multi-sensor Rig, else None (ref sensor, or a single-camera rig --
+        the only case this codebase used to support). Lets add_image_to_problem /
+        add_point_to_problem stay correct for a rigidly-mounted multi-camera rig
+        without changing anything about the existing single-camera-rig path."""
+        rig = reconstruction.rigs[image.frame.rig_id]
+        sensor_id = pycolmap.sensor_t(type=pycolmap.SensorType.CAMERA, id=image.camera_id)
+        if rig.is_ref_sensor(sensor_id):
+            return None
+        return rig.sensor_from_rig(sensor_id)
+
     #def is_constant_cam_position(self, image_id):
     #    return (not self.options.refine_extrinsics) or self.config.has_constant_cam_positions(image_id)
 
@@ -247,6 +259,7 @@ class PyBundleAdjuster(object):
         camera = reconstruction.cameras[image.camera_id]
 
         constant_cam_pose = self.is_constant_cam_pose(image.image_id)
+        sensor_from_rig = self.non_ref_sensor_from_rig(image, reconstruction)
 
         num_observations = 0
         for point2D in image.points2D:
@@ -259,10 +272,27 @@ class PyBundleAdjuster(object):
             point3D = reconstruction.points3D[point2D.point3D_id]
             assert point3D.track.length() > 1
             if constant_cam_pose:
+                # Whole camera pose is fixed (gauge anchor, or refine_rig_from_world=False):
+                # bake the rig-relative offset (if any) directly into one constant pose --
+                # RigReprojErrorCost always keeps rig_from_world as a free parameter, so it's
+                # only needed below, for the variable-pose case.
+                full_pose = sensor_from_rig * pose if sensor_from_rig is not None else pose
                 cost = pycolmap.cost_functions.ReprojErrorCost(
-                    camera.model, point2D.xy, pose
+                    camera.model, point2D.xy, full_pose
                 )
                 self.add_residual_block("3DPointReproj", cost, loss, [point3D.xyz, camera.params], image_id)
+            elif sensor_from_rig is not None:
+                # Non-ref sensor of a multi-camera rig: rig_from_world (the shared per-
+                # frame trajectory pose) stays the only free pose parameter; sensor_from_rig
+                # (this camera's fixed mount offset) is baked as a constant -- "refine rig
+                # only, not sensor pose".
+                cost = pycolmap.cost_functions.RigReprojErrorCost(
+                    camera.model, point2D.xy, sensor_from_rig
+                )
+                self.add_residual_block("3DPointReproj", cost, loss, [
+                        point3D.xyz,
+                        pose.params,
+                        camera.params], image_id)
             else:
                 cost = pycolmap.cost_functions.ReprojErrorCost(
                     camera.model, point2D.xy
@@ -446,8 +476,17 @@ class PyBundleAdjuster(object):
             if image.camera_id not in self.camera_ids:
                 self.camera_ids.add(image.camera_id)
                 self.config.set_constant_cam_intrinsics(image.camera_id)
+            # This image's pose is always treated as constant here (it isn't part of
+            # the active BA image set) -- bake in the rig-relative offset, if any, the
+            # same way the constant-pose branch of add_image_to_problem does.
+            sensor_from_rig = self.non_ref_sensor_from_rig(image, reconstruction)
+            full_pose = (
+                sensor_from_rig * image.frame.rig_from_world
+                if sensor_from_rig is not None
+                else image.frame.rig_from_world
+            )
             cost = pycolmap.cost_functions.ReprojErrorCost(
-                camera.model, point2D.xy, image.frame.rig_from_world
+                camera.model, point2D.xy, full_pose
             )
             self.add_residual_block(
                 "3DPointReproj", cost, loss, [point3D.xyz, camera.params]
