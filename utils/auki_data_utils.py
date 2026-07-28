@@ -9,13 +9,19 @@ Coordinate conventions
 -----------------------
 Auki's camera optical frames (registry axes: x=right, y=down, z=forward) already match
 COLMAP's required camera-local convention -- no per-camera axis conversion is needed.
-Auki's body/world frames (base_link, world: x=forward, y=left, z=up) do not match this
-codebase's established "colmap world" convention (X=up, Y=right, Z=forward, reverse-
-engineered from data_utils.convert_pose_opengl_to_colmap and its floor/gravity heuristics
-that treat axis 0 as "up"). `convert_to_colmap_world` re-expresses just the world/reference
-side of a pose into that convention, via `auki_geometry.convert_transform_target_convention`
-(verified against a hand-derived rotation matrix on real session data -- bit-for-bit match --
-before switching to it; see convert_to_colmap_world's docstring for why this specific
+
+Auki's world frame (every session checked so far: base_link, world both x=forward,
+y=left, z=up) does NOT generally match this codebase's established "colmap world"
+convention (X=up, Y=right, Z=forward, reverse-engineered from
+data_utils.convert_pose_opengl_to_colmap and its floor/gravity heuristics that treat
+axis 0 as "up"). `load_auki_session` reads the world frame's *actual* declared
+convention from the registry itself (`auki_registry.read_frame` on the world->base_link
+poselog's own `from_frame` reference) rather than assuming it -- a session recorded by a
+different robot/SDK build could declare different axes, and this way there's no silent
+mismatch. `convert_to_colmap_world` then re-expresses just the world/reference side of a
+pose into colmap-world convention, via `auki_geometry.convert_transform_target_convention`
+(verified against a hand-derived rotation matrix on real session data -- bit-for-bit match
+-- before switching to it; see convert_to_colmap_world's docstring for why this specific
 auki_geometry function, not convert_pose_convention or convert_transform_source_convention).
 
 Auki poselogs use "natural" parent-child semantics: `base_link -> camera` data satisfies
@@ -47,8 +53,12 @@ from utils.data_utils import mean_pose
 
 PEER_ID = "galbot"
 
-# Robot / ROS convention for its body/world frames (confirmed via the registry: base_link
-# and world both declare x=forward, y=left, z=up, handedness=right).
+# Every real session checked so far declares this world convention (base_link and world
+# both x=forward, y=left, z=up, handedness=right) -- but load_auki_session now reads each
+# session's actual declared convention from the registry rather than assuming this. Kept
+# only as a reference value for a sanity-check log line (see load_auki_session) that flags
+# it loudly if some future session's registry ever declares something different, since that
+# would be a real, previously-unseen case worth a second look, not a silent axis mismatch.
 _ROBOT_WORLD_FRAME_ENTRY = {
     "axes": {"x": "forward", "y": "left", "z": "up"},
     "handedness": "right", "units": "meters",
@@ -111,9 +121,14 @@ def _flat7_to_rigid3d(flat) -> pycolmap.Rigid3d:
     return pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(flat[3:])), np.array(flat[:3]))
 
 
-def convert_to_colmap_world(world_from_x: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
-    """Re-express a `world_from_X` pose (Auki world convention) into this codebase's
-    colmap-world convention, leaving X's own local axes untouched.
+def convert_to_colmap_world(world_from_x: pycolmap.Rigid3d, world_frame_entry: dict) -> pycolmap.Rigid3d:
+    """Re-express a `world_from_X` pose (this session's own Auki world convention) into
+    this codebase's colmap-world convention, leaving X's own local axes untouched.
+
+    world_frame_entry: the "world" frame's *actual* registry-declared axes convention
+    for this specific session (AukiSessionData.world_frame_entry, read dynamically by
+    load_auki_session via auki_registry.read_frame -- not assumed/hardcoded, since a
+    session from a different robot/SDK build could declare different axes).
 
     `world_from_x` (natural semantics, p_world = R*p_x + t) is exactly
     auki_geometry's compose-contract "x_to_world" (FROM=x, TO=world) -- so the world
@@ -126,7 +141,7 @@ def convert_to_colmap_world(world_from_x: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
     """
     flat = _rigid3d_to_flat7(world_from_x)
     converted = auki_geometry.convert_transform_target_convention(
-        flat, _ROBOT_WORLD_FRAME_ENTRY, _COLMAP_WORLD_FRAME_ENTRY
+        flat, world_frame_entry, _COLMAP_WORLD_FRAME_ENTRY
     )
     return _flat7_to_rigid3d(converted)
 
@@ -284,6 +299,19 @@ def _read_poselog(session_root, from_id: str, to_id: str) -> List[PoseSample]:
     return samples
 
 
+def _read_from_frame_registry_entry(app_root, session_root, from_id: str, to_id: str) -> dict:
+    """Read the *actual* registry-declared axes/handedness convention of a poselog's
+    `from_id` frame (e.g. "world" for the world->base_link poselog) -- a
+    FrameRegistryEntry-shaped dict (axes/handedness/units/peer_id/frame_id) usable
+    directly with auki_geometry's convert_transform_*_convention functions. Same
+    manifest -> registry lookup pattern load_auki_session already uses for each
+    sensor's own optical frame (manifest["frame"] -> auki_registry.read_sensor), just
+    for a poselog's `from_frame` reference instead."""
+    manifest = auki_logs.Log.read(auki_layout.poselog_path(session_root, from_id, to_id)).manifest()
+    from_frame = manifest["from_frame"]
+    return auki_registry.read_frame(app_root, from_frame["peer_id"], from_frame["id"], from_frame["hash"])
+
+
 def _nearest_sample(samples: List[PoseSample], timestamp_ns: int, max_dt_ns: int):
     """Nearest-in-time sample lookup. Returns (pose, dt_ns) or (None, dt_ns) if the
     nearest sample is farther than max_dt_ns away."""
@@ -326,6 +354,7 @@ class AukiSessionData(NamedTuple):
     base_from_camera_rigid: Dict[str, pycolmap.Rigid3d]
     base_from_camera_movable: Dict[str, List[PoseSample]]
     trajectory: List[PoseSample]  # world_from_base, raw Auki convention
+    world_frame_entry: dict  # this session's own registry-declared "world" axes convention
 
 
 def load_auki_session(
@@ -420,6 +449,18 @@ def load_auki_session(
     trajectory = _read_poselog(session_root, "world", "base_link")
     logger.info(f"trajectory (world->base_link): {len(trajectory)} sample(s)")
 
+    world_frame_entry = _read_from_frame_registry_entry(app_root, session_root, "world", "base_link")
+    logger.info(f"world frame convention (from registry): {world_frame_entry['axes']}, "
+                f"handedness={world_frame_entry['handedness']}")
+    if world_frame_entry["axes"] != _ROBOT_WORLD_FRAME_ENTRY["axes"] or \
+            world_frame_entry["handedness"] != _ROBOT_WORLD_FRAME_ENTRY["handedness"]:
+        logger.warning(
+            f"This session's registry-declared world frame convention ({world_frame_entry['axes']}, "
+            f"handedness={world_frame_entry['handedness']}) differs from every session checked so far "
+            f"({_ROBOT_WORLD_FRAME_ENTRY['axes']}, handedness={_ROBOT_WORLD_FRAME_ENTRY['handedness']}) "
+            f"-- using it as-is, but this is a genuinely new case worth a second look."
+        )
+
     rigid_sensor_ids = sorted(sid for sid, info in sensor_infos.items() if info.writer_mode == "rigid")
     movable_sensor_ids = sorted(sid for sid, info in sensor_infos.items() if info.writer_mode == "movable")
     if not rigid_sensor_ids:
@@ -437,6 +478,7 @@ def load_auki_session(
         base_from_camera_rigid=base_from_camera_rigid,
         base_from_camera_movable=base_from_camera_movable,
         trajectory=trajectory,
+        world_frame_entry=world_frame_entry,
     )
 
 
@@ -575,7 +617,7 @@ def build_auki_rig_and_frames(
         records = assignments[idx]
         world_from_base_raw = data.trajectory[idx].pose
         world_from_ref = world_from_base_raw * base_from_ref
-        colmapworld_from_ref = convert_to_colmap_world(world_from_ref)
+        colmapworld_from_ref = convert_to_colmap_world(world_from_ref, data.world_frame_entry)
         rig_from_world = colmapworld_from_ref.inverse()
 
         frame = pycolmap.Frame()
@@ -626,7 +668,7 @@ def build_auki_rig_and_frames(
                 continue
 
             world_from_cam = world_from_base_raw * base_from_camera
-            colmapworld_from_cam = convert_to_colmap_world(world_from_cam)
+            colmapworld_from_cam = convert_to_colmap_world(world_from_cam, data.world_frame_entry)
             rig_from_world = colmapworld_from_cam.inverse()
 
             image_id = next_image_id
