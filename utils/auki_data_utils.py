@@ -47,9 +47,9 @@ from utils.data_utils import mean_pose
 
 PEER_ID = "galbot"
 
-# Auki's own convention for its body/world frames (confirmed via the registry: base_link
+# Robot / ROS convention for its body/world frames (confirmed via the registry: base_link
 # and world both declare x=forward, y=left, z=up, handedness=right).
-_AUKI_WORLD_FRAME_ENTRY = {
+_ROBOT_WORLD_FRAME_ENTRY = {
     "axes": {"x": "forward", "y": "left", "z": "up"},
     "handedness": "right", "units": "meters",
     "peer_id": PEER_ID, "frame_id": "world",
@@ -60,6 +60,12 @@ _COLMAP_WORLD_FRAME_ENTRY = {
     "axes": {"x": "up", "y": "right", "z": "forward"},
     "handedness": "right", "units": "meters",
     "peer_id": "synthetic", "frame_id": "colmap_world",
+}
+
+_QR_FRAME_ENTRY = {
+    "axes": {"x": "forward", "y": "left", "z": "up"},
+    "handedness": "right", "units": "meters",
+    "peer_id": "synthetic", "frame_id": "qr0",
 }
 
 # pnp-lab's own camera-local convention (OpenGL-style: x=right, y=up, z=backward) vs.
@@ -78,11 +84,20 @@ _OPENCV_CAMERA_FRAME_ENTRY = {
 }
 
 # Same OpenGL axes as _OPENGL_CAMERA_FRAME_ENTRY (x=right, y=up, z=backward), used here
-# as a *world*-frame convention (not camera-local) -- for re-expressing a colmap-world
-# scene into the axis convention downstream OpenGL-side consumers expect, after
-# re-origining at a QR marker (see convert_colmap_world_to_opengl).
+# as a *world*-frame convention (not camera-local) -- for relabeling the reconstruction's
+# own global colmap-world axes into OpenGL convention (see convert_colmap_world_to_opengl).
+# Also happens to be qr0's own native local-axis convention (see
+# convert_colmap_pose_to_qr_origin_opengl's docstring), which is why re-origining at a QR
+# marker needs no separate relabeling step at all.
 _OPENGL_WORLD_FRAME_ENTRY = {
     "axes": {"x": "right", "y": "up", "z": "backward"},
+    "handedness": "right", "units": "meters",
+    "peer_id": "synthetic", "frame_id": "opengl_world",
+}
+
+
+_AUKI_WORLD_FRAME_ENTRY = {
+    "axes": {"x": "forward", "y": "up", "z": "right"},
     "handedness": "right", "units": "meters",
     "peer_id": "synthetic", "frame_id": "opengl_world",
 }
@@ -111,7 +126,7 @@ def convert_to_colmap_world(world_from_x: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
     """
     flat = _rigid3d_to_flat7(world_from_x)
     converted = auki_geometry.convert_transform_target_convention(
-        flat, _AUKI_WORLD_FRAME_ENTRY, _COLMAP_WORLD_FRAME_ENTRY
+        flat, _ROBOT_WORLD_FRAME_ENTRY, _COLMAP_WORLD_FRAME_ENTRY
     )
     return _flat7_to_rigid3d(converted)
 
@@ -120,8 +135,11 @@ def convert_colmap_world_to_opengl(colmapworld_from_x: pycolmap.Rigid3d) -> pyco
     """The reverse of convert_to_colmap_world: re-express a `colmapworld_from_X` pose
     into OpenGL world axes (x=right, y=up, z=backward), leaving X's own local axes
     untouched. Same convert_transform_target_convention machinery, just the other
-    direction -- used to present a reconstruction (already re-origined at a QR marker)
-    in an OpenGL-style convention for downstream consumers."""
+    direction -- for relabeling the reconstruction's own GLOBAL colmap-world axes (the
+    scene's fixed reference frame, origin unchanged) into OpenGL convention. NOT the
+    right tool for re-origining at a QR marker's own (arbitrarily-oriented) local frame
+    -- see convert_colmap_pose_to_qr_origin_opengl for that case, which needs no
+    separate relabeling step at all."""
     flat = _rigid3d_to_flat7(colmapworld_from_x)
     converted = auki_geometry.convert_transform_target_convention(
         flat, _COLMAP_WORLD_FRAME_ENTRY, _OPENGL_WORLD_FRAME_ENTRY
@@ -129,39 +147,114 @@ def convert_colmap_world_to_opengl(colmapworld_from_x: pycolmap.Rigid3d) -> pyco
     return _flat7_to_rigid3d(converted)
 
 
-# The colmap-world -> OpenGL-world axis relabeling is a fixed rotation matrix (verified
-# numerically: convert_transform_target_convention's target-side relabeling applies the
-# same matrix to a pose's translation and rotation regardless of the pose's own
-# translation -- bit-for-bit checked against several random poses before relying on
-# this for a vectorized point-cloud transform below). Derived once from the identity
-# pose rather than hardcoded, so it stays correct if the two frame-entry dicts above
-# ever change.
-_COLMAP_WORLD_TO_OPENGL_ROTATION = np.array(
-    convert_colmap_world_to_opengl(pycolmap.Rigid3d(pycolmap.Rotation3d(), np.zeros(3))).rotation.matrix()
+def convert_qr0_to_auki(qr0_from_x: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
+    """Re-express a pose already expressed relative to a QR marker's own local frame
+    (qr0_from_x -- e.g. the output of convert_colmap_pose_to_qr_origin, NOT a raw
+    colmap-world pose) into Auki's own world convention (x=forward, y=up, z=right),
+    leaving X's own local axes untouched.
+
+    CAUTION -- please confirm intent before relying on this: `_QR_FRAME_ENTRY` (the
+    declared "from" convention, i.e. qr0's own axes) is currently the exact same dict
+    as `_ROBOT_WORLD_FRAME_ENTRY` (x=forward, y=left, z=up), which describes the
+    *robot's body frame* from the registry -- unrelated to a QR marker's geometry.
+    qr0's actual native axes (right, up, plane-normal, established once by pnp-lab's
+    square-pose fit and left untouched through the whole detection pipeline -- see
+    detect_qr_codes' own comment) match `_OPENGL_CAMERA_FRAME_ENTRY` (x=right, y=up,
+    z=backward), not this. If `_QR_FRAME_ENTRY` was meant to intentionally map the
+    marker's own plane-normal to Auki's "up" (a real, valid AR-anchor convention: AR
+    content always renders "upright" relative to whichever face the marker is stuck
+    to, floor/wall/ceiling alike) it should be declared to do that explicitly, rather
+    than happening to coincide with the robot's unrelated body-frame convention -- as
+    currently declared, verified on real session data that both interpretations
+    produce IDENTICAL results for a floor-mounted marker (this session's only kind)
+    but genuinely different, untested results for a wall- or ceiling-mounted one.
+    """
+    flat = _rigid3d_to_flat7(qr0_from_x)
+    converted = auki_geometry.convert_transform_target_convention(
+        flat, _QR_FRAME_ENTRY, _AUKI_WORLD_FRAME_ENTRY
+    )
+    return _flat7_to_rigid3d(converted)
+
+
+# Fixed rotation matrices (verified numerically: convert_transform_target_convention's
+# target-side relabeling applies the same matrix to a pose's translation and rotation
+# regardless of the pose's own translation) -- derived once from the identity pose
+# rather than hardcoded, so each stays correct if its frame-entry dicts ever change.
+_QR0_TO_AUKI_ROTATION = np.array(
+    convert_qr0_to_auki(pycolmap.Rigid3d(pycolmap.Rotation3d(), np.zeros(3))).rotation.matrix()
 )
+
+
+def convert_colmap_pose_to_qr_origin(
+    world_from_x: pycolmap.Rigid3d, qr0_from_world: pycolmap.Rigid3d
+) -> pycolmap.Rigid3d:
+    """Re-origin a colmap-world pose at a QR marker's own frame (qr0_from_world =
+    that marker's mean world pose, inverted). Pure re-origining -- no axis relabeling
+    is applied or needed; see convert_colmap_pose_to_qr_origin_opengl's docstring for
+    why composing with qr0_from_world already produces OpenGL-convention axes for free."""
+    return qr0_from_world * world_from_x
 
 
 def convert_colmap_pose_to_qr_origin_opengl(
     world_from_x: pycolmap.Rigid3d, qr0_from_world: pycolmap.Rigid3d
 ) -> pycolmap.Rigid3d:
-    """Re-origin a colmap-world pose at a QR marker's own frame (qr0_from_world =
-    that marker's mean world pose, inverted), then relabel axes into OpenGL
-    convention -- the two-step transform requested for the QR-anchored visualization:
-    plain re-origining first (still colmap axes), axis convention change second."""
-    return convert_colmap_world_to_opengl(qr0_from_world * world_from_x)
+    """Re-origin a colmap-world pose at a QR marker's own frame, in OpenGL convention.
+
+    Identical to convert_colmap_pose_to_qr_origin -- no separate axis-relabeling step
+    is needed. Composing with qr0_from_world doesn't just move the origin -- its
+    rotation is, by construction, the change of basis from colmap-world axes into
+    qr0's OWN local axes (right, up, plane-normal), established once by pnp-lab's
+    square-pose fit (`pose_from_points` in pnp-lab's square_pose.rs) and left untouched
+    through the entire detection pipeline (detect_qr_codes' own comment: "leaving the
+    marker's own local axes ... untouched"). Those local axes already numerically
+    coincide with OpenGL's own convention (x=right, y=up, z=backward): both are
+    defined as local-Z = cross(local-X, local-Y) in a right-handed system with
+    local-X=right, local-Y=up -- pnp-lab just calls its own third axis "forward"
+    rather than "backward", a naming choice, not a geometric difference. So composing
+    with qr0_from_world is *simultaneously* the re-origining and the only axis
+    relabeling this needs (verified on real data: re-origining a marker's own pose at
+    itself returns an exact identity Rigid3d only when no extra relabeling is applied
+    on top -- an earlier version that added one here returned a spurious 90-degree
+    rotation instead).
+    """
+    return convert_colmap_pose_to_qr_origin(world_from_x, qr0_from_world)
+
+
+def convert_colmap_pose_to_qr_origin_auki(
+    world_from_x: pycolmap.Rigid3d, qr0_from_world: pycolmap.Rigid3d
+) -> pycolmap.Rigid3d:
+    """Re-origin a colmap-world pose at a QR marker's own frame, in Auki convention.
+
+    Unlike the OpenGL variant, this one's relabeling step is NOT a no-op -- Auki's
+    declared world convention (forward, up, right) genuinely differs from qr0's own
+    native axes (right, up, backward-ish), so convert_qr0_to_auki does real work here.
+    See that function's docstring for an open question about whether `_QR_FRAME_ENTRY`
+    is declared correctly."""
+    return convert_qr0_to_auki(convert_colmap_pose_to_qr_origin(world_from_x, qr0_from_world))
+
+
+def convert_colmap_points_to_qr_origin(
+    points_xyz: np.ndarray, qr0_from_world: pycolmap.Rigid3d
+) -> np.ndarray:
+    """Vectorized position-only counterpart of convert_colmap_pose_to_qr_origin, for a
+    full point cloud/trajectory (no per-point orientation to carry)."""
+    points_xyz = np.asarray(points_xyz, dtype=float)
+    return (qr0_from_world.rotation.matrix() @ points_xyz.T).T + qr0_from_world.translation
 
 
 def convert_colmap_points_to_qr_origin_opengl(
     points_xyz: np.ndarray, qr0_from_world: pycolmap.Rigid3d
 ) -> np.ndarray:
-    """Vectorized position-only counterpart of convert_colmap_pose_to_qr_origin_opengl,
-    for a full point cloud/trajectory (no per-point orientation to carry) -- same two
-    steps (re-origin, then relabel axes via the fixed rotation derived above), just
-    applied to an (N, 3) array directly instead of one pycolmap.Rigid3d call per point."""
-    points_xyz = np.asarray(points_xyz, dtype=float)
-    qr0_centered = (qr0_from_world.rotation.matrix() @ points_xyz.T).T + qr0_from_world.translation
-    return (_COLMAP_WORLD_TO_OPENGL_ROTATION @ qr0_centered.T).T
+    """Vectorized position-only counterpart of convert_colmap_pose_to_qr_origin_opengl
+    -- see that function's docstring for why no separate axis relabeling is needed."""
+    return convert_colmap_points_to_qr_origin(points_xyz, qr0_from_world)
 
+
+def convert_colmap_points_to_qr_origin_auki(
+    points_xyz: np.ndarray, qr0_from_world: pycolmap.Rigid3d
+) -> np.ndarray:
+    """Vectorized position-only counterpart of convert_colmap_pose_to_qr_origin_auki."""
+    return (_QR0_TO_AUKI_ROTATION @ convert_colmap_points_to_qr_origin(points_xyz, qr0_from_world).T).T
 
 _DISTORTION_MODEL_TO_CAMERA_MODEL = {
     "kannala_brandt": "OPENCV_FISHEYE",
@@ -686,12 +779,27 @@ def reestimate_qr_camera_poses(
     image_ids_per_qr: Dict[str, List[int]],
     corners_per_qr: Dict[str, List[list]],
     portal_sizes: Dict[str, float],
+    ignore_distortion: bool = False,
 ):
     """Re-run just the PnP pose-estimation step for every existing QR detection, using
     each image's *refined* (post-bundle-adjustment, self-calibrated) camera intrinsics
     instead of the seeded-FOV guess detect_qr_codes had to use before BA ran. Corner
     pixel coordinates are unaffected by intrinsics, so this reuses corners_per_qr as-is
     rather than re-running qr_lab.scan.
+
+    ignore_distortion: drop each camera's refined distortion coefficients (fx/fy/cx/cy
+    only) before calling PnP. Confirmed by direct experiment (qr-pnp-diagnostics.ipynb)
+    to raise convergence from ~25% to ~96% on a self-calibrated OPENCV_FISHEYE session
+    with no real distortion this pipeline never fed into pnp-lab correctly (pnp-lab's
+    Camera only implements Brown-Conrady distortion, not COLMAP's OPENCV_FISHEYE
+    equidistant/Kannala-Brandt model -- k1-k4 get silently misapplied as k1/k2/p1/p2).
+    Root cause isn't only the model mismatch, though: even cv2.fisheye's OWN correct
+    inverse blows up well within the image bounds for this session's self-calibrated
+    coefficients (BA fits them only where it has SfM tie points, with no constraint
+    keeping the distortion curve invertible at the periphery), so properly modeling
+    fisheye distortion here would still need a better-constrained self-calibration, not
+    just a different undistort call. Dropping distortion entirely fixes *convergence*;
+    it does not fully fix pose *accuracy* right at the image periphery.
 
     Returns (detections_per_qr, image_ids_per_qr, corners_per_qr) in the same
     triple-aligned shape detect_qr_codes produces (a detection is dropped from all three
@@ -705,7 +813,10 @@ def reestimate_qr_camera_poses(
         qr_size_m = portal_sizes[short_id]
         for image_id, corners in zip(image_ids, corners_per_qr[short_id]):
             camera = reconstruction.cameras[reconstruction.images[image_id].camera_id]
-            cam_space_pose = _corners_to_camera_space_pose(corners, qr_size_m, _camera_model_dict(camera))
+            camera_model = _camera_model_dict(camera)
+            if ignore_distortion:
+                camera_model["dist"] = []
+            cam_space_pose = _corners_to_camera_space_pose(corners, qr_size_m, camera_model)
             if cam_space_pose is None:
                 continue
             detections_per_qr.setdefault(short_id, []).append(cam_space_pose)
