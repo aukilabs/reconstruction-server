@@ -4,6 +4,7 @@ from typing import NamedTuple, Optional
 import csv
 import shutil
 
+import cv2
 import numpy as np
 import pycolmap
 
@@ -49,6 +50,8 @@ class AukiRefinementPaths(NamedTuple):
     point_cloud: Path
     qr_anchor_poses: Path
     qr_anchored_point_cloud: Path
+    qr_detections: Path
+    qr_detection_crops: Path
     log_path: Path
 
 
@@ -111,10 +114,13 @@ def setup_auki_refinement_paths(session_root_path, session_id, output_path) -> A
         point_cloud=output / 'point_cloud.ply',
         qr_anchor_poses=sfm_dir / 'qr_anchor_poses.csv',
         qr_anchored_point_cloud=output / 'point_cloud_qr_anchored.ply',
+        qr_detections=sfm_dir / 'qr_detections.csv',
+        qr_detection_crops=output / 'qr_detection_crops',
         log_path=output,
     )
 
-    for path in [paths.output, paths.images, paths.sfm_dir, paths.colmap_rec, paths.hloc_dir, paths.log_path]:
+    for path in [paths.output, paths.images, paths.sfm_dir, paths.colmap_rec, paths.hloc_dir,
+                 paths.qr_detection_crops, paths.log_path]:
         path.mkdir(parents=True, exist_ok=True)
 
     return paths
@@ -360,18 +366,96 @@ def export_qr_anchored_outputs(triangulated, qr_mean_poses, deviations, paths, l
     logger.info(f"Wrote {paths.qr_anchored_point_cloud}")
 
 
-def process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes, paths, logger, qr_origin_id=None):
+# BGR (cv2's native channel order -- these crops are written directly via cv2.imwrite,
+# never converted to RGB) for corners 0-3 in the order qr_lab/pnp-lab returns them:
+# red, green, blue, yellow.
+_CORNER_COLORS_BGR = [(0, 0, 255), (0, 200, 0), (255, 0, 0), (0, 220, 255)]
+
+
+def export_qr_detections_csv(triangulated, qr_world_detections, image_ids_per_qr, paths, logger):
+    """Write every individual QR detection (not just each marker's aggregated mean
+    pose, unlike portals.csv/qr_anchor_poses.csv) to sfm_dir/qr_detections.csv, with
+    the source camera identified -- sensor_id and camera_id weren't persisted anywhere
+    before this (detect_qr_codes tracks sensor_id per detection, but refine_auki_session
+    discards it). One row per detection: short_id, image_id, sensor_id, camera_id, then
+    the detection's world-frame pose (already rectified, same convention as
+    portals.csv)."""
+    rows = []
+    for short_id, poses in qr_world_detections.items():
+        for image_id, pose in zip(image_ids_per_qr[short_id], poses):
+            image = triangulated.images[image_id]
+            sensor_id = image.name.split("/")[0]
+            pos, quat = pose.translation, pose.rotation.quat
+            rows.append([short_id, image_id, sensor_id, image.camera_id, *pos, *quat])
+
+    with open(paths.qr_detections, mode="w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["short_id", "image_id", "sensor_id", "camera_id",
+                          "px", "py", "pz", "qx", "qy", "qz", "qw"])
+        writer.writerows(rows)
+    logger.info(f"Wrote {paths.qr_detections} ({len(rows)} detection(s))")
+
+
+def export_qr_detection_crops(triangulated, image_ids_per_qr, corners_per_qr, paths, logger):
+    """Save one annotated image crop per QR detection to paths.qr_detection_crops --
+    each of the 4 corners marked individually, in detection order (red, green, blue,
+    yellow for corners 0-3 as qr_lab returned them), rather than connected into a
+    plain outline, so the corner *ordering* PnP actually consumed stays visible.
+    Filename: <short_id>__<sensor_id>__<image_id>.jpg."""
+    n_written = 0
+    for short_id, image_ids in image_ids_per_qr.items():
+        for image_id, corners in zip(image_ids, corners_per_qr[short_id]):
+            image = triangulated.images[image_id]
+            sensor_id = image.name.split("/")[0]
+            img = cv2.imread(str(paths.images / image.name))
+            if img is None:
+                logger.warning(f"Could not read {paths.images / image.name} -- skipping crop")
+                continue
+
+            corners_arr = np.array(corners, dtype=np.float64)
+            x0, y0 = corners_arr.min(axis=0)
+            x1, y1 = corners_arr.max(axis=0)
+            w, h = x1 - x0, y1 - y0
+            pad_x, pad_y = w * 0.6 + 20, h * 0.6 + 20
+            x0c, y0c = max(0, int(x0 - pad_x)), max(0, int(y0 - pad_y))
+            x1c, y1c = min(img.shape[1], int(x1 + pad_x)), min(img.shape[0], int(y1 + pad_y))
+
+            radius = max(4, int(0.06 * max(w, h)))
+            for (cx, cy), color in zip(corners_arr, _CORNER_COLORS_BGR):
+                cv2.circle(img, (int(cx), int(cy)), radius, color, thickness=-1)
+                cv2.circle(img, (int(cx), int(cy)), radius, (0, 0, 0), thickness=2)
+
+            crop = img[y0c:y1c, x0c:x1c]
+            out_path = paths.qr_detection_crops / f"{short_id}__{sensor_id}__{image_id}.jpg"
+            cv2.imwrite(str(out_path), crop)
+            n_written += 1
+    logger.info(f"Wrote {n_written} QR detection crop(s) to {paths.qr_detection_crops}")
+
+
+def process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes, paths, logger,
+                     qr_origin_id=None, qr_ignore_distortion=True):
     """Auki analogue of refinement_util.process_QR: re-estimate QR poses against the
     refined, self-calibrated intrinsics (Step 3's corner pixels don't depend on
     intrinsics, only the PnP solve does), then export world-space portal poses to
     sfm_dir/portals.csv. Unlike process_QR, rectify_portal_pose is called with
     reference_axis=_QR_UP_AXIS -- see that constant's docstring for why.
 
+    qr_ignore_distortion: forwarded to reestimate_qr_camera_poses -- defaults to True
+    per the qr-pnp-diagnostics.ipynb investigation (raises convergence from ~25% to
+    ~96% on a self-calibrated OPENCV_FISHEYE session; pnp-lab's Camera can only apply
+    Brown-Conrady distortion, not COLMAP's OPENCV_FISHEYE model these cameras actually
+    use). NOTE: confirmed on a later session (auki_capture_slow) that this does NOT
+    fix every kind of bad QR pose -- a camera-dependent systematic bias between
+    cameras that all individually agree with themselves but disagree with each other
+    (most likely oblique/peripheral viewing angle, where self-calibration is least
+    constrained) survives this flag either way; it fixes the distortion-model-mismatch
+    failure mode specifically, not every source of QR pose error.
+
     Also exports a QR-anchored point cloud + per-marker anchor poses -- see
     export_qr_anchored_outputs.
     """
     refined_detections_per_qr, refined_image_ids_per_qr, refined_corners_per_qr = reestimate_qr_camera_poses(
-        triangulated, image_ids_per_qr, corners_per_qr, portal_sizes
+        triangulated, image_ids_per_qr, corners_per_qr, portal_sizes, ignore_distortion=qr_ignore_distortion
     )
 
     logger.info("Now save adjusted QR code poses")
@@ -396,6 +480,8 @@ def process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes
     save_portal_csv(
         qr_world_detections, stitched_qr_csv_path, refined_image_ids_per_qr, portal_sizes, refined_corners_per_qr
     )
+    export_qr_detections_csv(triangulated, qr_world_detections, refined_image_ids_per_qr, paths, logger)
+    export_qr_detection_crops(triangulated, refined_image_ids_per_qr, refined_corners_per_qr, paths, logger)
 
     export_qr_anchored_outputs(triangulated, qr_mean_poses, deviations, paths, logger, qr_origin_id=qr_origin_id)
 
@@ -411,6 +497,7 @@ def refine_auki_session_part_two(
     remove_outputs,
     start_time,
     qr_origin_id=None,
+    qr_ignore_distortion=True,
 ):
     logger.info("Start triangulation")
     triangulated = run_triangulation(
@@ -448,7 +535,7 @@ def refine_auki_session_part_two(
 
     # Process QR codes
     process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes, paths, logger,
-                     qr_origin_id=qr_origin_id)
+                     qr_origin_id=qr_origin_id, qr_ignore_distortion=qr_ignore_distortion)
 
     if remove_outputs:
         logger.info('Remove output directory')
@@ -472,6 +559,7 @@ def refine_auki_session(
     log_level="INFO",
     pool_executor=None,
     qr_origin_id: Optional[str] = None,
+    qr_ignore_distortion: bool = True,
 ):
     """
     Refine an Auki SDK multi-sensor rig capture session using Structure from Motion
@@ -501,6 +589,8 @@ def refine_auki_session(
             (qr_anchor_poses.csv, point_cloud_qr_anchored.ply) at. Defaults to the
             marker with the lowest cross-detection deviation; pass a specific marker's
             short id if the AR client is known to scan a particular physical marker first.
+        qr_ignore_distortion: forwarded to process_auki_qr / reestimate_qr_camera_poses
+            -- see qr_ignore_distortion's own docstring there.
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
@@ -562,7 +652,8 @@ def refine_auki_session(
             logger,
             remove_outputs,
             start_time,
-            qr_origin_id
+            qr_origin_id,
+            qr_ignore_distortion
         )
         return future
     else:
@@ -576,6 +667,7 @@ def refine_auki_session(
             logger,
             remove_outputs,
             start_time,
-            qr_origin_id
+            qr_origin_id,
+            qr_ignore_distortion
         )
         return None

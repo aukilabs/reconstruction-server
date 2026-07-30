@@ -822,6 +822,7 @@ def reestimate_qr_camera_poses(
     corners_per_qr: Dict[str, List[list]],
     portal_sizes: Dict[str, float],
     ignore_distortion: bool = False,
+    camera_model_per_sensor: Optional[Dict[str, dict]] = None,
 ):
     """Re-run just the PnP pose-estimation step for every existing QR detection, using
     each image's *refined* (post-bundle-adjustment, self-calibrated) camera intrinsics
@@ -843,6 +844,20 @@ def reestimate_qr_camera_poses(
     just a different undistort call. Dropping distortion entirely fixes *convergence*;
     it does not fully fix pose *accuracy* right at the image periphery.
 
+    camera_model_per_sensor: use a fixed, given camera_model dict (same {fx,fy,cx,cy,
+    dist} shape _camera_model_dict produces) per sensor id instead of that image's
+    self-calibrated COLMAP camera -- e.g. recorded/factory intrinsics, when the
+    self-calibrated ones are suspected unstable for some sensor (per-segment
+    self-calibration on a teleop-scan session found the two rear surround cameras'
+    fitted vertical focal length swinging by up to ~30deg of implied FOV across
+    segments, while recorded intrinsics for this rig are flat, near-identical across
+    every capture). Overrides ignore_distortion for the sensors it covers (a supplied
+    camera_model's own "dist" is used as-is, not stripped); sensors absent from the
+    dict still fall back to that image's self-calibrated camera. The camera's *pose*
+    (reconstruction.images[image_id].cam_from_world(), used downstream by
+    get_world_space_qr_codes) is never affected by this -- only the intrinsics fed into
+    the corner-to-camera-space PnP solve.
+
     Returns (detections_per_qr, image_ids_per_qr, corners_per_qr) in the same
     triple-aligned shape detect_qr_codes produces (a detection is dropped from all three
     together if the refined PnP solve fails to converge, so callers can keep zipping
@@ -854,10 +869,14 @@ def reestimate_qr_camera_poses(
     for short_id, image_ids in image_ids_per_qr.items():
         qr_size_m = portal_sizes[short_id]
         for image_id, corners in zip(image_ids, corners_per_qr[short_id]):
-            camera = reconstruction.cameras[reconstruction.images[image_id].camera_id]
-            camera_model = _camera_model_dict(camera)
-            if ignore_distortion:
-                camera_model["dist"] = []
+            image = reconstruction.images[image_id]
+            sensor_id = image.name.split("/")[0]
+            if camera_model_per_sensor is not None and sensor_id in camera_model_per_sensor:
+                camera_model = dict(camera_model_per_sensor[sensor_id])
+            else:
+                camera_model = _camera_model_dict(reconstruction.cameras[image.camera_id])
+                if ignore_distortion:
+                    camera_model["dist"] = []
             cam_space_pose = _corners_to_camera_space_pose(corners, qr_size_m, camera_model)
             if cam_space_pose is None:
                 continue

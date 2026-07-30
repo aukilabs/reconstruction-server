@@ -391,7 +391,7 @@ def precompute_arkit_offsets(image_ids, arkit_cam_from_world_transforms, arkit_p
 
 
 def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr):
-    
+
     qr_world_detections = {}
 
     print("Getting world space qr codes...")
@@ -400,7 +400,19 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
         corresponding_image_ids = image_ids_per_qr[qr_id]
 
         for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
-            cam_pose = reconstruction.images[image_id].frame.rig_from_world.inverse()
+            # image.cam_from_world(), not frame.rig_from_world -- for a rig with more
+            # than one real sensor (e.g. Auki's 4-camera rigid surround rig), those two
+            # differ by that image's own sensor_from_rig, which is identity only for
+            # the rig's reference sensor. Using frame.rig_from_world silently applied
+            # the *reference* camera's pose to every non-reference rigid camera's QR
+            # detections instead of that camera's own pose -- harmless for
+            # refinement_util's ARKit rigs (always a single trivial sensor per rig, so
+            # the two are always equal there) but a multi-meter error here, confirmed
+            # by direct comparison against auki_data_utils.build_auki_rig_and_frames'
+            # rigid multi-camera rig (e.g. session_20260729_122236/segment_009's
+            # 6DRVFNSRUFR marker: max pairwise spread across detections dropped from
+            # 2.70m to 0.47m fixing just this one line).
+            cam_pose = reconstruction.images[image_id].cam_from_world().inverse()
             qr_world_pose = cam_pose * qr_pose_in_cam
             qr_world_detections[qr_id].append(qr_world_pose)
 
@@ -462,7 +474,8 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
 def save_manifest_json(
     portal_poses, json_path, job_root_path,
     job_status=None, job_progress=None, job_status_details=None,
-    portal_sizes=None, scan_alignment_transforms=None, previous_scan_files=None):
+    portal_sizes=None, scan_alignment_transforms=None, previous_scan_files=None,
+    portal_flat_reference_axis=None):
 
     job_root_path = Path(job_root_path)
 
@@ -621,7 +634,8 @@ def save_manifest_json(
             # Don't run mean_pose if we already reduced to one pose before.
             pose = poses_for_qr[0] if len(poses_for_qr) == 1 else mean_pose(poses_for_qr)
             
-        pose = rectify_portal_pose(pose)
+        pose = (rectify_portal_pose(pose, reference_axis=portal_flat_reference_axis)
+                if portal_flat_reference_axis is not None else rectify_portal_pose(pose))
 
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
 
