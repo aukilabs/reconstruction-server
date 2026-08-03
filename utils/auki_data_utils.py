@@ -483,28 +483,41 @@ def load_auki_session(
 
 
 def seed_camera_model(
-    info: SensorInfo, records: Optional[List["ImageRecord"]] = None, assumed_hfov_deg: float = 69.0
+    info: SensorInfo, records: Optional[List["ImageRecord"]] = None, assumed_hfov_deg: float = 69.0,
+    external_intrinsics: Optional[dict] = None,
 ) -> dict:
-    """Camera model for a sensor. Prefers the real recorded intrinsics
-    (`CameraFrame.dynamic_intrinsics`, confirmed constant across an entire session for a
-    given fixed-focus sensor) when at least one frame's record carries them; falls back
-    to a documented assumed-HFOV pinhole/fisheye guess otherwise (captures with no
-    calibration recorded at all -- fx=fy from the assumed FOV, distortion starts at zero
-    and both intrinsics and distortion are self-calibrated by bundle adjustment).
+    """Camera model for a sensor. Priority order:
+    1. `external_intrinsics` ({"fx","fy","cx","cy","dist"}), when given by the caller --
+       e.g. factory/recorded intrinsics sourced from a *different* capture of the same
+       physical device, for sessions where this capture's own metadata has none (see 2).
+    2. Real recorded intrinsics (`CameraFrame.dynamic_intrinsics`, confirmed constant
+       across an entire session for a given fixed-focus sensor) when at least one
+       frame's record carries them.
+    3. Falls back to a documented assumed-HFOV pinhole/fisheye guess otherwise (captures
+       with no calibration recorded at all -- fx=fy from the assumed FOV, distortion
+       starts at zero and both intrinsics and distortion are self-calibrated by bundle
+       adjustment).
 
-    Distortion, when recorded intrinsics are used:
+    Distortion, when recorded/external intrinsics are used:
     - kannala_brandt -> OPENCV_FISHEYE (4 params k1..k4): recorded coefficients map
       straight across, same order.
     - plumb_bob -> OPENCV (4 params k1,k2,p1,p2): recorded coefficients are 5 values in
       OpenCV's own distCoeffs order (k1,k2,p1,p2,k3) -- k3 is dropped since COLMAP's
       OPENCV model has no third radial term; bundle adjustment's self-calibration
-      (refine_extra_params) absorbs the small residual.
-    Returns an extra "source" key ("recorded" or "seeded_fov_guess") so callers can
-    decide e.g. whether to trust focal length/principal point as fixed in BA.
+      (refine_extra_params) absorbs the small residual, if enabled.
+    Returns an extra "source" key ("external_recorded", "recorded", or
+    "seeded_fov_guess") so callers can decide e.g. whether to trust focal
+    length/principal point as fixed in BA.
     """
     model = _DISTORTION_MODEL_TO_CAMERA_MODEL.get(info.distortion_model)
     if model is None:
         raise ValueError(f"Unhandled distortion_model {info.distortion_model!r} for {info.sensor_id}")
+
+    if external_intrinsics is not None:
+        fx, fy, cx, cy = (external_intrinsics["fx"], external_intrinsics["fy"],
+                           external_intrinsics["cx"], external_intrinsics["cy"])
+        dist = (list(external_intrinsics["dist"]) + [0.0, 0.0, 0.0, 0.0])[:4]
+        return {"model": model, "params": [fx, fy, cx, cy, *dist], "source": "external_recorded"}
 
     real = next((r.dynamic_intrinsics for r in (records or []) if r.dynamic_intrinsics is not None), None)
     if real is not None:
@@ -544,6 +557,7 @@ def build_auki_rig_and_frames(
     assumed_hfov_deg: float = 69.0,
     max_pose_dt_ns: int = 200_000_000,
     logger: Optional[logging.Logger] = None,
+    external_intrinsics_per_sensor: Optional[Dict[str, dict]] = None,
 ) -> ReconstructionBuild:
     """The Auki analogue of refinement_util.initialize_reconstruction: builds a
     pycolmap.Reconstruction with one multi-sensor Rig (rigid cameras, fixed
@@ -551,6 +565,11 @@ def build_auki_rig_and_frames(
     thing bundle adjustment should refine) plus one independent single-camera "mini rig"
     per movable-camera image (pose baked directly from that timestamp's pose logs, held
     constant, matching the existing ARKit single-camera-per-rig pattern).
+
+    external_intrinsics_per_sensor: forwarded to seed_camera_model per sensor -- see its
+    own docstring. Use together with refine_auki_session's refine_intrinsics=False to
+    actually trust these values (seeding alone doesn't stop BA from self-calibrating
+    away from them).
     """
     logger = logger or logging.getLogger("auki_reconstruction")
     rec = pycolmap.Reconstruction()
@@ -561,7 +580,8 @@ def build_auki_rig_and_frames(
     for camera_id, sensor_id in enumerate(sorted(data.sensor_infos.keys()), start=1):
         info = data.sensor_infos[sensor_id]
         model_dict = seed_camera_model(
-            info, records=data.images_per_sensor.get(sensor_id), assumed_hfov_deg=assumed_hfov_deg
+            info, records=data.images_per_sensor.get(sensor_id), assumed_hfov_deg=assumed_hfov_deg,
+            external_intrinsics=(external_intrinsics_per_sensor or {}).get(sensor_id),
         )
         camera = pycolmap.Camera(
             model=model_dict["model"],
@@ -573,6 +593,8 @@ def build_auki_rig_and_frames(
         rec.add_camera(camera)
         camera_id_per_sensor[sensor_id] = camera_id
         intrinsics_source_per_sensor[sensor_id] = model_dict["source"]
+        logger.info(f"{sensor_id}: intrinsics source={model_dict['source']}, "
+                    f"fx={model_dict['params'][0]:.2f} fy={model_dict['params'][1]:.2f}")
 
     # --- Main rig: rigid sensors, fixed sensor_from_rig ---------------------------
     ref_sensor_id = data.ref_sensor_id

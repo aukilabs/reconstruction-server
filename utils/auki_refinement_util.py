@@ -498,8 +498,11 @@ def refine_auki_session_part_two(
     start_time,
     qr_origin_id=None,
     qr_ignore_distortion=True,
+    refine_intrinsics=True,
 ):
     logger.info("Start triangulation")
+    logger.info(f"refine_intrinsics={refine_intrinsics} "
+                f"(intrinsics source per sensor: {build.intrinsics_source_per_sensor})")
     triangulated = run_triangulation(
         paths.database,
         paths.images,
@@ -514,9 +517,14 @@ def refine_auki_session_part_two(
         # process_auki_qr re-estimates QR poses afterwards using self-calibrated intrinsics.
         filter_spikes=False,
         ba_options_overrides={
-            "refine_focal_length": True,
+            # refine_intrinsics=False trusts whatever build.reconstruction's cameras were
+            # seeded with (see build_auki_rig_and_frames' external_intrinsics_per_sensor)
+            # as fixed, ground-truth values instead of self-calibrating from scratch --
+            # seeding alone doesn't stop BA from refining away from a seed, so both need
+            # to agree for "trust the intrinsics" to actually mean fixed.
+            "refine_focal_length": refine_intrinsics,
             "refine_principal_point": False,
-            "refine_extra_params": True,
+            "refine_extra_params": refine_intrinsics,
         },
         refinement_config_overrides={
             "add_rel_constraints": False,
@@ -560,6 +568,8 @@ def refine_auki_session(
     pool_executor=None,
     qr_origin_id: Optional[str] = None,
     qr_ignore_distortion: bool = True,
+    refine_intrinsics: bool = True,
+    external_intrinsics_per_sensor: Optional[dict] = None,
 ):
     """
     Refine an Auki SDK multi-sensor rig capture session using Structure from Motion
@@ -591,6 +601,18 @@ def refine_auki_session(
             short id if the AR client is known to scan a particular physical marker first.
         qr_ignore_distortion: forwarded to process_auki_qr / reestimate_qr_camera_poses
             -- see qr_ignore_distortion's own docstring there.
+        refine_intrinsics: when False, bundle adjustment treats every camera's
+            fx/fy/cx/cy/distortion as fixed (trusted) instead of self-calibrating them.
+            Per-segment independent self-calibration was found unstable for this rig's
+            wide-FOV surround cameras (same physical camera's fitted vertical FOV
+            swinging ~30deg across different segments) -- this lets a caller who trusts
+            the seeded intrinsics (see external_intrinsics_per_sensor) skip
+            self-calibration entirely rather than re-fitting from scratch each time.
+        external_intrinsics_per_sensor: forwarded to build_auki_rig_and_frames -- e.g.
+            factory/recorded intrinsics for this physical device, when this capture's
+            own metadata has none. Only matters in combination with
+            refine_intrinsics=False; seeding alone doesn't stop BA from refining away
+            from the seed.
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
@@ -621,7 +643,8 @@ def refine_auki_session(
     data = _subsample_auki_session(data, every_nth_image, logger)
 
     # Build the pycolmap.Reconstruction (multi-sensor rig + trajectory frames)
-    build = build_auki_rig_and_frames(data, logger=logger)
+    build = build_auki_rig_and_frames(data, logger=logger,
+                                       external_intrinsics_per_sensor=external_intrinsics_per_sensor)
     logger.info(build.reconstruction.summary())
     if build.dropped_images:
         logger.warning(f"Dropped {build.dropped_images} image(s) with no pose sample within the matching window")
@@ -653,7 +676,8 @@ def refine_auki_session(
             remove_outputs,
             start_time,
             qr_origin_id,
-            qr_ignore_distortion
+            qr_ignore_distortion,
+            refine_intrinsics
         )
         return future
     else:
@@ -668,6 +692,7 @@ def refine_auki_session(
             remove_outputs,
             start_time,
             qr_origin_id,
-            qr_ignore_distortion
+            qr_ignore_distortion,
+            refine_intrinsics
         )
         return None
