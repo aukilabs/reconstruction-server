@@ -36,6 +36,29 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
 p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
+# Mean portal residual (metres) above which a QR alignment is reported as untrustworthy
+# rather than silently merged. A healthy alignment lands in the low centimetres (measured:
+# 0.017m for a DMT scan, 0.110m for an Auki capture); a frame or convention mismatch lands
+# in the metres.
+_ALIGNMENT_RESIDUAL_WARN_THRESHOLD_M = 0.5
+
+
+def _to_colmap_frame(pose: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
+    """Re-express an OpenGL-convention pose in colmap-world convention, or back again --
+    the mapping is its own inverse (swap x/y, negate z).
+
+    Needed because a job's canonical global refinement is persisted in *two* frames:
+    refined_sfm_combined is written in colmap-world (global_main.py writes the
+    pycolmap.Reconstruction directly) while refined_manifest.json is written in OpenGL
+    (save_manifest_json converts on the way out). An alignment derived from the manifest
+    portals therefore has to come back to colmap-world before it can be applied to the
+    reconstructions this flow merges -- otherwise it is conjugated by the axis swap, which
+    turns a yaw into a rotation about a horizontal axis. Measured on real data: 10.85m of
+    portal error for a scan that is not already near-aligned with the domain.
+    """
+    tvec, qvec = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+    return pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(qvec)), np.array(tvec))
+
 
 @dataclass
 class Paths:
@@ -197,10 +220,14 @@ def _get_refined_rec_dir(
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dict[str, pycolmap.Rigid3d], Dict[str, float]]:
     """Load QR portal detections from a local refinement's portals.csv.
-    
-    Reads the portal CSV, converts poses to OpenGL convention, groups by QR ID,
-    and returns mean poses per QR along with portal sizes.
-    
+
+    Reads the portal CSV, groups by QR ID, and returns mean poses per QR along with portal
+    sizes.
+
+    Poses stay in the colmap-world convention portals.csv is written in -- the frame of the
+    reconstruction they were detected in, and the frame any alignment derived from them gets
+    applied in. Same choice scan_alignment.align_scans makes for the global flow.
+
     Args:
         rec_dir: Path to the local refined reconstruction directory containing portals.csv
         logger: Logger instance
@@ -215,15 +242,14 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
     portal_sizes = {}
     for portal in portals_list:
         portal_sizes[portal.short_id] = portal.size
-        gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
         portals_u_list.append({
-            "short_id": portal.short_id, 
-            "tvec": gl_tvec,
-            "qvec": gl_qvec,
-            "image_id": portal.image_id, 
-            "size": portal.size, 
+            "short_id": portal.short_id,
+            "tvec": portal.tvec,
+            "qvec": portal.qvec,
+            "image_id": portal.image_id,
+            "size": portal.size,
             "corners": portal.corners,
-            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
+            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(portal.qvec)), np.array(portal.tvec))
         })
     chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
     return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
@@ -285,7 +311,11 @@ def update_helper(
     cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin", logger=logger)
     portal_r, refined_files_r = parse_info_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
     portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
-    portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
+    # The manifest stores portals in OpenGL; bring them back to the colmap-world frame
+    # refined_sfm_combined (and every local refinement's portals.csv) lives in, so the
+    # alignment below is derived and applied in one single frame.
+    portal_r = {pid: _to_colmap_frame(pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]))
+                for pid in portal_r.keys()}
 
     # Process datasets
     for pending_update_rec_dir in pending_update_rec:
@@ -300,6 +330,30 @@ def update_helper(
         # This gives a rough alignment good enough for culling outdated geometry from the reference model.
         alignment_mat = _calculate_alignment_transform(portals_u, portal_r, logger)
         logger.info(f"Calculated alignment transform for update refinement: \n{alignment_mat.matrix()}")
+
+        # Residual of that alignment on the portals it was derived from -- the cheapest
+        # signal that a merge went wrong (a frame or convention mismatch shows up here as
+        # metres, a healthy alignment as centimetres).
+        shared_portal_ids = [pid for pid in portals_u if pid in portal_r]
+        if shared_portal_ids:
+            residuals = [
+                np.linalg.norm((alignment_mat * portals_u[pid]).translation - portal_r[pid].translation)
+                for pid in shared_portal_ids
+            ]
+            logger.info(
+                f"Aligned on {len(shared_portal_ids)} shared portal(s) {shared_portal_ids}: "
+                f"residual mean {np.mean(residuals):.3f}m, max {np.max(residuals):.3f}m"
+            )
+            if np.mean(residuals) > _ALIGNMENT_RESIDUAL_WARN_THRESHOLD_M:
+                logger.warning(
+                    f"Alignment residual is above {_ALIGNMENT_RESIDUAL_WARN_THRESHOLD_M}m -- the shared "
+                    f"portals do not agree on a single rigid transform, so this scan is about to be "
+                    f"merged in the wrong place. Usual causes: a portal frame convention mismatch "
+                    f"between the two sides, or a bad QR pose in one of them."
+                )
+        else:
+            logger.warning("No portal overlap with the canonical model -- this scan was anchored "
+                           "at the domain origin portal instead of aligned to the reference")
         cams_u_aligned, imgs_u_aligned, pts_u_aligned = apply_similarity_to_new_model(cams_u, imgs_u, pts_u, alignment_mat.matrix())
 
         # Prune the reference model by carving out points that violate new free-space constraints.
@@ -349,11 +403,11 @@ def update_helper(
     logger.debug(f"Exported updated reconstruction to {paths.output_path / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
+    # portal_r is colmap-frame throughout this function; save_manifest_json does the single
+    # conversion to OpenGL on write.
     manifest_path = paths.output_path / 'refined_manifest.json'
-    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
-    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
     save_manifest_json(
-        portals,
+        portal_r,
         manifest_path,
         paths.parent_dir,
         job_status="refined",

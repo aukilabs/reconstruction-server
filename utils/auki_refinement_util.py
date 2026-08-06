@@ -62,6 +62,27 @@ class AukiRefinementPaths(NamedTuple):
 _QR_UP_AXIS = np.array([1.0, 0.0, 0.0])
 
 
+# portals.csv is consumed by global/update refinement alongside DMT/ARKit scans, which
+# carry a *different* marker-frame convention: load_qr_detections_csv converts the
+# recorder app's OpenGL portal pose with convert_pose_opengl_to_colmap, a conjugation that
+# relabels the marker's own local axes by the colmap<->GL axis map as a side effect of
+# converting the world frame. pnp-lab's marker frame is left alone here (see
+# utils/auki_data_utils.py::detect_qr_codes), so the two differ by exactly that map -- a
+# 180 degree rotation about the in-plane axis at 45 degrees, which flips a marker's normal
+# and swaps its in-plane axes. Right multiplication, so a marker does not move; only its
+# own axis labels change.
+#
+# Emitting portals.csv in the consumers' convention rather than pnp-lab's is deliberate:
+# every domain map and app-placed portal already speaks it, so it is the de facto contract,
+# and matching it here means no consumer has to detect or reconcile conventions. The cost
+# is that a floor marker's local z in portals.csv points *down*, opposite the physical
+# normal that _QR_UP_AXIS rectifies against. qr_anchor_poses.csv and
+# point_cloud_qr_anchored.ply keep the Auki-native convention -- they serve AR clients
+# anchored to a physical marker, not the refinement pipeline.
+_DOMAIN_PORTAL_FRAME_RELABEL = pycolmap.Rigid3d(
+    pycolmap.Rotation3d(np.array([0.70710678, 0.70710678, 0.0, 0.0])), np.zeros(3))
+
+
 def resolve_auki_session_id(app_root) -> str:
     """
     Auto-discover the session id inside an Auki capture folder: the subfolder that
@@ -444,7 +465,9 @@ def process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes
     refined, self-calibrated intrinsics (Step 3's corner pixels don't depend on
     intrinsics, only the PnP solve does), then export world-space portal poses to
     sfm_dir/portals.csv. Unlike process_QR, rectify_portal_pose is called with
-    reference_axis=_QR_UP_AXIS -- see that constant's docstring for why.
+    reference_axis=_QR_UP_AXIS -- see that constant's docstring for why -- and the
+    exported portal frames are relabeled into the convention the rest of the refinement
+    pipeline uses, see _DOMAIN_PORTAL_FRAME_RELABEL.
 
     qr_ignore_distortion: forwarded to reestimate_qr_camera_poses -- defaults to True
     per the qr-pnp-diagnostics.ipynb investigation (raises convergence from ~25% to
@@ -482,11 +505,18 @@ def process_auki_qr(triangulated, image_ids_per_qr, corners_per_qr, portal_sizes
         for qr_id, poses in qr_world_detections.items()
     }
 
+    # portals.csv / qr_detections.csv go out in the refinement pipeline's shared
+    # marker-frame convention -- see _DOMAIN_PORTAL_FRAME_RELABEL.
+    portal_detections = {
+        qr_id: [pose * _DOMAIN_PORTAL_FRAME_RELABEL for pose in poses]
+        for qr_id, poses in qr_world_detections.items()
+    }
+
     stitched_qr_csv_path = paths.sfm_dir / "portals.csv"
     save_portal_csv(
-        qr_world_detections, stitched_qr_csv_path, refined_image_ids_per_qr, portal_sizes, refined_corners_per_qr
+        portal_detections, stitched_qr_csv_path, refined_image_ids_per_qr, portal_sizes, refined_corners_per_qr
     )
-    export_qr_detections_csv(triangulated, qr_world_detections, refined_image_ids_per_qr, paths, logger)
+    export_qr_detections_csv(triangulated, portal_detections, refined_image_ids_per_qr, paths, logger)
     export_qr_detection_crops(triangulated, refined_image_ids_per_qr, refined_corners_per_qr, paths, logger)
 
     export_qr_anchored_outputs(triangulated, qr_mean_poses, deviations, paths, logger, qr_origin_id=qr_origin_id)
