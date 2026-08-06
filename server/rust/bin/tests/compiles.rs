@@ -10,6 +10,10 @@ fn workspace_crates_link() {
         "runner-reconstruction-local"
     );
     assert_eq!(
+        runner_reconstruction_local_auki_sdk::CRATE_NAME,
+        "runner-reconstruction-local-auki-sdk"
+    );
+    assert_eq!(
         runner_reconstruction_global::CRATE_NAME,
         "runner-reconstruction-global"
     );

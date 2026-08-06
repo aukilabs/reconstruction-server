@@ -12,6 +12,12 @@ async fn main() -> anyhow::Result<()> {
     for runner in runner_reconstruction_local::RunnerReconstructionLocal::for_all_capabilities() {
         reg = reg.register(runner);
     }
+    for runner in
+        runner_reconstruction_local_auki_sdk::RunnerReconstructionLocalAukiSdk::for_all_capabilities(
+        )
+    {
+        reg = reg.register(runner);
+    }
     for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
         reg = reg.register(runner);
     }

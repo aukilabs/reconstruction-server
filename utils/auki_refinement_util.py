@@ -84,7 +84,8 @@ def resolve_auki_session_id(app_root) -> str:
     )
 
 
-def setup_auki_refinement_paths(session_root_path, session_id, output_path) -> AukiRefinementPaths:
+def setup_auki_refinement_paths(session_root_path, session_id, output_path,
+                                 output_name=None) -> AukiRefinementPaths:
     """
     Setup and create necessary directories for Auki-session refinement.
 
@@ -92,11 +93,16 @@ def setup_auki_refinement_paths(session_root_path, session_id, output_path) -> A
         session_root_path: Path to the Auki capture folder (app root)
         session_id: The session id inside session_root_path to refine
         output_path: Base output path
+        output_name: Folder name to use under output_path, defaulting to session_id.
+            Callers driving this from a job pipeline (the compute-node runner) name the
+            output folder after the *input artifact* instead, so the refined scan is
+            uploaded under the same identifier the ARKit local-refinement capability
+            would have produced -- see refine_auki_session's own docstring.
 
     Returns:
         AukiRefinementPaths object containing all necessary paths
     """
-    output = Path(output_path) / session_id
+    output = Path(output_path) / (output_name or session_id)
     sfm_dir = output / 'sfm'
     hloc_dir = output / 'hloc'
     paths = AukiRefinementPaths(
@@ -570,6 +576,7 @@ def refine_auki_session(
     qr_ignore_distortion: bool = True,
     refine_intrinsics: bool = True,
     external_intrinsics_per_sensor: Optional[dict] = None,
+    output_name: Optional[str] = None,
 ):
     """
     Refine an Auki SDK multi-sensor rig capture session using Structure from Motion
@@ -613,6 +620,12 @@ def refine_auki_session(
             own metadata has none. Only matters in combination with
             refine_intrinsics=False; seeding alone doesn't stop BA from refining away
             from the seed.
+        output_name: Name of the per-session folder created under output_path, defaulting
+            to session_id. The compute-node runner
+            (server/rust/runner-reconstruction-local-auki-sdk) passes the scan identifier
+            derived from the uploaded capture zip instead, so its refined outputs land in
+            refined/local/<scan>/sfm -- the exact layout the ARKit local-refinement
+            capability produces and its uploader looks for.
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
@@ -623,7 +636,8 @@ def refine_auki_session(
         session_id = resolve_auki_session_id(session_path)
 
     # Setup paths and logging
-    paths = setup_auki_refinement_paths(session_path, session_id, output_path)
+    paths = setup_auki_refinement_paths(session_path, session_id, output_path,
+                                         output_name=output_name)
 
     # Setup Logging (same logger name as refine_dataset -- utils/triangulation.py's
     # run_triangulation grabs it by that hardcoded name, so its own log lines land in

@@ -3,6 +3,7 @@ members = [
     "runner-reconstruction-update",
     "runner-reconstruction-global",
     "runner-reconstruction-local",
+    "runner-reconstruction-local-auki-sdk",
     "bin",
 ]
 resolver = "2"

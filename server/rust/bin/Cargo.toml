@@ -8,6 +8,7 @@ publish = false
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
 posemesh-compute-node = { version = "=0.3.2" }
 runner-reconstruction-local = { path = "../runner-reconstruction-local" }
+runner-reconstruction-local-auki-sdk = { path = "../runner-reconstruction-local-auki-sdk" }
 runner-reconstruction-global = { path = "../runner-reconstruction-global" }
 runner-reconstruction-update = { path = "../runner-reconstruction-update" }
 anyhow = "1"

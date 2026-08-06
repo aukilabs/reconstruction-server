@@ -15,6 +15,9 @@ stateless, fail-fast, and observable.
   client, heartbeat loop, storage facade, HTTP router, telemetry helpers.
 - [`runner-reconstruction-local`](./runner-reconstruction-local/) —
   scaffold runner for local refinement pipeline integration.
+- [`runner-reconstruction-local-auki-sdk`](./runner-reconstruction-local-auki-sdk/) —
+  local refinement for Auki SDK capture sessions delivered as a single capture zip
+  (`/reconstruction/local-refinement-auki-sdk/v0`).
 - [`runner-reconstruction-global`](runner-reconstruction-global/) —
   scaffold runner for global refinement pipeline integration.
 - [`bin`](bin/README.md) — CLI binary
