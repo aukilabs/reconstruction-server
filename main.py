@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import re
 from concurrent.futures import ProcessPoolExecutor
 
 from local_main import main as local_main
@@ -8,6 +9,33 @@ from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
 from utils.io import load_yaml, save_to_yaml
+
+def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
+    """If job_root_path ends with <domain_uuid>/job_<uuid>, return (domain_id, job_id)."""
+
+    if job_root_path is None:
+        return None
+
+    
+
+    parts = job_root_path.parts
+    if len(parts) < 2:
+        return None
+
+    _JOB_ROOT_JOB_SEGMENT_RE = re.compile(
+        r"^job_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    )
+    _DOMAIN_ID_RE = re.compile(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    )
+
+    domain_candidate, job_candidate = parts[-2], parts[-1]
+    if not _DOMAIN_ID_RE.fullmatch(domain_candidate):
+        return None
+    if not _JOB_ROOT_JOB_SEGMENT_RE.fullmatch(job_candidate):
+        return None
+
+    return domain_candidate, job_candidate
 
 
 def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
@@ -50,7 +78,8 @@ def process_local_refinement(args, scan, worker_pool=None):
         remove_outputs=False,
         domain_id=args.domain_id,
         job_id=args.job_id,
-        log_level=args.log_level
+        log_level=args.log_level,
+        log_format=args.log_format
     )
     return local_main(local_args, worker_pool)
 
@@ -125,7 +154,8 @@ def global_main_wrapper(args, logger):
         ply_remove_outliers=True,
         domain_id=args.domain_id,
         job_id=args.job_id,
-        log_level=args.log_level
+        log_level=args.log_level,
+        log_format=args.log_format
     )
     global_main(global_args)
     logger.info("Done with global refinement")
@@ -229,7 +259,8 @@ def main(args):
         log_file=args.job_root_path / 'log.txt', 
         domain_id=args.domain_id, 
         job_id=args.job_id, 
-        level=args.log_level
+        level=args.log_level,
+        log_format=args.log_format
     )
 
     # The runner currently derives scans from datasets to avoid stale client-provided scan lists.
@@ -247,9 +278,9 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="SfM refinement script")
-    parser.add_argument("--domain_id", type=str, default="00000000-0000-0000-0000-000000000000", help="Domain ID for logging")
-    parser.add_argument("--job_id", type=str, default="job_00000000-0000-0000-0000-000000000000", help="Job ID for logging")
-    parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], help="Refinement mode")
+    parser.add_argument("--domain_id", type=str, default=None, help="Domain ID for logging")
+    parser.add_argument("--job_id", type=str, default=None, help="Job ID for logging")
+    parser.add_argument("--mode", choices=["local_refinement", "global_refinement", "local_and_global_refinement"], default="local_and_global_refinement", help="Refinement mode")
     parser.add_argument("--job_root_path", type=Path, help="Path to the job root (parent of 'datasets' sub-folder with all scans inside)")
     parser.add_argument("--output_path", type=Path, help="Path for output")
     parser.add_argument("--local_refinement_workers", type=int, default=0,
@@ -258,9 +289,20 @@ def parse_args():
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
+    parser.add_argument("--log_format", choices=["text", "json"], default="json", help="Log output format (text or json)")
 
     parser.add_argument("--scans", nargs="+", default=[], help="List of scans to process")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.job_root_path and not args.domain_id and not args.job_id:
+        inferred_ids = infer_domain_and_job_from_job_root(args.job_root_path)
+        if inferred_ids:
+            args.domain_id, args.job_id = inferred_ids
+            print("Inferred domain_id from job_root_path: ", args.domain_id)
+            print("Inferred job_id from job_root_path: ", args.job_id)
+    
+    if not args.domain_id or not args.job_id:
+        parser.error("domain_id and/or job_id were not supplied, and could not be inferred from job_root_path")
+    return args
 
 
 if __name__ == "__main__":

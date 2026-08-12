@@ -66,7 +66,8 @@ def main(args):
         log_file=global_log_file,
         domain_id=args.domain_id, 
         job_id=args.job_id, 
-        level=args.log_level
+        level=args.log_level,
+        log_format=args.log_format
     )
 
     # Find all stitch paths

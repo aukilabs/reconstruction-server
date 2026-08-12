@@ -919,7 +919,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(record_dict)
 
 
-def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=None, level="INFO"):
+def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=None, level="INFO", log_format="json"):
     """To setup as many loggers as you want"""
 
     logger = logging.getLogger(name)
@@ -933,8 +933,23 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
         logger, _ = add_file_handler(logger, log_file)
 
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
-        domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
+    if log_format == "json":
+        console_handler.setFormatter(
+            JsonFormatter(
+                datefmt='%Y-%m-%dT%H:%M:%S',
+                domain_id=domain_id,
+                job_id=job_id,
+                dataset_id=dataset_id
+            )
+        )
+    else:
+        console_handler.setFormatter(
+            logging.Formatter(
+                fmt='%(asctime)s %(name)s %(levelname)s %(message)s'
+            )
+        )
+       
+
     logger.addHandler(console_handler)
 
     return logger
