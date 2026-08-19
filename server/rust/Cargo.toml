@@ -17,4 +17,4 @@ publish = false
 deny-warnings = true
 
 [patch.crates-io]
-posemesh-compute-node-runner-api = { path = "../../../posemesh/core/compute-node-runner-api" }
+posemesh-compute-node-runner-api = { git = "https://github.com/aukilabs/posemesh.git", rev = "21078e510050a5e62be43018c3d8b2fc01b756e9" }

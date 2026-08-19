@@ -228,6 +228,7 @@ dependencies = [
 [[package]]
 name = "auki-p2p"
 version = "0.1.0"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "futures",
  "jsonwebtoken",
@@ -2512,6 +2513,7 @@ dependencies = [
 [[package]]
 name = "posemesh-compute-node"
 version = "0.3.3"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2547,6 +2549,7 @@ dependencies = [
 [[package]]
 name = "posemesh-compute-node-runner-api"
 version = "0.1.2"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2586,13 +2589,14 @@ dependencies = [
 [[package]]
 name = "posemesh-domain-http"
 version = "1.5.4"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "base64",
  "bytes",
  "console_error_panic_hook",
  "default-net",
  "futures",
- "posemesh-utils 0.1.3",
+ "posemesh-utils 0.1.3 (git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9)",
  "reqwest",
  "serde",
  "serde-wasm-bindgen",
@@ -2610,6 +2614,7 @@ dependencies = [
 [[package]]
 name = "posemesh-node-registration"
 version = "0.2.1"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2630,6 +2635,8 @@ dependencies = [
 [[package]]
 name = "posemesh-utils"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f64a8e8e1ac045081603dfec4a88969faa4eef5e9662473b863c4301479ae22"
 dependencies = [
  "futures",
  "gloo-timers",
@@ -2643,8 +2650,7 @@ dependencies = [
 [[package]]
 name = "posemesh-utils"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f64a8e8e1ac045081603dfec4a88969faa4eef5e9662473b863c4301479ae22"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
 dependencies = [
  "futures",
  "gloo-timers",
