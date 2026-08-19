@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -9,6 +10,7 @@ use auki_p2p::{
     P2P_TOKEN_AUDIENCE, P2P_TOKEN_ISSUER, P2P_TOKEN_SCOPE, P2P_TOKEN_TTL, P2P_TOKEN_TYPE,
 };
 use compute_runner_api::runner::AccessTokenProvider;
+use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::{
     ArtifactSink, ControlPlane, InputSource, LeaseEnvelope, P2pDataset, P2pDatasetRegistration,
     TaskCtx,
@@ -107,6 +109,47 @@ impl AccessTokenProvider for NoToken {
 static NO_SINK: NoSink = NoSink;
 static QUIET_CONTROL: QuietControl = QuietControl;
 static NO_TOKEN: NoToken = NoToken;
+
+#[derive(Debug)]
+struct RecordedArtifact {
+    rel_path: String,
+    name: String,
+    data_type: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct RecordingOutput {
+    artifacts: Mutex<Vec<RecordedArtifact>>,
+}
+
+#[async_trait]
+impl ArtifactSink for RecordingOutput {
+    async fn put_bytes(&self, _rel_path: &str, _bytes: &[u8]) -> Result<()> {
+        anyhow::bail!("output must retain explicit Domain artifact metadata")
+    }
+
+    async fn put_file(&self, _rel_path: &str, _file_path: &Path) -> Result<()> {
+        anyhow::bail!("output must retain explicit Domain artifact metadata")
+    }
+
+    async fn put_domain_artifact(
+        &self,
+        request: DomainArtifactRequest<'_>,
+    ) -> Result<Option<String>> {
+        let bytes = match request.content {
+            DomainArtifactContent::Bytes(bytes) => bytes.to_vec(),
+            DomainArtifactContent::File(path) => fs::read(path)?,
+        };
+        self.artifacts.lock().unwrap().push(RecordedArtifact {
+            rel_path: request.rel_path.into(),
+            name: request.name.into(),
+            data_type: request.data_type.into(),
+            bytes,
+        });
+        Ok(Some(format!("artifact-{}", request.name)))
+    }
+}
 
 struct UnexpectedP2p;
 
@@ -226,6 +269,53 @@ async fn verified_p2p_zip_reaches_the_existing_safe_extraction_path() {
         .join(format!("inputs/{}.zip", reference.dataset_id))
         .is_file());
     assert!(!run.domain_input_root.exists());
+
+    let output = RecordingOutput::default();
+    fs::write(run.workspace.root().join("log.txt"), b"synthetic task log").unwrap();
+    let sfm = run.workspace.refined_local().join(SCAN_NAME).join("sfm");
+    fs::create_dir_all(&sfm).unwrap();
+    for (name, bytes) in [
+        ("images.bin", b"images".as_slice()),
+        ("cameras.bin", b"cameras".as_slice()),
+        ("points3D.bin", b"points".as_slice()),
+        ("portals.csv", b"portal".as_slice()),
+    ] {
+        fs::write(sfm.join(name), bytes).unwrap();
+    }
+
+    crate::upload_task_log(&output, &run.workspace, "task-123")
+        .await
+        .unwrap();
+    let uploaded = crate::refined::RefinedUploader::new()
+        .process(&run.workspace, &output, true)
+        .await
+        .unwrap();
+    assert_eq!(uploaded, vec![SCAN_NAME]);
+
+    {
+        let artifacts = output.artifacts.lock().unwrap();
+        let task_log = artifacts
+            .iter()
+            .find(|artifact| artifact.data_type == "task_log_txt")
+            .expect("task log upload");
+        assert_eq!(task_log.rel_path, "logs/task-123.txt");
+        assert_eq!(task_log.name, "task_log_task-123");
+        assert_eq!(task_log.bytes, b"synthetic task log");
+
+        let refined = artifacts
+            .iter()
+            .find(|artifact| artifact.data_type == "refined_scan_zip")
+            .expect("refined scan upload");
+        assert_eq!(
+            refined.rel_path,
+            format!("refined/local/{SCAN_NAME}/RefinedScan.zip")
+        );
+        assert_eq!(refined.name, format!("refined_scan_{SCAN_NAME}"));
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&refined.bytes)).unwrap();
+        for expected in ["images.bin", "cameras.bin", "points3D.bin", "portals.csv"] {
+            assert!(archive.by_name(expected).is_ok(), "missing {expected}");
+        }
+    }
 
     fixture.shutdown().await;
 }
