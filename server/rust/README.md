@@ -16,7 +16,8 @@ stateless, fail-fast, and observable.
 - [`runner-reconstruction-local`](./runner-reconstruction-local/) —
   scaffold runner for local refinement pipeline integration.
 - [`runner-reconstruction-local-auki-sdk`](./runner-reconstruction-local-auki-sdk/) —
-  local refinement for Auki SDK capture sessions delivered as a single capture zip
+  local refinement for Auki SDK capture sessions referenced by one small Domain
+  artifact and fetched directly from the Robot over authenticated P2P
   (`/reconstruction/local-refinement-auki-sdk/v0`).
 - [`runner-reconstruction-global`](runner-reconstruction-global/) —
   scaffold runner for global refinement pipeline integration.
@@ -36,9 +37,11 @@ Supporting directories:
    for the exhaustive list.
 3. Runners are registered in a `RunnerRegistry`; the binary decides which
    capabilities to advertise.
-4. Once DDS supplies a SIWE token, the engine polls DMS, leases work, materializes
-   inputs, streams heartbeats, and uploads results through the domain storage
-   facade.
+4. Once DDS supplies a peer-bound SIWE token, the engine polls DMS, leases work,
+   materializes normal inputs, streams heartbeats, and uploads results through the
+   Domain storage facade. For the Auki SDK capability, Domain Server materializes
+   only `scan_path_recording_reference_json`; Posemesh uses the separately issued
+   task P2P credential to fetch and verify the referenced ZIP from the Robot.
 5. Completion or failure is reported back to DMS, and the cycle repeats until
   the process is stopped or receives `SIGINT`.
 
@@ -56,12 +59,26 @@ Supporting directories:
    export DDS_BASE_URL=https://dds.auki.network
    export REQUEST_TIMEOUT_SECS=60
    export LOG_FORMAT=text            # optional for readable logs
+   export AUKI_P2P_ENABLED=true       # required for Robot-hosted Auki session input
    ```
+   The reconstruction node is an outbound P2P consumer, so it does not advertise
+   a dataset address. `AUKI_P2P_LISTEN_MULTIADDRS` and
+   `AUKI_P2P_ADVERTISED_MULTIADDRS` may remain empty. The source reference supplies
+   the Robot's explicit reachable TCP multiaddr and Peer ID. There is no discovery,
+   relay, NAT traversal, or Domain Server fallback for the ZIP.
+   References must use `auki-p2p-dataset/v0`, match the lease Domain and Domain
+   artifact name, and carry only routing, size, SHA-256, and expiry metadata—never
+   a JWT, nonce, grant, or secret.
 3. Build and run the node:
    ```sh
    cargo run -p bin
    ```
 4. Watch the logs for DDS registration and leasing activity.
+
+The workspace intentionally patches `posemesh-compute-node-runner-api` and points
+the binary at the sibling local `posemesh` checkout for this prototype. This keeps
+the runner, engine, and Auki libp2p dataset adapter on the same unpublished API
+stack.
 
 ## Development tooling
 - `cargo fmt --all` (or `make fmt`) keeps formatting consistent.

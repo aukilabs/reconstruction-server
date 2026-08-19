@@ -15,3 +15,6 @@ publish = false
 # Metadata used by scripts/CI; clippy warnings are denied via CI commands.
 [workspace.metadata.ci]
 deny-warnings = true
+
+[patch.crates-io]
+posemesh-compute-node-runner-api = { path = "../../../posemesh/core/compute-node-runner-api" }

@@ -2,10 +2,10 @@
 //!
 //! Same contract as `/reconstruction/local-refinement/v1` on both ends -- one workspace
 //! per job, one Python pipeline invocation, refined `sfm/` folders zipped and uploaded as
-//! `refined_scan_<scan>` artifacts -- but the input is a single capture zip
-//! (e.g. `scan_path_recording_2026-08-05_09-33-06.zip`) which is expanded here rather
-//! than a set of per-file DMT artifacts, and the pipeline entrypoint is
-//! `local_auki_main.py` instead of `main.py --mode local_refinement`.
+//! `refined_scan_<scan>` artifacts -- but the input is a small Domain reference to one
+//! Robot-hosted capture ZIP. The ZIP is fetched through the authenticated P2P dataset
+//! handle and expanded here rather than materialized from Domain Server; the pipeline
+//! entrypoint remains `local_auki_main.py` instead of `main.py --mode local_refinement`.
 
 use std::{
     env,
@@ -720,12 +720,13 @@ mod tests {
                 output: &NoSink,
                 ctrl: &QuietCtrl,
                 access_token: &NoToken,
+                p2p_dataset: None,
             })
             .await
             .unwrap_err();
 
         let message = err.to_string();
-        assert!(message.contains("single session zip input"), "{message}");
+        assert!(message.contains("recording reference input"), "{message}");
         assert!(message.contains("cid-a, cid-b"), "{message}");
     }
 

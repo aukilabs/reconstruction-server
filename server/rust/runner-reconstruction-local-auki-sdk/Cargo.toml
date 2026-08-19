@@ -12,14 +12,24 @@ compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+libp2p-identity = "0.2.14"
+multiaddr = "0.18.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
+uuid = "1"
 walkdir = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
+[dev-dependencies]
+auki-p2p = { path = "../../../../posemesh/core/auki-p2p" }
+jsonwebtoken = "9"
+posemesh-compute-node = { path = "../../../../posemesh/core/compute-node" }
+uuid = { version = "1", features = ["v4"] }
+
 [package.metadata]
-description = "Runner for local refinement of Auki SDK capture sessions delivered as a single session zip."
+description = "Runner for local refinement of Auki SDK capture sessions fetched from an authenticated P2P reference."

@@ -1,22 +1,26 @@
 //! Input materialization for the Auki SDK local refinement capability.
 //!
 //! Unlike `/reconstruction/local-refinement/v1` -- which receives one Domain artifact
-//! per DMT scan file (ARposes.csv, Frames.mp4, ...) and only has to normalize their
-//! file names -- this capability receives a *single* zip holding a whole Auki capture
-//! folder (e.g. `scan_path_recording_2026-08-05_09-33-06.zip`). The zip is expanded
-//! here, on the Rust side, so the Python entrypoint sees a plain on-disk capture
-//! folder exactly like a manually unpacked session.
+//! per DMT scan file (ARposes.csv, Frames.mp4, ...) -- this capability receives one
+//! small Domain artifact describing a Robot-hosted Auki capture ZIP. The ZIP is fetched
+//! through `TaskCtx`'s authenticated P2P dataset handle and expanded here, on the Rust
+//! side, so the Python entrypoint still sees the same plain on-disk capture folder.
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
-use compute_runner_api::{MaterializedInput, TaskCtx};
-use tokio::task;
+use chrono::{DateTime, Utc};
+use compute_runner_api::{MaterializedInput, P2pDatasetReference, TaskCtx, P2P_DATASET_SCHEMA};
+use libp2p_identity::PeerId;
+use multiaddr::{Multiaddr, Protocol};
+use serde::Deserialize;
+use tokio::{fs as async_fs, task};
 use tracing::{info, warn};
-use walkdir::WalkDir;
+use uuid::Uuid;
 use zip::ZipArchive;
 
 use crate::workspace::{sanitize_segment, Workspace};
@@ -32,10 +36,10 @@ const SESSION_MARKER_DIR: &str = "sensorlogs";
 /// single wrapper directory inside the archive.
 const APP_ROOT_SEARCH_DEPTH: usize = 3;
 
-/// First four bytes of every local zip file header.
-const ZIP_MAGIC: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+const RECORDING_REFERENCE_DATA_TYPE: &str = "scan_path_recording_reference_json";
+const MAX_REFERENCE_BYTES: u64 = 64 * 1024;
 
-/// A single Auki capture session zip, downloaded and expanded into the workspace.
+/// A single Auki capture session ZIP, fetched over P2P and expanded into the workspace.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MaterializedSession {
@@ -59,28 +63,35 @@ pub struct MaterializedSession {
     pub extracted_files: usize,
 }
 
-/// Download the task's single session zip and expand it into the workspace datasets
-/// directory, returning where the capture folder landed.
+/// Materialize the task's single Domain reference, fetch its ZIP from the Robot over
+/// authenticated P2P, and expand it into the existing workspace datasets directory.
 pub async fn materialize_session_zip(
     ctx: &TaskCtx<'_>,
     workspace: &Workspace,
 ) -> Result<MaterializedSession> {
+    let lease_domain = ctx
+        .lease
+        .domain_id
+        .context("local Auki refinement lease is missing the Domain required for P2P input")?;
     let cids = &ctx.lease.task.inputs_cids;
     let cid = match cids.len() {
         1 => &cids[0],
         0 => {
             return Err(anyhow!(
-                "local auki refinement expects a single session zip input, got none"
+                "local Auki refinement expects one recording reference input, got none"
             ))
         }
         n => {
             return Err(anyhow!(
-                "local auki refinement expects a single session zip input, got {} ({})",
+                "local Auki refinement expects one recording reference input, got {} ({})",
                 n,
                 cids.join(", ")
             ))
         }
     };
+    let p2p_dataset = ctx
+        .p2p_dataset
+        .context("authenticated P2P dataset handle is unavailable for Auki session input")?;
 
     let materialized = ctx
         .input
@@ -88,15 +99,38 @@ pub async fn materialize_session_zip(
         .await
         .with_context(|| format!("materialize input CID {}", cid))?;
 
-    // Drop guard rather than a cleanup call at the end of the happy path: the downloaded
-    // archive is as large as the capture itself, and leaking one copy per failed attempt
-    // is enough to fill the disk and turn a single recoverable failure into a run of
-    // unrecoverable ones (observed: three retries, 522 MB leaked each).
+    // Domain Server supplies only the small JSON reference. Keep the existing cleanup
+    // guard so both valid and rejected references are removed on every exit path.
     let _input_cleanup = TempInputCleanup::for_materialized(&materialized, workspace);
 
-    let zip_path = find_session_zip(&materialized.root_dir)
-        .with_context(|| format!("locate session zip for CID {}", cid))?;
-    let scan_name = derive_scan_name(&materialized, &zip_path);
+    let reference = read_and_validate_reference(&materialized, lease_domain, Utc::now())
+        .await
+        .with_context(|| format!("validate P2P recording reference for CID {cid}"))?;
+    let scan_name = derive_scan_name(&materialized, &materialized.path);
+
+    let input_dir = workspace.root().join("inputs");
+    async_fs::create_dir_all(&input_dir)
+        .await
+        .with_context(|| format!("create P2P input directory {}", input_dir.display()))?;
+    let zip_path = input_dir.join(format!("{}.zip", reference.dataset_id));
+    info!(
+        cid = %cid,
+        dataset_id = %reference.dataset_id,
+        peer_id = %reference.peer_id,
+        scan = %scan_name,
+        destination = %zip_path.display(),
+        "fetching Auki session ZIP over authenticated P2P"
+    );
+    p2p_dataset
+        .fetch(&reference, &zip_path)
+        .await
+        .with_context(|| {
+            format!(
+                "fetch P2P dataset {} from Robot {}",
+                reference.dataset_id, reference.peer_id
+            )
+        })?;
+
     let dataset_dir = workspace.datasets().join(&scan_name);
     fs::create_dir_all(&dataset_dir)
         .with_context(|| format!("create dataset directory {}", dataset_dir.display()))?;
@@ -110,9 +144,9 @@ pub async fn materialize_session_zip(
         "expanding auki session zip"
     );
 
-    // Expanded straight from the downloaded zip into the workspace (rather than copying
-    // the archive in first, as local refinement does with its dataset files) -- these
-    // captures run to multiple GB and a second on-disk copy is not worth the space.
+    // The Compute Node adapter has already streamed this ZIP into the task workspace and
+    // verified its size and SHA-256 against the Domain reference. Keep the established
+    // safe extraction path and Python-facing directory layout unchanged.
     let extracted_files = extract_zip(&zip_path, &dataset_dir)
         .await
         .with_context(|| {
@@ -147,8 +181,158 @@ pub async fn materialize_session_zip(
     })
 }
 
-/// Removes the compute node's temporary download directory on every exit path from
-/// `materialize_session_zip`, success or failure.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatasetReferenceDocument {
+    schema: String,
+    dataset_id: String,
+    domain_id: Uuid,
+    name: String,
+    peer_id: String,
+    multiaddrs: Vec<String>,
+    size_bytes: u64,
+    sha256: String,
+    available_until: DateTime<Utc>,
+}
+
+async fn read_and_validate_reference(
+    materialized: &MaterializedInput,
+    lease_domain: Uuid,
+    now: DateTime<Utc>,
+) -> Result<P2pDatasetReference> {
+    if materialized.data_type.as_deref() != Some(RECORDING_REFERENCE_DATA_TYPE) {
+        anyhow::bail!(
+            "Auki session input must have Domain data type {RECORDING_REFERENCE_DATA_TYPE}, got {}",
+            materialized.data_type.as_deref().unwrap_or("<missing>")
+        );
+    }
+    let source_domain = materialized
+        .domain_id
+        .as_deref()
+        .context("recording reference Domain metadata is missing")?;
+    let source_domain = Uuid::parse_str(source_domain)
+        .context("recording reference Domain metadata is not a UUID")?;
+    if source_domain != lease_domain {
+        anyhow::bail!("recording reference Domain metadata does not match the task lease");
+    }
+
+    let metadata = async_fs::metadata(&materialized.path)
+        .await
+        .with_context(|| {
+            format!(
+                "inspect materialized recording reference {}",
+                materialized.path.display()
+            )
+        })?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_REFERENCE_BYTES {
+        anyhow::bail!(
+            "materialized recording reference must be a non-empty file no larger than {} bytes",
+            MAX_REFERENCE_BYTES
+        );
+    }
+    let bytes = async_fs::read(&materialized.path).await.with_context(|| {
+        format!(
+            "read materialized recording reference {}",
+            materialized.path.display()
+        )
+    })?;
+    let document: DatasetReferenceDocument =
+        serde_json::from_slice(&bytes).context("parse strict auki-p2p-dataset reference JSON")?;
+    validate_reference_document(document, materialized, lease_domain, now)
+}
+
+fn validate_reference_document(
+    document: DatasetReferenceDocument,
+    materialized: &MaterializedInput,
+    lease_domain: Uuid,
+    now: DateTime<Utc>,
+) -> Result<P2pDatasetReference> {
+    if document.schema != P2P_DATASET_SCHEMA {
+        anyhow::bail!(
+            "unsupported recording reference schema: {}",
+            document.schema
+        );
+    }
+    let dataset_id = Uuid::parse_str(&document.dataset_id)
+        .context("recording reference dataset_id must be a scan task UUID")?;
+    if dataset_id.to_string() != document.dataset_id {
+        anyhow::bail!("recording reference dataset_id must use canonical UUID form");
+    }
+    if document.domain_id != lease_domain {
+        anyhow::bail!("recording reference Domain does not match the task lease");
+    }
+    if document.name.trim().is_empty() {
+        anyhow::bail!("recording reference name is missing");
+    }
+    if !document.name.starts_with("scan_path_recording_") {
+        anyhow::bail!("recording reference name does not preserve the scan timestamp prefix");
+    }
+    let artifact_name = materialized
+        .name
+        .as_deref()
+        .context("recording reference Domain artifact name is missing")?;
+    if document.name != artifact_name {
+        anyhow::bail!("recording reference name does not match its Domain artifact name");
+    }
+    PeerId::from_str(&document.peer_id).context("recording reference Peer ID is invalid")?;
+    validate_multiaddrs(&document.multiaddrs)?;
+    if document.size_bytes == 0 {
+        anyhow::bail!("recording reference size_bytes must be greater than zero");
+    }
+    let digest =
+        hex::decode(&document.sha256).context("recording reference sha256 must be hexadecimal")?;
+    if digest.len() != 32 {
+        anyhow::bail!("recording reference sha256 must contain exactly 32 bytes");
+    }
+    if document.available_until <= now {
+        anyhow::bail!("recording reference has expired");
+    }
+
+    Ok(P2pDatasetReference {
+        schema: document.schema,
+        dataset_id: document.dataset_id,
+        domain_id: document.domain_id,
+        name: document.name,
+        peer_id: document.peer_id,
+        multiaddrs: document.multiaddrs,
+        size_bytes: document.size_bytes,
+        sha256: document.sha256,
+        available_until: document.available_until,
+    })
+}
+
+fn validate_multiaddrs(addresses: &[String]) -> Result<()> {
+    if addresses.is_empty() {
+        anyhow::bail!("recording reference has no explicit advertised multiaddr");
+    }
+    for address in addresses {
+        let parsed = Multiaddr::from_str(address)
+            .with_context(|| format!("recording reference multiaddr is invalid: {address}"))?;
+        let mut has_tcp = false;
+        for protocol in parsed.iter() {
+            match protocol {
+                Protocol::Tcp(0) => {
+                    anyhow::bail!("recording reference multiaddr uses ephemeral tcp/0: {address}")
+                }
+                Protocol::Tcp(_) => has_tcp = true,
+                Protocol::Ip4(ip) if ip.is_unspecified() => anyhow::bail!(
+                    "recording reference multiaddr uses an unspecified address: {address}"
+                ),
+                Protocol::Ip6(ip) if ip.is_unspecified() => anyhow::bail!(
+                    "recording reference multiaddr uses an unspecified address: {address}"
+                ),
+                _ => {}
+            }
+        }
+        if !has_tcp {
+            anyhow::bail!("recording reference multiaddr is not TCP: {address}");
+        }
+    }
+    Ok(())
+}
+
+/// Removes the Domain Server reference's temporary download directory on every exit
+/// path from `materialize_session_zip`, success or failure.
 struct TempInputCleanup(Option<PathBuf>);
 
 impl TempInputCleanup {
@@ -171,56 +355,15 @@ impl Drop for TempInputCleanup {
     }
 }
 
-/// Find the downloaded zip below `root`. Identified by content (local file header
-/// magic) rather than extension: the compute node renames every downloaded artifact to
-/// `<name>.<data_type>`, so the on-disk file rarely ends in `.zip`.
-fn find_session_zip(root: &Path) -> Result<PathBuf> {
-    let mut candidates = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if has_zip_magic(entry.path()) {
-            candidates.push(entry.path().to_path_buf());
-        }
-    }
-
-    match candidates.len() {
-        1 => Ok(candidates.remove(0)),
-        0 => Err(anyhow!(
-            "no zip archive found under materialized input {}",
-            root.display()
-        )),
-        _ => Err(anyhow!(
-            "expected exactly one zip archive under materialized input {}, found {}: {}",
-            root.display(),
-            candidates.len(),
-            candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
-    }
-}
-
-fn has_zip_magic(path: &Path) -> bool {
-    let mut header = [0u8; 4];
-    match fs::File::open(path).and_then(|mut f| f.read_exact(&mut header)) {
-        Ok(()) => header == ZIP_MAGIC,
-        Err(_) => false,
-    }
-}
-
 /// Derive the scan identifier for this input.
 ///
 /// Preferred source is the `datasets/<scan>/` folder the compute node's storage layer
-/// already derived from the artifact name (the capture timestamp when the name carries
-/// one, e.g. `scan_path_recording_2026-08-05_09-33-06.zip` -> `2026-08-05_09-33-06`).
+/// already derived from the Domain reference artifact name (for example,
+/// `scan_path_recording_2026-08-05_09-33-06` -> `2026-08-05_09-33-06`).
 /// Reusing it means this capability names its refined scans exactly the way
 /// `/reconstruction/local-refinement/v1` does, instead of inventing a second rule.
-fn derive_scan_name(materialized: &MaterializedInput, zip_path: &Path) -> String {
-    if let Ok(relative) = zip_path.strip_prefix(materialized.root_dir.join("datasets")) {
+fn derive_scan_name(materialized: &MaterializedInput, source_path: &Path) -> String {
+    if let Ok(relative) = source_path.strip_prefix(materialized.root_dir.join("datasets")) {
         let mut components = relative.components();
         if let Some(first) = components.next() {
             // Only a directory component qualifies; a zip sitting directly in
@@ -234,11 +377,12 @@ fn derive_scan_name(materialized: &MaterializedInput, zip_path: &Path) -> String
     if let Some(name) = materialized.name.as_deref() {
         let stem = name.strip_suffix(".zip").unwrap_or(name);
         if !stem.trim().is_empty() {
-            return sanitize_segment(stem);
+            let scan_name = stem.strip_prefix("scan_path_recording_").unwrap_or(stem);
+            return sanitize_segment(scan_name);
         }
     }
 
-    let stem = zip_path
+    let stem = source_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -538,10 +682,7 @@ mod tests {
         materialized.root_dir = temp.path().to_path_buf();
         materialized.name = Some("scan_path_recording_2026-08-05_09-33-06.zip".into());
 
-        assert_eq!(
-            derive_scan_name(&materialized, &zip),
-            "scan_path_recording_2026-08-05_09-33-06"
-        );
+        assert_eq!(derive_scan_name(&materialized, &zip), "2026-08-05_09-33-06");
     }
 
     #[test]
@@ -612,16 +753,8 @@ mod tests {
         assert!(sanitize_entry_path("/").is_none());
         assert!(sanitize_entry_path("").is_none());
     }
-
-    #[test]
-    fn finds_zip_by_magic_bytes() {
-        let temp = TempDir::new().unwrap();
-        let nested = temp.path().join("datasets").join("scan");
-        fs::create_dir_all(&nested).unwrap();
-        fs::write(nested.join("notes.txt"), b"plain text").unwrap();
-        let zip = nested.join("payload.auki_session_zip");
-        fs::write(&zip, b"PK\x03\x04rest").unwrap();
-
-        assert_eq!(find_session_zip(temp.path()).unwrap(), zip);
-    }
 }
+
+#[cfg(test)]
+#[path = "input_p2p_tests.rs"]
+mod p2p_tests;
