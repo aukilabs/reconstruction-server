@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use tokio::task;
-use tracing::info;
+use tracing::{info, warn};
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -81,22 +81,28 @@ impl RefinedUploader {
             };
 
             match sink.put_domain_artifact(req).await {
-                Ok(_) => {}
+                Ok(_) => {
+                    self.completed.insert(scan_id.clone());
+                    uploaded.push(scan_id);
+                }
+                Err(err) if is_conflict_err(&err) => {
+                    info!(
+                        scan = %scan_id,
+                        "refined scan already exists in domain (409); skipping upload"
+                    );
+                    self.completed.insert(scan_id.clone());
+                    uploaded.push(scan_id);
+                }
                 Err(err) => {
-                    if is_conflict_err(&err) {
-                        info!(
-                            scan = %scan_id,
-                            "refined scan already exists in domain (409); skipping upload"
-                        );
-                    } else {
-                        return Err(err)
-                            .with_context(|| format!("upload refined scan {}", scan_id));
-                    }
+                    // Refined scan zips include large optional COLMAP bins (e.g. images.bin).
+                    // Older Domain servers may reject oversized artifacts; do not fail the job.
+                    warn!(
+                        error = %err,
+                        scan = %scan_id,
+                        "refined scan upload failed; continuing without this artifact"
+                    );
                 }
             }
-
-            self.completed.insert(scan_id.clone());
-            uploaded.push(scan_id);
         }
 
         Ok(uploaded)
