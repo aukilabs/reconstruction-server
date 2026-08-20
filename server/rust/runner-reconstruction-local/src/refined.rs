@@ -94,8 +94,6 @@ impl RefinedUploader {
                     uploaded.push(scan_id);
                 }
                 Err(err) => {
-                    // Refined scan zips include large optional COLMAP bins (e.g. images.bin).
-                    // Older Domain servers may reject oversized artifacts; do not fail the job.
                     warn!(
                         error = %err,
                         scan = %scan_id,
