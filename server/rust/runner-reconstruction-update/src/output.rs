@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::workspace::Workspace;
 
@@ -131,19 +131,35 @@ pub async fn upload_final_outputs(
         } else {
             None
         };
-        sink.put_domain_artifact(DomainArtifactRequest {
-            rel_path: spec.relative_path,
-            name: &name,
-            data_type: data_type_for_display(spec.display_name),
-            existing_id,
-            content: DomainArtifactContent::File(&path),
-        })
-        .await
-        .with_context(|| format!("upload output {}", spec.display_name))?;
-        uploaded.insert(
-            spec.display_name.to_string(),
-            spec.relative_path.to_string(),
-        );
+        match sink
+            .put_domain_artifact(DomainArtifactRequest {
+                rel_path: spec.relative_path,
+                name: &name,
+                data_type: data_type_for_display(spec.display_name),
+                existing_id,
+                content: DomainArtifactContent::File(&path),
+            })
+            .await
+        {
+            Ok(_) => {
+                uploaded.insert(
+                    spec.display_name.to_string(),
+                    spec.relative_path.to_string(),
+                );
+            }
+            Err(err) if !spec.mandatory => {
+                warn!(
+                    error = %err,
+                    display = spec.display_name,
+                    rel_path = spec.relative_path,
+                    size_bytes = size,
+                    "optional output upload failed; continuing"
+                );
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("upload output {}", spec.display_name));
+            }
+        }
     }
 
     upload_json_if_exists(sink, "outputs_index.json", workspace.root(), name_suffix).await?;
@@ -180,19 +196,28 @@ async fn upload_json_if_exists(
     );
     if let Some((name, data_type)) = crate::strategy::describe_known_output(file_name, name_suffix)
     {
-        sink.put_domain_artifact(DomainArtifactRequest {
-            rel_path: file_name,
-            name: &name,
-            data_type: &data_type,
-            existing_id: None,
-            content: DomainArtifactContent::Bytes(&bytes),
-        })
-        .await
-        .with_context(|| format!("upload output {}", file_name))?;
-    } else {
-        sink.put_bytes(file_name, &bytes)
+        if let Err(err) = sink
+            .put_domain_artifact(DomainArtifactRequest {
+                rel_path: file_name,
+                name: &name,
+                data_type: &data_type,
+                existing_id: None,
+                content: DomainArtifactContent::Bytes(&bytes),
+            })
             .await
-            .with_context(|| format!("upload output {}", file_name))?;
+        {
+            warn!(
+                error = %err,
+                file = file_name,
+                "optional json output upload failed; continuing"
+            );
+        }
+    } else if let Err(err) = sink.put_bytes(file_name, &bytes).await {
+        warn!(
+            error = %err,
+            file = file_name,
+            "optional json output upload failed; continuing"
+        );
     }
     Ok(())
 }
