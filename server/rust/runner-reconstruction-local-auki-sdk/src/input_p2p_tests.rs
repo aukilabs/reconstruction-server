@@ -164,6 +164,37 @@ impl P2pDataset for UnexpectedP2p {
     }
 }
 
+struct CapturingP2p {
+    zip: Vec<u8>,
+    references: Mutex<Vec<P2pDatasetReference>>,
+}
+
+impl CapturingP2p {
+    fn new(zip: Vec<u8>) -> Self {
+        Self {
+            zip,
+            references: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn references(&self) -> Vec<P2pDatasetReference> {
+        self.references.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl P2pDataset for CapturingP2p {
+    async fn register(&self, _registration: P2pDatasetRegistration) -> Result<P2pDatasetReference> {
+        anyhow::bail!("unexpected registration")
+    }
+
+    async fn fetch(&self, reference: &P2pDatasetReference, destination: &Path) -> Result<()> {
+        self.references.lock().unwrap().push(reference.clone());
+        fs::write(destination, &self.zip)?;
+        Ok(())
+    }
+}
+
 struct DatasetFixture {
     robot: Node,
     compute: Node,
@@ -380,7 +411,7 @@ async fn wrong_domain_expired_and_non_tcp_references_are_rejected_before_fetch()
     let mut non_tcp = synthetic_reference(domain_id);
     non_tcp.multiaddrs = vec!["/ip4/127.0.0.1/udp/41001".into()];
     let run = run_reference(temp.path(), "non-tcp", domain_id, &non_tcp, &UnexpectedP2p).await;
-    assert!(format_error(run.result).contains("multiaddr is not TCP"));
+    assert!(format_error(run.result).contains("no safe direct or circuit route"));
 
     let valid = synthetic_reference(domain_id);
     let run = run_materialization(
@@ -394,6 +425,86 @@ async fn wrong_domain_expired_and_non_tcp_references_are_rejected_before_fetch()
     )
     .await;
     assert!(format_error(run.result).contains(RECORDING_REFERENCE_DATA_TYPE));
+}
+
+#[tokio::test]
+async fn one_to_three_circuit_routes_reach_the_unchanged_materialization_path() {
+    let temp = TempDir::new().unwrap();
+    let domain_id = Uuid::new_v4();
+    let source = temp.path().join("circuit-fixture.zip");
+    write_capture_zip(&source);
+    let zip = fs::read(source).unwrap();
+
+    for count in 1..=3 {
+        let mut reference = synthetic_reference(domain_id);
+        reference.multiaddrs = circuit_routes(&reference.peer_id, count);
+        let p2p = CapturingP2p::new(zip.clone());
+        let run = run_reference(
+            temp.path(),
+            &format!("circuit-{count}"),
+            domain_id,
+            &reference,
+            &p2p,
+        )
+        .await;
+        let session = run.result.unwrap();
+
+        assert_eq!(session.session_ids, vec!["R001-synthetic"]);
+        assert_eq!(session.extracted_files, 3);
+        assert!(session
+            .app_root
+            .join("R001-synthetic/sensorlogs/head_left_rgb/log_manifest.json")
+            .is_file());
+        let captured = p2p.references();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].multiaddrs, reference.multiaddrs);
+    }
+}
+
+#[tokio::test]
+async fn malformed_route_is_filtered_before_a_valid_circuit_reaches_fetch() {
+    let temp = TempDir::new().unwrap();
+    let domain_id = Uuid::new_v4();
+    let source = temp.path().join("filtered-fixture.zip");
+    write_capture_zip(&source);
+    let p2p = CapturingP2p::new(fs::read(source).unwrap());
+    let mut reference = synthetic_reference(domain_id);
+    let valid = circuit_routes(&reference.peer_id, 1).remove(0);
+    let relay = Identity::generate().peer_id();
+    let wrong_target = Identity::generate().peer_id();
+    let malformed = format!(
+        "/dns4/relay-invalid.dev.aukiverse.com/tcp/443/p2p/{relay}/p2p-circuit/p2p/{wrong_target}"
+    );
+    reference.multiaddrs = vec![malformed, valid.clone()];
+
+    let run = run_reference(temp.path(), "filtered-circuit", domain_id, &reference, &p2p).await;
+    assert!(run.result.is_ok());
+    assert_eq!(p2p.references()[0].multiaddrs, vec![valid]);
+}
+
+#[test]
+fn route_candidate_and_circuit_bounds_match_posemesh() {
+    let target = Identity::generate().peer_id();
+    let sixteen = (1..=16)
+        .map(|index| format!("/ip4/192.0.2.{index}/tcp/41001"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        validate_multiaddrs(&sixteen, target).unwrap().len(),
+        sixteen.len()
+    );
+
+    let mut seventeen = sixteen;
+    seventeen.push("/dns4/robot.dev.aukiverse.com/tcp/41001".into());
+    assert!(validate_multiaddrs(&seventeen, target)
+        .unwrap_err()
+        .to_string()
+        .contains("maximum is 16"));
+
+    let four_circuits = circuit_routes(&target.to_string(), 4);
+    assert!(validate_multiaddrs(&four_circuits, target)
+        .unwrap_err()
+        .to_string()
+        .contains("maximum is 3"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -589,6 +700,18 @@ fn synthetic_reference(domain_id: Uuid) -> P2pDatasetReference {
         sha256: "11".repeat(32),
         available_until: Utc::now() + chrono::Duration::minutes(10),
     }
+}
+
+fn circuit_routes(target_peer_id: &str, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|index| {
+            let relay_peer_id = Identity::generate().peer_id();
+            format!(
+                "/dns4/relay-{index}.dev.aukiverse.com/tcp/{}/p2p/{relay_peer_id}/p2p-circuit/p2p/{target_peer_id}",
+                4400 + index
+            )
+        })
+        .collect()
 }
 
 fn write_capture_zip(path: &Path) {

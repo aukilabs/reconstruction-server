@@ -6,7 +6,7 @@
 //! through `TaskCtx`'s authenticated P2P dataset handle and expanded here, on the Rust
 //! side, so the Python entrypoint still sees the same plain on-disk capture folder.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -38,6 +38,9 @@ const APP_ROOT_SEARCH_DEPTH: usize = 3;
 
 const RECORDING_REFERENCE_DATA_TYPE: &str = "scan_path_recording_reference_json";
 const MAX_REFERENCE_BYTES: u64 = 64 * 1024;
+const MAX_REFERENCE_ROUTES: usize = 16;
+const MAX_CIRCUIT_ROUTES: usize = 3;
+const MAX_ROUTE_TEXT_BYTES: usize = 1024;
 
 /// A single Auki capture session ZIP, fetched over P2P and expanded into the workspace.
 #[allow(dead_code)]
@@ -242,7 +245,7 @@ async fn read_and_validate_reference(
 }
 
 fn validate_reference_document(
-    document: DatasetReferenceDocument,
+    mut document: DatasetReferenceDocument,
     materialized: &MaterializedInput,
     lease_domain: Uuid,
     now: DateTime<Utc>,
@@ -274,8 +277,9 @@ fn validate_reference_document(
     if document.name != artifact_name {
         anyhow::bail!("recording reference name does not match its Domain artifact name");
     }
-    PeerId::from_str(&document.peer_id).context("recording reference Peer ID is invalid")?;
-    validate_multiaddrs(&document.multiaddrs)?;
+    let peer_id =
+        PeerId::from_str(&document.peer_id).context("recording reference Peer ID is invalid")?;
+    document.multiaddrs = validate_multiaddrs(&document.multiaddrs, peer_id)?;
     if document.size_bytes == 0 {
         anyhow::bail!("recording reference size_bytes must be greater than zero");
     }
@@ -301,34 +305,237 @@ fn validate_reference_document(
     })
 }
 
-fn validate_multiaddrs(addresses: &[String]) -> Result<()> {
+fn validate_multiaddrs(addresses: &[String], expected_peer_id: PeerId) -> Result<Vec<String>> {
     if addresses.is_empty() {
         anyhow::bail!("recording reference has no explicit advertised multiaddr");
     }
-    for address in addresses {
-        let parsed = Multiaddr::from_str(address)
-            .with_context(|| format!("recording reference multiaddr is invalid: {address}"))?;
-        let mut has_tcp = false;
-        for protocol in parsed.iter() {
-            match protocol {
-                Protocol::Tcp(0) => {
-                    anyhow::bail!("recording reference multiaddr uses ephemeral tcp/0: {address}")
-                }
-                Protocol::Tcp(_) => has_tcp = true,
-                Protocol::Ip4(ip) if ip.is_unspecified() => anyhow::bail!(
-                    "recording reference multiaddr uses an unspecified address: {address}"
-                ),
-                Protocol::Ip6(ip) if ip.is_unspecified() => anyhow::bail!(
-                    "recording reference multiaddr uses an unspecified address: {address}"
-                ),
-                _ => {}
-            }
+    if addresses.len() > MAX_REFERENCE_ROUTES {
+        anyhow::bail!(
+            "recording reference has {} route candidates; maximum is {MAX_REFERENCE_ROUTES}",
+            addresses.len()
+        );
+    }
+
+    let mut parsed = Vec::with_capacity(addresses.len());
+    for (route_index, address) in addresses.iter().enumerate() {
+        if address.len() > MAX_ROUTE_TEXT_BYTES {
+            warn!(
+                route_index,
+                route_bytes = address.len(),
+                maximum = MAX_ROUTE_TEXT_BYTES,
+                "skipping oversized recording reference route candidate"
+            );
+            continue;
         }
-        if !has_tcp {
-            anyhow::bail!("recording reference multiaddr is not TCP: {address}");
+        match Multiaddr::from_str(address) {
+            Ok(route) => parsed.push((route_index, address.as_str(), route)),
+            Err(error) => warn!(
+                route_index,
+                error = %error,
+                "skipping malformed recording reference route candidate"
+            ),
         }
     }
-    Ok(())
+
+    let circuit_count = parsed
+        .iter()
+        .filter(|(_, _, route)| {
+            route
+                .iter()
+                .any(|protocol| matches!(protocol, Protocol::P2pCircuit))
+        })
+        .count();
+    if circuit_count > MAX_CIRCUIT_ROUTES {
+        anyhow::bail!(
+            "recording reference has {circuit_count} circuit route candidates; maximum is {MAX_CIRCUIT_ROUTES}"
+        );
+    }
+
+    let mut direct = Vec::new();
+    let mut circuit = Vec::new();
+    let mut direct_routes = HashSet::new();
+    let mut relay_peer_ids = HashSet::new();
+    let mut relay_endpoints = HashSet::new();
+    for (route_index, address, route) in parsed {
+        let is_circuit = route
+            .iter()
+            .any(|protocol| matches!(protocol, Protocol::P2pCircuit));
+        if is_circuit {
+            let canonical = match canonicalize_circuit_route(&route, expected_peer_id) {
+                Ok(canonical) => canonical,
+                Err(error) => {
+                    warn!(
+                        route_index,
+                        route = %address,
+                        error = %error,
+                        "skipping unsafe recording reference circuit candidate"
+                    );
+                    continue;
+                }
+            };
+            if relay_peer_ids.contains(&canonical.relay_peer_id)
+                || relay_endpoints.contains(&canonical.endpoint)
+            {
+                warn!(
+                    route_index,
+                    route = %address,
+                    "skipping duplicate recording reference circuit candidate"
+                );
+                continue;
+            }
+            relay_peer_ids.insert(canonical.relay_peer_id);
+            relay_endpoints.insert(canonical.endpoint);
+            circuit.push(canonical.route.to_string());
+        } else {
+            let canonical = match canonicalize_direct_route(&route, expected_peer_id) {
+                Ok(canonical) => canonical,
+                Err(error) => {
+                    warn!(
+                        route_index,
+                        route = %address,
+                        error = %error,
+                        "skipping unsafe recording reference direct candidate"
+                    );
+                    continue;
+                }
+            };
+            let canonical = canonical.to_string();
+            if !direct_routes.insert(canonical.clone()) {
+                warn!(
+                    route_index,
+                    route = %address,
+                    "skipping duplicate recording reference direct candidate"
+                );
+                continue;
+            }
+            direct.push(canonical);
+        }
+    }
+
+    direct.extend(circuit);
+    if direct.is_empty() {
+        anyhow::bail!("recording reference contains no safe direct or circuit route candidate");
+    }
+    Ok(direct)
+}
+
+fn canonicalize_direct_route(route: &Multiaddr, expected_peer_id: PeerId) -> Result<Multiaddr> {
+    let protocols = route.iter().collect::<Vec<_>>();
+    let (network, port, suffix) = match protocols.as_slice() {
+        [network, Protocol::Tcp(port)] => (network, *port, None),
+        [network, Protocol::Tcp(port), Protocol::P2p(peer_id)] => (network, *port, Some(*peer_id)),
+        _ => anyhow::bail!("expected exact address/tcp[/p2p] grammar"),
+    };
+    if !matches!(
+        network,
+        Protocol::Ip4(_)
+            | Protocol::Ip6(_)
+            | Protocol::Dns(_)
+            | Protocol::Dns4(_)
+            | Protocol::Dns6(_)
+    ) {
+        anyhow::bail!("direct route address must be ip4, ip6, dns, dns4, or dns6");
+    }
+    if port == 0 {
+        anyhow::bail!("direct route TCP port must be non-zero");
+    }
+    if suffix.is_some_and(|peer_id| peer_id != expected_peer_id) {
+        anyhow::bail!("direct route terminal Peer ID does not match the reference");
+    }
+
+    let mut canonical = route.clone();
+    if suffix.is_some() {
+        canonical.pop();
+    }
+    Ok(canonical)
+}
+
+struct CanonicalCircuitRoute {
+    route: Multiaddr,
+    relay_peer_id: PeerId,
+    endpoint: String,
+}
+
+fn canonicalize_circuit_route(
+    route: &Multiaddr,
+    expected_target_peer_id: PeerId,
+) -> Result<CanonicalCircuitRoute> {
+    let mut protocols = route.iter();
+    let (host, port, relay_peer_id, target_peer_id) = match (
+        protocols.next(),
+        protocols.next(),
+        protocols.next(),
+        protocols.next(),
+        protocols.next(),
+        protocols.next(),
+    ) {
+        (
+            Some(Protocol::Dns4(host)),
+            Some(Protocol::Tcp(port)),
+            Some(Protocol::P2p(relay_peer_id)),
+            Some(Protocol::P2pCircuit),
+            Some(Protocol::P2p(target_peer_id)),
+            None,
+        ) => (host, port, relay_peer_id, target_peer_id),
+        _ => anyhow::bail!("expected exact dns4/tcp/p2p/p2p-circuit/p2p grammar"),
+    };
+    if port == 0 {
+        anyhow::bail!("circuit route TCP port must be non-zero");
+    }
+    if target_peer_id != expected_target_peer_id {
+        anyhow::bail!("circuit route target Peer ID does not match the reference");
+    }
+
+    let host = canonicalize_public_fqdn(&host)
+        .context("circuit route host is not an allowed public FQDN")?;
+    let endpoint = format!("/dns4/{host}/tcp/{port}");
+    let canonical =
+        format!("{endpoint}/p2p/{relay_peer_id}/p2p-circuit/p2p/{expected_target_peer_id}")
+            .parse()
+            .context("construct canonical circuit multiaddr")?;
+    Ok(CanonicalCircuitRoute {
+        route: canonical,
+        relay_peer_id,
+        endpoint,
+    })
+}
+
+fn canonicalize_public_fqdn(raw: &str) -> Option<String> {
+    let host = raw.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || host.len() > 253 || !host.contains('.') {
+        return None;
+    }
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    const FORBIDDEN_SUFFIXES: &[&str] = &[
+        ".localhost",
+        ".local",
+        ".internal",
+        ".invalid",
+        ".test",
+        ".example",
+        ".home.arpa",
+    ];
+    if host == "localhost"
+        || FORBIDDEN_SUFFIXES
+            .iter()
+            .any(|suffix| host.ends_with(suffix))
+    {
+        return None;
+    }
+    if host.split('.').any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    }) {
+        return None;
+    }
+    Some(host)
 }
 
 /// Removes the Domain Server reference's temporary download directory on every exit

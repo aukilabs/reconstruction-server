@@ -228,13 +228,16 @@ dependencies = [
 [[package]]
 name = "auki-p2p"
 version = "0.1.0"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
+ "chrono",
  "futures",
+ "hickory-resolver",
  "jsonwebtoken",
  "libp2p",
  "libp2p-stream",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "uuid",
@@ -802,6 +805,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dtoa"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c3cf4824e2d5f025c7b531afcb2325364084a16806f6d47fbc1f5fbd9960590"
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -972,6 +981,16 @@ dependencies = [
  "futures-io",
  "futures-sink",
  "futures-task",
+ "futures-util",
+]
+
+[[package]]
+name = "futures-bounded"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91f328e7fb845fc832912fb6a34f40cf6d1888c92f974d1893a54e97b5ff542e"
+dependencies = [
+ "futures-timer",
  "futures-util",
 ]
 
@@ -1747,8 +1766,10 @@ dependencies = [
  "libp2p-dns",
  "libp2p-identity",
  "libp2p-mdns",
+ "libp2p-metrics",
  "libp2p-noise",
  "libp2p-quic",
+ "libp2p-relay",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-upnp",
@@ -1862,6 +1883,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "libp2p-metrics"
+version = "0.15.0"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
+dependencies = [
+ "futures",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-relay",
+ "libp2p-swarm",
+ "pin-project",
+ "prometheus-client",
+ "web-time",
+]
+
+[[package]]
 name = "libp2p-noise"
 version = "0.45.0"
 source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
@@ -1907,6 +1943,30 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "libp2p-relay"
+version = "0.18.0"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "either",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "quick-protobuf",
+ "quick-protobuf-codec",
+ "rand 0.8.6",
+ "static_assertions",
+ "thiserror 1.0.69",
+ "tracing",
+ "void",
+ "web-time",
 ]
 
 [[package]]
@@ -2513,7 +2573,7 @@ dependencies = [
 [[package]]
 name = "posemesh-compute-node"
 version = "0.3.3"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2549,7 +2609,7 @@ dependencies = [
 [[package]]
 name = "posemesh-compute-node-runner-api"
 version = "0.1.2"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2589,14 +2649,14 @@ dependencies = [
 [[package]]
 name = "posemesh-domain-http"
 version = "1.5.4"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
  "base64",
  "bytes",
  "console_error_panic_hook",
  "default-net",
  "futures",
- "posemesh-utils 0.1.3 (git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9)",
+ "posemesh-utils 0.1.3 (git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5)",
  "reqwest",
  "serde",
  "serde-wasm-bindgen",
@@ -2614,7 +2674,7 @@ dependencies = [
 [[package]]
 name = "posemesh-node-registration"
 version = "0.2.1"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
  "anyhow",
  "axum",
@@ -2650,7 +2710,7 @@ dependencies = [
 [[package]]
 name = "posemesh-utils"
 version = "0.1.3"
-source = "git+https://github.com/aukilabs/posemesh.git?rev=21078e510050a5e62be43018c3d8b2fc01b756e9#21078e510050a5e62be43018c3d8b2fc01b756e9"
+source = "git+https://github.com/aukilabs/posemesh.git?rev=4bed3f76f440d45083ac04860b36fe0203439ea5#4bed3f76f440d45083ac04860b36fe0203439ea5"
 dependencies = [
  "futures",
  "gloo-timers",
@@ -2705,6 +2765,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "prometheus-client"
+version = "0.22.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "504ee9ff529add891127c4827eb481bd69dc0ebc72e9a682e187db4caa60c3ca"
+dependencies = [
+ "dtoa",
+ "itoa",
+ "parking_lot",
+ "prometheus-client-derive-encode",
+]
+
+[[package]]
+name = "prometheus-client-derive-encode"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "440f724eba9f6996b75d63681b0a92b06947f1457076d503a4d2e2c8f56442b8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "prost"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2734,6 +2817,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d6da84cc204722a989e01ba2f6e1e276e190f22263d0cb6ce8526fcdb0d2e1f"
 dependencies = [
  "byteorder",
+]
+
+[[package]]
+name = "quick-protobuf-codec"
+version = "0.3.1"
+source = "git+https://github.com/aukilabs/rust-libp2p.git?branch=fix%2Fgossipsub-wasm#9b97c007650c3a3e29cf90b896a159fc3e0e0b5b"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "quick-protobuf",
+ "thiserror 1.0.69",
+ "unsigned-varint",
 ]
 
 [[package]]
