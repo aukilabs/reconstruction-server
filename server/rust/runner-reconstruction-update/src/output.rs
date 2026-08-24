@@ -64,27 +64,27 @@ const UPDATE_OUTPUTS: &[OutputSpec] = &[
     OutputSpec {
         relative_path: "refined/update/refined_sfm_combined/cameras.bin",
         display_name: "colmap_cameras_bin",
-        mandatory: false,
+        mandatory: true,
     },
     OutputSpec {
         relative_path: "refined/update/refined_sfm_combined/frames.bin",
         display_name: "colmap_frames_bin",
-        mandatory: false,
+        mandatory: true,
     },
     OutputSpec {
         relative_path: "refined/update/refined_sfm_combined/images.bin",
         display_name: "colmap_images_bin",
-        mandatory: false,
+        mandatory: true,
     },
     OutputSpec {
         relative_path: "refined/update/refined_sfm_combined/points3D.bin",
         display_name: "colmap_points3d_bin",
-        mandatory: false,
+        mandatory: true,
     },
     OutputSpec {
         relative_path: "refined/update/refined_sfm_combined/rigs.bin",
         display_name: "colmap_rigs_bin",
-        mandatory: false,
+        mandatory: true,
     },
 ];
 
