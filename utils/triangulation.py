@@ -155,6 +155,18 @@ def run_triangulation(
 
         sorted_image_ids = sorted(reconstruction.reg_image_ids())
 
+        # Gauge anchor frames. BundleAdjustmentConfig.set_constant_rig_from_world_pose
+        # keys on FRAME ids, not image ids -- identical for the ARKit path (one trivial
+        # single-image frame per image, frame_id == image_id) but not for a real
+        # multi-sensor rig, where one Frame owns every rigidly-mounted camera's image at
+        # a given timestamp. Passing image ids there fixed frame 1 twice-over and left
+        # frame 2 free, while images 3/4 of frame 1 still registered that frame's pose as
+        # a variable parameter block -- so nothing was actually held constant and the
+        # whole segment was free to drift as a rigid body (measured: 0.89m / 4.7deg on
+        # session_20260729_122236/segment_008). Take the first two DISTINCT frame ids
+        # instead, which reproduces the intended behaviour on both paths.
+        sorted_gauge_frame_ids = sorted({reconstruction.images[i].frame_id for i in sorted_image_ids})[:2]
+
         retriangulated = False
         ba_iterations_remaining = num_ba_iterations_total
         while ba_iterations_remaining > 0:
@@ -174,11 +186,11 @@ def run_triangulation(
 
             loss = ba_options.ceres.create_loss_function()
 
-            # Fix 7-DOFs of the bundle adjustment problem
-            ba_config.set_constant_rig_from_world_pose(sorted_image_ids[0])
+            # Fix 7-DOFs of the bundle adjustment problem (see sorted_gauge_frame_ids)
+            for gauge_frame_id in sorted_gauge_frame_ids:
+                ba_config.set_constant_rig_from_world_pose(gauge_frame_id)
             #TODO how to do this in pycolmap 3.12?
             #ba_config.set_constant_cam_positions(sorted_image_ids[1], [0])
-            ba_config.set_constant_rig_from_world_pose(sorted_image_ids[1])
             #ba_config.fix_gauge(pycolmap.BundleAdjustmentGauge.TWO_CAMS_FROM_WORLD)
 
             # Adjust refinement config to add more weight to relative se3 poses (to keep scale from changing),

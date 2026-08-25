@@ -5,6 +5,13 @@ independent single-camera "mini rigs" for movable/actuated cameras) from an Auki
 directory (registry + sensorlogs + poselogs), seeds per-camera intrinsics since none are
 recorded, and runs qr-lab detection across every frame for portal registration.
 
+Which cameras land on the shared Rig is decided from the pose logs, not from the
+poselog manifest's declared writer_mode: "movable" only means the SDK may log a new
+pose per frame, and a head/arm camera that stayed parked for the whole capture is
+physically part of the rig. `analyze_sensor_motion` measures each sensor's worst
+deviation from its own mean pose and `load_auki_session` folds the static ones in --
+see those two functions for the tolerances and why it matters for bundle adjustment.
+
 Coordinate conventions
 -----------------------
 Auki's camera optical frames (registry axes: x=right, y=down, z=forward) already match
@@ -333,7 +340,113 @@ class SensorInfo(NamedTuple):
     width: int
     height: int
     distortion_model: str
-    writer_mode: str  # "rigid" or "movable"
+    writer_mode: str  # "rigid" or "movable", exactly as the poselog manifest declares it
+
+
+class SensorMotionStat(NamedTuple):
+    """How much a sensor's base_link->camera pose actually moves over the session,
+    measured as the worst-case deviation of any single sample from the *mean* pose --
+    i.e. literally the error that would be introduced by baking that mean in as a fixed
+    sensor_from_rig extrinsic. See `analyze_sensor_motion`."""
+    sensor_id: str
+    declared_mode: str        # what the poselog manifest says: "rigid" | "movable"
+    effective_mode: str       # what this session's data says it should be treated as
+    n_samples: int
+    max_translation_m: float
+    max_rotation_deg: float
+    rms_translation_m: float
+    is_static: bool
+
+
+def _rotation_angle_deg(rotation: pycolmap.Rotation3d) -> float:
+    return float(np.degrees(2.0 * np.arcsin(np.clip(np.linalg.norm(rotation.quat[:3]), 0.0, 1.0))))
+
+
+def analyze_sensor_motion(
+    pose_samples_per_sensor: Dict[str, List[PoseSample]],
+    declared_mode_per_sensor: Dict[str, str],
+    static_translation_tol_m: float = 0.02,
+    static_rotation_tol_deg: float = 1.0,
+) -> Dict[str, SensorMotionStat]:
+    """Scan every sensor's base_link->camera pose log and classify it as physically
+    static or genuinely moving, independent of what its poselog manifest *declares*.
+
+    A "movable" writer_mode only says the SDK is willing to log a new pose per frame --
+    not that the camera actually articulated during this capture. On a robot whose head
+    and arms happened to stay parked, a declared-movable camera's pose is constant to
+    well under a millimetre, and treating it as movable costs real reconstruction
+    quality: each of its images becomes its own single-camera "mini rig" with a pose
+    baked from the pose logs and never refined, so bundle adjustment can neither use
+    those images to constrain the shared rig trajectory nor correct them.
+
+    The test is the same quantity that gets thrown away by the rigid approximation: the
+    worst deviation of any single sample from the mean pose (translation in metres,
+    rotation angle in degrees). Tolerances default well below any real articulation
+    (centimetres/degrees) and well above pose-log quantisation noise (sub-millimetre,
+    hundredths of a degree on real captures), so the two cases separate by orders of
+    magnitude rather than sitting near a threshold.
+
+    Declared-rigid sensors are analysed too -- their stats are pure diagnostics (they
+    stay rigid regardless), but a declared-rigid sensor showing centimetres of motion is
+    worth seeing rather than silently averaging away.
+    """
+    stats: Dict[str, SensorMotionStat] = {}
+    for sensor_id, samples in pose_samples_per_sensor.items():
+        declared = declared_mode_per_sensor[sensor_id]
+        if not samples:
+            stats[sensor_id] = SensorMotionStat(
+                sensor_id=sensor_id, declared_mode=declared, effective_mode=declared,
+                n_samples=0, max_translation_m=float("nan"), max_rotation_deg=float("nan"),
+                rms_translation_m=float("nan"), is_static=False,
+            )
+            continue
+
+        mean = mean_pose([s.pose for s in samples])
+        mean_inv = mean.inverse()
+        trans_dev = np.array([np.linalg.norm(s.pose.translation - mean.translation) for s in samples])
+        rot_dev = np.array([_rotation_angle_deg((mean_inv * s.pose).rotation) for s in samples])
+
+        is_static = (trans_dev.max() <= static_translation_tol_m
+                     and rot_dev.max() <= static_rotation_tol_deg)
+        stats[sensor_id] = SensorMotionStat(
+            sensor_id=sensor_id, declared_mode=declared,
+            effective_mode="rigid" if (declared == "rigid" or is_static) else "movable",
+            n_samples=len(samples), max_translation_m=float(trans_dev.max()),
+            max_rotation_deg=float(rot_dev.max()),
+            rms_translation_m=float(np.sqrt((trans_dev ** 2).mean())), is_static=bool(is_static),
+        )
+    return stats
+
+
+def scan_sensor_motion(
+    app_root: str,
+    session_id: str,
+    static_translation_tol_m: float = 0.02,
+    static_rotation_tol_deg: float = 1.0,
+) -> Dict[str, SensorMotionStat]:
+    """Standalone version of the rig pre-step: read only the `base_link -> <sensor>`
+    poselogs of a session and report how each sensor would be grouped, without touching
+    the sensorlogs. `load_auki_session` runs the same analysis as part of loading, but it
+    also extracts every camera frame to disk (tens of GB and several minutes on a long
+    capture) -- use this when the grouping decision is all that is wanted, e.g. to check
+    a session before committing to reconstructing it."""
+    session_root = auki_layout.session_root(app_root, session_id)
+    sensorlogs_dir = Path(session_root) / "sensorlogs"
+    pose_samples_per_sensor: Dict[str, List[PoseSample]] = {}
+    declared_mode_per_sensor: Dict[str, str] = {}
+
+    for sensor_id in sorted(p.name for p in sensorlogs_dir.iterdir() if p.is_dir()):
+        manifest = auki_logs.Log.read(auki_layout.sensorlog_path(session_root, sensor_id)).manifest()
+        frame_id = manifest["frame"]["id"]
+        pose_path = auki_layout.poselog_path(session_root, "base_link", frame_id)
+        pose_samples_per_sensor[sensor_id] = _read_poselog(session_root, "base_link", frame_id)
+        declared_mode_per_sensor[sensor_id] = auki_logs.Log.read(pose_path).manifest()["writer_mode"]
+
+    return analyze_sensor_motion(
+        pose_samples_per_sensor, declared_mode_per_sensor,
+        static_translation_tol_m=static_translation_tol_m,
+        static_rotation_tol_deg=static_rotation_tol_deg,
+    )
 
 
 class ImageRecord(NamedTuple):
@@ -347,6 +460,11 @@ class AukiSessionData(NamedTuple):
     session_root: str
     images_dir: Path
     sensor_infos: Dict[str, SensorInfo]
+    # rigid_/movable_sensor_ids are the *effective* grouping this session's pose data
+    # supports, which is not always what sensor_infos[...].writer_mode declares: a
+    # declared-movable sensor that never actually moved is grouped with the rigid ones
+    # (see analyze_sensor_motion / load_auki_session's regroup_static_movable). The
+    # declared value stays untouched in sensor_infos; `sensor_motion` records both.
     rigid_sensor_ids: List[str]
     movable_sensor_ids: List[str]
     ref_sensor_id: str
@@ -355,6 +473,7 @@ class AukiSessionData(NamedTuple):
     base_from_camera_movable: Dict[str, List[PoseSample]]
     trajectory: List[PoseSample]  # world_from_base, raw Auki convention
     world_frame_entry: dict  # this session's own registry-declared "world" axes convention
+    sensor_motion: Dict[str, SensorMotionStat] = {}
 
 
 def load_auki_session(
@@ -363,10 +482,22 @@ def load_auki_session(
     images_dir: Path,
     peer_id: str = PEER_ID,
     logger: Optional[logging.Logger] = None,
+    regroup_static_movable: bool = True,
+    static_translation_tol_m: float = 0.02,
+    static_rotation_tol_deg: float = 1.0,
 ) -> AukiSessionData:
     """Read an Auki session's registry + sensor/pose logs, extract every camera frame to
     disk under `images_dir/<sensor_id>/<timestamp_ns>.jpg`, and return the raw pose/sensor
     data needed to build a pycolmap Reconstruction (see build_auki_rig_and_frames).
+
+    regroup_static_movable: run `analyze_sensor_motion` over every sensor's pose log
+        first and fold declared-movable-but-physically-static cameras into the rigid
+        group, so they join the one shared multi-sensor Rig instead of each getting a
+        single-camera mini rig with frozen, never-refined poses. Set False to take every
+        poselog's declared writer_mode at face value.
+    static_translation_tol_m / static_rotation_tol_deg: how far a declared-movable
+        sensor's pose may deviate from its own mean before it counts as genuinely
+        moving -- see analyze_sensor_motion.
     """
     logger = logger or logging.getLogger("auki_reconstruction")
     session_root = auki_layout.session_root(app_root, session_id)
@@ -377,8 +508,8 @@ def load_auki_session(
 
     sensor_infos: Dict[str, SensorInfo] = {}
     images_per_sensor: Dict[str, List[ImageRecord]] = {}
-    base_from_camera_rigid: Dict[str, pycolmap.Rigid3d] = {}
-    base_from_camera_movable: Dict[str, List[PoseSample]] = {}
+    pose_samples_per_sensor: Dict[str, List[PoseSample]] = {}
+    declared_mode_per_sensor: Dict[str, str] = {}
 
     for sensor_id in sensor_ids:
         sensor_path = auki_layout.sensorlog_path(session_root, sensor_id)
@@ -407,12 +538,10 @@ def load_auki_session(
             writer_mode=writer_mode,
         )
 
-        if writer_mode == "rigid":
-            base_from_camera_rigid[sensor_id] = mean_pose([s.pose for s in pose_samples])
-        elif writer_mode == "movable":
-            base_from_camera_movable[sensor_id] = pose_samples
-        else:
+        if writer_mode not in ("rigid", "movable"):
             raise ValueError(f"Unexpected writer_mode {writer_mode!r} for sensor {sensor_id}")
+        pose_samples_per_sensor[sensor_id] = pose_samples
+        declared_mode_per_sensor[sensor_id] = writer_mode
 
         sensor_image_dir = images_dir / sensor_id
         sensor_image_dir.mkdir(parents=True, exist_ok=True)
@@ -461,11 +590,57 @@ def load_auki_session(
             f"-- using it as-is, but this is a genuinely new case worth a second look."
         )
 
-    rigid_sensor_ids = sorted(sid for sid, info in sensor_infos.items() if info.writer_mode == "rigid")
-    movable_sensor_ids = sorted(sid for sid, info in sensor_infos.items() if info.writer_mode == "movable")
+    # --- Pre-step: who actually moved? -------------------------------------------
+    # Declared writer_mode is a capability, not an observation -- a "movable" head or
+    # arm camera that stayed parked for the whole capture belongs on the shared rig,
+    # not in a mini rig of its own with frozen poses. Measure, then group.
+    sensor_motion = analyze_sensor_motion(
+        pose_samples_per_sensor, declared_mode_per_sensor,
+        static_translation_tol_m=static_translation_tol_m,
+        static_rotation_tol_deg=static_rotation_tol_deg,
+    )
+    for sid in sensor_ids:
+        st = sensor_motion[sid]
+        logger.info(f"{sid}: declared={st.declared_mode}, max motion vs. mean pose "
+                    f"{st.max_translation_m*1000:.2f}mm / {st.max_rotation_deg:.3f}deg "
+                    f"over {st.n_samples} sample(s) -> static={st.is_static}")
+
+    def _effective_mode(sid):
+        if not regroup_static_movable:
+            return declared_mode_per_sensor[sid]
+        return sensor_motion[sid].effective_mode
+
+    regrouped = sorted(sid for sid in sensor_ids
+                       if declared_mode_per_sensor[sid] == "movable" and _effective_mode(sid) == "rigid")
+    if regrouped:
+        logger.info(f"Grouping {len(regrouped)} declared-movable but physically-static sensor(s) into the "
+                    f"main rig: {regrouped} (within {static_translation_tol_m*1000:.0f}mm / "
+                    f"{static_rotation_tol_deg:.2f}deg of a constant pose)")
+    still_movable = sorted(sid for sid in sensor_ids if _effective_mode(sid) == "movable")
+    if still_movable:
+        logger.info(f"Keeping {len(still_movable)} genuinely-moving sensor(s) as per-sensor mini rigs: "
+                    f"{still_movable}")
+
+    rigid_sensor_ids, movable_sensor_ids = [], []
+    base_from_camera_rigid: Dict[str, pycolmap.Rigid3d] = {}
+    base_from_camera_movable: Dict[str, List[PoseSample]] = {}
+    for sensor_id in sensor_ids:
+        if _effective_mode(sensor_id) == "rigid":
+            rigid_sensor_ids.append(sensor_id)
+            base_from_camera_rigid[sensor_id] = mean_pose([s.pose for s in pose_samples_per_sensor[sensor_id]])
+        else:
+            movable_sensor_ids.append(sensor_id)
+            base_from_camera_movable[sensor_id] = pose_samples_per_sensor[sensor_id]
+
     if not rigid_sensor_ids:
         raise ValueError("No rigid sensors found -- need at least one to anchor the main Rig")
-    ref_sensor_id = rigid_sensor_ids[0]
+    # Prefer a declared-rigid sensor as the rig reference frame: it is the one whose
+    # fixed mounting the capture rig itself vouches for, whereas a regrouped sensor is
+    # only static as far as *this* session's data goes.
+    ref_sensor_id = next(
+        (sid for sid in rigid_sensor_ids if declared_mode_per_sensor[sid] == "rigid"),
+        rigid_sensor_ids[0],
+    )
 
     return AukiSessionData(
         session_root=session_root,
@@ -479,6 +654,7 @@ def load_auki_session(
         base_from_camera_movable=base_from_camera_movable,
         trajectory=trajectory,
         world_frame_entry=world_frame_entry,
+        sensor_motion=sensor_motion,
     )
 
 
@@ -714,7 +890,7 @@ def build_auki_rig_and_frames(
             timestamp_per_image[record.relpath] = record.timestamp_ns
 
             next_frame_id += 1
-            next_frame_id += 1
+            # next_frame_id += 1
 
     if dropped_images:
         logger.warning(f"Dropped {dropped_images} image(s) with no pose sample within {max_pose_dt_ns/1e6:.0f}ms")

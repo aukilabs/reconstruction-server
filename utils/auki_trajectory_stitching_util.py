@@ -19,6 +19,10 @@ amplify a single noisy marker pose into a whole-segment misalignment -- so what
 inconsistency *remains* between segments' independent observations of the same marker,
 after this correction, isolates genuine per-detection QR/PnP error rather than
 segment-to-segment registration error.
+
+`write_global_refined_outputs` turns those per-segment alignments into the finished
+global output set (merged COLMAP model, point cloud + derivatives, portal manifest) --
+merging rig-structure-preserving, see `utils/colmap_rig_merge.py`.
 """
 from pathlib import Path
 from typing import NamedTuple, List
@@ -108,6 +112,109 @@ def transform_detections(detections, transform):
         pose = transform @ rigid_4x4_from_position_quat(d["position"], d["quat"])
         out.append({**d, "position": pose[:3, 3], "quat": pycolmap.Rotation3d(pose[:3, :3]).quat})
     return out
+
+
+def write_global_refined_outputs(
+    local_output_root,
+    segment_ids,
+    alignments,
+    global_output_root,
+    logger,
+    max_reproj_error=4.0,
+    min_tri_angle=2.0,
+):
+    """Merge every segment's refined reconstruction into one global model in the shared
+    trajectory frame and write the same output contract `global_main.py` produces for
+    ARKit multi-scan refinement: `refined_sfm_combined/` (the merged COLMAP model),
+    `RefinedPointCloud.ply` plus `post_process_ply`'s derivatives, and
+    `refined_manifest.json` (portal poses + metadata).
+
+    The merge goes through `utils.colmap_rig_merge`, not `src.reconstruction_merge`'s
+    `append_reconstruction`: the latter gives every image its own camera/rig/frame, which
+    is harmless for ARKit's already-trivial rigs but destroys an Auki capture's real
+    multi-sensor rig -- a 7-sensor, 20-segment session came out as 73k single-camera
+    rigs, with the sensor_from_rig calibration and the which-images-were-simultaneous
+    structure both gone. Here the merged model keeps one camera per physical sensor and
+    one rig per distinct rig layout, across all segments.
+
+    alignments: {segment_id: TrajectoryAlignment} from compute_trajectory_alignment --
+        each segment's transform out of its own post-BA frame and back into the shared
+        world/trajectory frame.
+    """
+    from utils.colmap_rig_merge import merge_reconstructions_preserving_rigs, describe_rigs
+    from utils.data_utils import mean_pose, save_manifest_json
+    from utils.point_cloud_utils import post_process_ply
+    from utils.auki_refinement_util import _QR_UP_AXIS
+
+    local_output_root, global_output_root = Path(local_output_root), Path(global_output_root)
+    global_output_root.mkdir(parents=True, exist_ok=True)
+
+    def _read_segment(segment_id):
+        """Deferred read -- merge_reconstructions_preserving_rigs calls these one at a
+        time, so only the segment being merged is resident, not all of them at once."""
+        def read():
+            rec = pycolmap.Reconstruction()
+            rec.read(str(local_output_root / segment_id / "sfm"))
+            return rec
+        return read
+
+    sources, transforms, marker_poses, portal_sizes = [], [], {}, {}
+    for sid in segment_ids:
+        sources.append(_read_segment(sid))
+        transforms.append(alignments[sid].transform)
+
+        for d in transform_detections(load_portal_detections(local_output_root, sid),
+                                       alignments[sid].transform):
+            marker_poses.setdefault(d["short_id"], []).append(
+                pycolmap.Rigid3d(pycolmap.Rotation3d(d["quat"]), d["position"]))
+        portals_csv = local_output_root / sid / "sfm" / "portals.csv"
+        if portals_csv.exists():
+            with open(portals_csv, newline="") as f:
+                for row in csv.reader(f):
+                    portal_sizes.setdefault(row[1], float(row[2]))
+
+    combined_rec, merge_stats = merge_reconstructions_preserving_rigs(
+        sources, transforms=transforms, labels=list(segment_ids), logger=logger)
+    for line in describe_rigs(combined_rec):
+        logger.info(line)
+    if merge_stats.camera_param_conflicts or merge_stats.extrinsics_conflicts:
+        logger.warning(f"{len(merge_stats.camera_param_conflicts)} camera-parameter and "
+                        f"{len(merge_stats.extrinsics_conflicts)} rig-extrinsics conflict(s) between "
+                        f"segments -- the first segment's values were kept, see warnings above")
+
+    obs = pycolmap.ObservationManager(combined_rec)
+    n_filtered = obs.filter_all_points3D(max_reproj_error=max_reproj_error, min_tri_angle=min_tri_angle)
+    combined_rec.update_point_3d_errors()
+    logger.info(f"Filtered {n_filtered} point(s) with large reprojection error or low triangulation angle; "
+                f"merged mean reprojection error {combined_rec.compute_mean_reprojection_error():.4f}px")
+
+    sfm_dir = global_output_root / "refined_sfm_combined"
+    sfm_dir.mkdir(parents=True, exist_ok=True)
+    combined_rec.write(sfm_dir)
+    logger.info(f"Wrote {sfm_dir}: {combined_rec.num_rigs()} rig(s), {combined_rec.num_cameras()} camera(s), "
+                f"{combined_rec.num_frames()} frame(s), {combined_rec.num_images()} image(s), "
+                f"{combined_rec.num_points3D()} point(s)")
+
+    ply_path = global_output_root / "RefinedPointCloud.ply"
+    combined_rec.export_PLY(ply_path)
+    post_process_ply(global_output_root, logger=logger)
+
+    refined_portal_poses = {short_id: mean_pose(poses) for short_id, poses in marker_poses.items()}
+    manifest_path = global_output_root / "refined_manifest.json"
+    save_manifest_json(
+        refined_portal_poses, manifest_path, global_output_root,
+        job_status="refined", job_progress=100, portal_sizes=portal_sizes,
+        # Auki markers' normal points the opposite way to the ARKit/DMT convention this
+        # defaults to -- see auki_refinement_util._QR_UP_AXIS.
+        portal_flat_reference_axis=_QR_UP_AXIS,
+    )
+    logger.info(f"Wrote {manifest_path} ({len(refined_portal_poses)} marker(s))")
+
+    return {
+        "reconstruction": combined_rec, "merge_stats": merge_stats,
+        "sfm_dir": sfm_dir, "point_cloud_path": ply_path, "manifest_path": manifest_path,
+        "n_filtered_points": n_filtered,
+    }
 
 
 def cluster_position_detections(detections, eps=0.15):

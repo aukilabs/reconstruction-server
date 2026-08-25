@@ -43,6 +43,17 @@ class PyBundleAdjuster(object):
         for image_id in self.config.images:
             self.add_image_to_problem(image_id, reconstruction, loss, timestamp_per_image, arkit_precomputed)
 
+        # add_image_to_problem flags a camera featureless per IMAGE -- one image of it with
+        # no triangulated observation was enough. Every consumer below reads the set as
+        # "this camera appears in no residual block at all", which is only true if *none*
+        # of its images contributed. The mismatch let a camera with a single empty image
+        # skip parameterize_cameras' set_parameter_block_constant while still owning
+        # residual blocks from its other images -- so Ceres refined intrinsics that
+        # refine_focal_length=False had declared fixed (measured: right_arm_rgb's fx
+        # drifting 650.78 -> 634.66 on a trusted-intrinsics run). Reconcile now that every
+        # image has been seen; camera_ids holds exactly the cameras that did contribute.
+        self.featureless_camera_ids -= self.camera_ids
+
         # Add loop closure to ensure multiple detections of same QR code are at the same position
         # TODO rotations should also be same
         debug_first_qr = verbose
@@ -228,8 +239,14 @@ class PyBundleAdjuster(object):
         return loss_breakdown, loss_breakdown_per_image_id
 
 
-    def is_constant_cam_pose(self, image_id):
-        return (not self.options.refine_rig_from_world) or self.config.has_constant_rig_from_world_pose(image_id)
+    def is_constant_cam_pose(self, frame_id):
+        """Whether this FRAME's rig_from_world pose is held constant. Keyed on frame id,
+        matching BundleAdjustmentConfig.has_constant_rig_from_world_pose -- callers used
+        to pass image ids, which is the same thing only for single-image frames (the
+        ARKit path). On a multi-sensor rig it split one frame's images across the
+        constant and variable branches below, leaving the gauge unfixed; see
+        utils/triangulation.py's sorted_gauge_frame_ids comment."""
+        return (not self.options.refine_rig_from_world) or self.config.has_constant_rig_from_world_pose(frame_id)
 
     def non_ref_sensor_from_rig(self, image, reconstruction):
         """Return the fixed cam_from_rig extrinsic if `image`'s camera is a non-ref
@@ -258,7 +275,7 @@ class PyBundleAdjuster(object):
         pose = image.frame.rig_from_world
         camera = reconstruction.cameras[image.camera_id]
 
-        constant_cam_pose = self.is_constant_cam_pose(image.image_id)
+        constant_cam_pose = self.is_constant_cam_pose(image.frame_id)
         sensor_from_rig = self.non_ref_sensor_from_rig(image, reconstruction)
 
         num_observations = 0
@@ -373,7 +390,7 @@ class PyBundleAdjuster(object):
 
             self.add_residual_block("OffsetFromUnrefined", cost, None, params, image_id)
 
-            if self.is_constant_cam_pose(image.image_id - 1):
+            if self.is_constant_cam_pose(prev_image.frame_id):
                 self.problem.set_parameter_block_constant(prev_pose.params)
             #elif self.is_constant_cam_position(image.image_id - 1):
             #    self.problem.set_parameter_block_constant(prev_pose.translation)

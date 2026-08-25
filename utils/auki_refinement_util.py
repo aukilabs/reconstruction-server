@@ -229,7 +229,8 @@ def generate_rig_match_pairs(build, image_ids, paths, logger):
                     continue
                 pairs.add(tuple(sorted((id_i, ids[j]))))
 
-    # (b) same-timestamp cross-camera pairs (main rig only -- the rigidly-mounted cameras)
+    # (b) same-timestamp cross-camera pairs (main rig only -- the cameras that hold a
+    # fixed pose relative to the base and therefore share one trajectory Frame)
     frames_with_images = {}
     for image in reconstruction.images.values():
         frames_with_images.setdefault(image.frame_id, []).append(image.image_id)
@@ -607,6 +608,9 @@ def refine_auki_session(
     refine_intrinsics: bool = True,
     external_intrinsics_per_sensor: Optional[dict] = None,
     output_name: Optional[str] = None,
+    regroup_static_movable: bool = True,
+    static_translation_tol_m: float = 0.02,
+    static_rotation_tol_deg: float = 1.0,
 ):
     """
     Refine an Auki SDK multi-sensor rig capture session using Structure from Motion
@@ -615,9 +619,11 @@ def refine_auki_session(
     unrefined reconstruction, a log file under the session's output folder) and the
     same Future/None return contract -- but a different pipeline flow. Frames come from
     an Auki registry + per-sensor logs (not an ARKit scan folder / Frames.mp4), and a
-    real multi-sensor pycolmap.Rig is built (rigidly-mounted cameras sharing one Rig +
-    trajectory, movable cameras each their own mini-rig) instead of production's
-    existing one-trivial-rig-per-image ARKit pattern.
+    real multi-sensor pycolmap.Rig is built (cameras that hold a fixed pose relative to
+    the base sharing one Rig + trajectory, genuinely articulated cameras each their own
+    mini-rig) instead of production's existing one-trivial-rig-per-image ARKit pattern.
+    Which cameras count as fixed is measured from the pose logs, not taken from their
+    declared writer_mode -- see regroup_static_movable below.
 
     Args:
         session_path: Path to the Auki capture folder (app root) -- the folder
@@ -656,6 +662,15 @@ def refine_auki_session(
             derived from the uploaded capture zip instead, so its refined outputs land in
             refined/local/<scan>/sfm -- the exact layout the ARKit local-refinement
             capability produces and its uploader looks for.
+        regroup_static_movable: measure every sensor's actual motion first and put the
+            declared-movable-but-never-moved cameras on the shared rig instead of in a
+            single-camera mini rig of their own -- see load_auki_session /
+            analyze_sensor_motion. On this robot's captures that is every head and arm
+            camera (sub-millimetre over a whole session), and it matters: a mini-rig
+            image has a frozen, never-refined pose, so it neither constrains the rig
+            trajectory during bundle adjustment nor gets corrected by it.
+        static_translation_tol_m / static_rotation_tol_deg: the motion budget a
+            declared-movable sensor must stay inside to count as static.
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
@@ -683,7 +698,15 @@ def refine_auki_session(
     logger.info(f'Starting local refinement of Auki session {session_id}')
 
     # Load the Auki session's registry + sensor/pose logs, extract every camera frame
-    data = load_auki_session(str(session_path), session_id, paths.images, logger=logger)
+    data = load_auki_session(
+        str(session_path), session_id, paths.images, logger=logger,
+        regroup_static_movable=regroup_static_movable,
+        static_translation_tol_m=static_translation_tol_m,
+        static_rotation_tol_deg=static_rotation_tol_deg,
+    )
+    logger.info(f"Rig grouping: {len(data.rigid_sensor_ids)} sensor(s) on the main rig "
+                f"{data.rigid_sensor_ids} (ref={data.ref_sensor_id}), "
+                f"{len(data.movable_sensor_ids)} on per-sensor mini rig(s) {data.movable_sensor_ids}")
     data = _subsample_auki_session(data, every_nth_image, logger)
 
     # Build the pycolmap.Reconstruction (multi-sensor rig + trajectory frames)
