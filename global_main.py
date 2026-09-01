@@ -3,7 +3,7 @@ import argparse
 import os
 from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
 from utils.point_cloud_utils import post_process_ply
-from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans
+from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans, compute_portal_spread_metrics
 from utils.io import read_portal_csv
 import logging
 from typing import Dict
@@ -115,6 +115,7 @@ def main(args):
         logger.debug(f"Refined pose for QR {qr_id}: R={refined_pose.rotation.matrix()}, t={refined_pose.translation}")
     
     portal_sizes = collect_portal_sizes(refined_aligned_scans.scan_ids, job_root_path, logger)
+    portal_spread_metrics = compute_portal_spread_metrics(refined_aligned_scans)
 
     manifest_path = output_path / "refined_manifest.json"
     save_manifest_json(
@@ -124,6 +125,7 @@ def main(args):
         job_status="refined",
         job_progress=100,
         portal_sizes=portal_sizes,
+        portal_spread_metrics=portal_spread_metrics,
     )
 
     sfm_dir = output_path / "refined_sfm_combined"

@@ -21,6 +21,60 @@ class AlignedScans:
     raw_portal_detections: Dict[str, Dict[str, List[pycolmap.Rigid3d]]]
     aligned_portal_detections: Dict[str, Dict[str, List[pycolmap.Rigid3d]]]
 
+
+@dataclass(frozen=True)
+class PortalSpreadMetrics:
+    position_spread_m: float
+    rotation_spread_deg: float
+    detection_count: int
+
+
+def _rotation_angle_deg(quat_a: np.ndarray, quat_b: np.ndarray) -> float:
+    dot = abs(float(np.dot(quat_a, quat_b)))
+    dot = min(1.0, max(-1.0, dot))
+    return float(np.degrees(2.0 * np.arccos(dot)))
+
+
+def compute_portal_spread_metrics(aligned_scans: AlignedScans) -> Dict[str, PortalSpreadMetrics]:
+    """Per-portal RMS position/rotation spread across all aligned detections."""
+    detections_by_portal: Dict[str, List[pycolmap.Rigid3d]] = {}
+
+    if not aligned_scans.aligned_portal_detections:
+        return {}
+
+    for scan_portals in aligned_scans.aligned_portal_detections.values():
+        for portal_id, poses in scan_portals.items():
+            detections_by_portal.setdefault(portal_id, []).extend(poses)
+
+    metrics: Dict[str, PortalSpreadMetrics] = {}
+    for portal_id, detections in detections_by_portal.items():
+        count = len(detections)
+        if count == 0:
+            continue
+        if count == 1:
+            metrics[portal_id] = PortalSpreadMetrics(0.0, 0.0, 1)
+            continue
+
+        mean = mean_pose(detections)
+        positions = np.array([pose.translation for pose in detections])
+        position_delta = positions - mean.translation
+        position_spread_m = float(np.sqrt(np.mean(np.sum(position_delta * position_delta, axis=1))))
+
+        mean_quat = mean.rotation.quat
+        angle_deg = [
+            _rotation_angle_deg(pose.rotation.quat, mean_quat)
+            for pose in detections
+        ]
+        rotation_spread_deg = float(np.sqrt(np.mean(np.square(angle_deg))))
+
+        metrics[portal_id] = PortalSpreadMetrics(
+            position_spread_m=position_spread_m,
+            rotation_spread_deg=rotation_spread_deg,
+            detection_count=count,
+        )
+
+    return metrics
+
 class NoOverlapException(Exception):
     def __init__(self, message='No overlaps!'):
         # Call the base class constructor with the parameters it needs
