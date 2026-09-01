@@ -12,7 +12,8 @@ endif(COMMAND cmake_policy)
 find_package(Ceres REQUIRED)
 find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(colmap REQUIRED)
-find_package(pybind11 CONFIG)
+find_package(Python REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 CONFIG REQUIRED)
 include(cmake/modules/sophus.cmake)
 
 pybind11_add_module(
@@ -38,3 +39,16 @@ pybind11_add_module(
 target_link_libraries(reconstruction_merge PUBLIC colmap::colmap)
 set_target_properties(reconstruction_merge PROPERTIES LIBRARY_OUTPUT_DIRECTORY
     ${PROJECT_SOURCE_DIR}/src)
+
+if(AUKI_LIGHTGLUE_AVAILABLE)
+    pybind11_add_module(mrnerf_features mrnerf_features_binds.cpp)
+
+    target_include_directories(mrnerf_features PRIVATE
+        "${LIGHT_GLUE_CPP_DIR}/include")
+    target_link_libraries(mrnerf_features PRIVATE
+        auki_lightglue_lib
+        ${TORCH_LIBRARIES})
+    target_compile_options(mrnerf_features PRIVATE ${TORCH_CXX_FLAGS})
+    set_target_properties(mrnerf_features PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/src)
+endif()

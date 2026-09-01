@@ -1,0 +1,47 @@
+diff --git a/include/feature/ALIKED.hpp b/include/feature/ALIKED.hpp
+index 0000000..0000000 100644
+--- a/include/feature/ALIKED.hpp
++++ b/include/feature/ALIKED.hpp
+@@ -30,7 +30,8 @@ public:
+                     std::string_view device = "cuda",
+                     int top_k = -1,
+                     float scores_th = 0.2,
+-                    int n_limit = 20000);
++                    int n_limit = 20000,
++                    int nms_radius = 4);
+ 
+     // Move semantics for tensor operations
+     std::tuple<torch::Tensor, torch::Tensor>
+diff --git a/src/feature/ALIKED.cpp b/src/feature/ALIKED.cpp
+index 0000000..0000000 100644
+--- a/src/feature/ALIKED.cpp
++++ b/src/feature/ALIKED.cpp
+@@ -12,13 +12,15 @@ ALIKED::ALIKED(std::string_view model_name,
+                std::string_view device,
+                int top_k,
+                float scores_th,
+-               int n_limit)
++               int n_limit,
++               int nms_radius)
+     : device_(torch::Device(std::string(device))),
+       dim_(-1) {
+ 
+     // Initialize DKD and descriptor head
+-    dkd_ = std::make_shared<DKD>(2, top_k, scores_th, n_limit);
++    dkd_ = std::make_shared<DKD>(nms_radius, top_k, scores_th, n_limit);
+     const auto& config = ALIKED_CFGS.at(std::string(model_name));
+     desc_head_ = std::make_shared<SDDH>(config.dim, config.K, config.M);
+ 
+diff --git a/src/feature/DKD.cpp b/src/feature/DKD.cpp
+index 0000000..0000000 100644
+--- a/src/feature/DKD.cpp
++++ b/src/feature/DKD.cpp
+@@ -53,7 +53,7 @@ DKD::detect_keypoints(torch::Tensor scores_map, bool sub_pixel) && {
+     const auto device = scores_map.device();
+ 
+     auto scores_nograd = scores_map.detach();
+-    auto nms_scores = std::move(*this).simple_nms(std::move(scores_nograd), 2);
++    auto nms_scores = std::move(*this).simple_nms(std::move(scores_nograd), radius_);
+ 
+     auto border_mask = torch::ones_like(nms_scores,
+                                         torch::TensorOptions()

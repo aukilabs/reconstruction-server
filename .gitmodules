@@ -1,0 +1,4 @@
+[submodule "third_party/Light_Glue_CPP"]
+	path = third_party/Light_Glue_CPP
+	url = https://github.com/MrNeRF/Light_Glue_CPP.git
+	branch = master

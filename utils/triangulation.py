@@ -8,8 +8,9 @@ import pycolmap
 import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
-from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
+from hloc import pairs_from_poses, extract_features, pairs_from_sequential
 from utils.bundle_adjuster import PyBundleAdjuster
+from utils.mrnerf_hloc_adapters import run_extract_and_match_subprocess
 
 
 def run_triangulation(
@@ -347,33 +348,14 @@ def process_features_and_matching(
             rotation_threshold=360  # Maximum rotation difference in degrees
         )
 
-    # Feature extraction
-    feature_conf = extract_features.confs["aliked-n16"]
-    feature_conf["model"]["max_num_keypoints"] = 1024
-    feature_conf["model"]["detection_threshold"] = 0.3
-    feature_conf["model"]["nms_radius"] = 4
-    feature_conf["preprocessing"]["resize_max"] = 1024
-    feature_conf["output"] = paths.features
-    logger.info(f"Extracting features with config: {feature_conf}")
-
-    extract_features.main(
-        feature_conf,
-        paths.images,
-        paths.sfm_dir,
-        feature_path=paths.features,
-        as_half=True,
-        image_list=references,
-        #overwrite=True
-    )
-
-    # Feature matching
-    logger.info("Matching features")
-    matcher_conf = match_features.confs["aliked+lightglue"]
-    matcher_conf["model"]["compile_network"] = True
-    match_features.main(
-        matcher_conf, 
-        paths.sfm_pairs, 
-        features=paths.features, 
-        matches=paths.matches,
-        #overwrite=True
+    # Local feature extraction + matching (MrNeRF C++ via subprocess).
+    # Subprocess isolates LibTorch 2.7 from in-process Python torch 2.9 (EigenPlaces).
+    logger.info("Extracting+matching features with MrNeRF ALIKED/LightGlue (subprocess)")
+    run_extract_and_match_subprocess(
+        images_dir=paths.images,
+        image_names=list(references),
+        features_h5=paths.features,
+        pairs_file=paths.sfm_pairs,
+        matches_h5=paths.matches,
+        logger=logger,
     )
