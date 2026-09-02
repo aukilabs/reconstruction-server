@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use tokio::task;
-use tracing::{info, warn};
+use tracing::info;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -81,26 +81,22 @@ impl RefinedUploader {
             };
 
             match sink.put_domain_artifact(req).await {
-                Ok(_) => {
-                    self.completed.insert(scan_id.clone());
-                    uploaded.push(scan_id);
-                }
-                Err(err) if is_conflict_err(&err) => {
-                    info!(
-                        scan = %scan_id,
-                        "refined scan already exists in domain (409); skipping upload"
-                    );
-                    self.completed.insert(scan_id.clone());
-                    uploaded.push(scan_id);
-                }
+                Ok(_) => {}
                 Err(err) => {
-                    warn!(
-                        error = %err,
-                        scan = %scan_id,
-                        "refined scan upload failed; continuing without this artifact"
-                    );
+                    if is_conflict_err(&err) {
+                        info!(
+                            scan = %scan_id,
+                            "refined scan already exists in domain (409); skipping upload"
+                        );
+                    } else {
+                        return Err(err)
+                            .with_context(|| format!("upload refined scan {}", scan_id));
+                    }
                 }
             }
+
+            self.completed.insert(scan_id.clone());
+            uploaded.push(scan_id);
         }
 
         Ok(uploaded)
