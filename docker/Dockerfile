@@ -38,6 +38,8 @@ COPY third_party/patches /app/third_party/patches
 
 RUN set -eux; \
     apt-get update; \
+    # Base image ships libtbb2-dev (2020) which Conflicts with libtbb-dev pulled by libopencv-dev.
+    apt-get remove -y libtbb2-dev || true; \
     apt-get install -y --no-install-recommends \
         git git-lfs wget unzip \
         libopencv-dev \
