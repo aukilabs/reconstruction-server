@@ -1,5 +1,5 @@
 diff --git a/include/feature/ALIKED.hpp b/include/feature/ALIKED.hpp
-index 0000000..0000000 100644
+index d2be025..c654aaf 100644
 --- a/include/feature/ALIKED.hpp
 +++ b/include/feature/ALIKED.hpp
 @@ -30,7 +30,8 @@ public:
@@ -13,10 +13,10 @@ index 0000000..0000000 100644
      // Move semantics for tensor operations
      std::tuple<torch::Tensor, torch::Tensor>
 diff --git a/src/feature/ALIKED.cpp b/src/feature/ALIKED.cpp
-index 0000000..0000000 100644
+index 5aae9df..f2b888f 100644
 --- a/src/feature/ALIKED.cpp
 +++ b/src/feature/ALIKED.cpp
-@@ -12,13 +12,15 @@ ALIKED::ALIKED(std::string_view model_name,
+@@ -13,12 +13,13 @@ ALIKED::ALIKED(std::string_view model_name,
                 std::string_view device,
                 int top_k,
                 float scores_th,
@@ -33,7 +33,7 @@ index 0000000..0000000 100644
      desc_head_ = std::make_shared<SDDH>(config.dim, config.K, config.M);
  
 diff --git a/src/feature/DKD.cpp b/src/feature/DKD.cpp
-index 0000000..0000000 100644
+index 0dd8170..34df155 100644
 --- a/src/feature/DKD.cpp
 +++ b/src/feature/DKD.cpp
 @@ -53,7 +53,7 @@ DKD::detect_keypoints(torch::Tensor scores_map, bool sub_pixel) && {

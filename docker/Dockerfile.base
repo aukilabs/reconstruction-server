@@ -171,6 +171,35 @@ RUN set -eux; \
 # Ensure /usr/local/lib is searched
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
 
+# MrNeRF / LibTorch (base image — see plans/mrnerf-hloc-adapters.md §7 S8)
+ARG LIBTORCH_VERSION=2.7.1
+ARG LIBTORCH_CUDA=cu128
+# Latest cu128 Linux bundle with explicit cxx11 ABI (matches Ubuntu 22.04 / base GCC).
+ARG LIBTORCH_URL=https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip
+
+RUN set -eux; \
+    apt-get update; \
+    # libtbb2-dev (2020) Conflicts with libtbb-dev pulled by libopencv-dev.
+    apt-get remove -y libtbb2-dev || true; \
+    apt-get install -y --no-install-recommends \
+        unzip \
+        libopencv-dev \
+        cuda-nvcc-12-8 cuda-cudart-dev-12-8 libcublas-dev-12-8 \
+        libcusparse-dev-12-8 libcusolver-dev-12-8 \
+        libcurand-dev-12-8 cuda-nvrtc-dev-12-8 cuda-nvtx-12-8 \
+        libcublas-12-8 libcusparse-12-8 libcusolver-12-8 \
+        libcurand-12-8 cuda-nvrtc-12-8; \
+    wget -q "${LIBTORCH_URL}" -O /tmp/libtorch.zip; \
+    unzip -q /tmp/libtorch.zip -d /opt; \
+    rm /tmp/libtorch.zip; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_HOME=/usr/local/cuda-12.8
+ENV PATH=/usr/local/cuda-12.8/bin:${PATH}
+ENV LIBTORCH_ROOT=/opt/libtorch
+# Do NOT set LD_LIBRARY_PATH=/opt/libtorch/lib here — breaks pip torch 2.9 EigenPlaces.
+# MrNeRF worker sets LD_LIBRARY_PATH in subprocess (utils/mrnerf_hloc_adapters.py).
+
 # Final cleanup of build caches
 RUN set -eux; \
     rm -rf /tmp/* /root/.cache || true

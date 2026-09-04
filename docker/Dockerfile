@@ -2,6 +2,8 @@
 ## Rust build for server
 ##
 ARG RECONSTRUCTION_VERSION=0.0.0-local
+ARG BASE_IMAGE_REPO=ghcr.io/aukilabs/reconstruction-server-base
+ARG BASE_IMAGE_TAG=latest
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 ARG RECONSTRUCTION_VERSION
 ENV RECONSTRUCTION_VERSION="${RECONSTRUCTION_VERSION}"
@@ -13,7 +15,7 @@ RUN cargo build --release -p bin
 ##
 ## Runtime
 ##
-FROM ghcr.io/aukilabs/reconstruction-server-base:latest AS final
+FROM ${BASE_IMAGE_REPO}:${BASE_IMAGE_TAG} AS final
 
 ARG RECONSTRUCTION_VERSION
 ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
@@ -25,31 +27,17 @@ ARG USER_GID=$USER_UID
 # Application code
 WORKDIR /app
 
-# MrNeRF / LibTorch (app image only — see plans/mrnerf-hloc-adapters.md §4)
+# Light_Glue_CPP (LibTorch/OpenCV/CUDA live in base — see plans/mrnerf-hloc-adapters.md §7 S8)
 # Pin must stay in sync with third_party/Light_Glue_CPP git submodule commit.
 ARG LIGHT_GLUE_CPP_COMMIT=bd825e8d76f88c024ec37b41c6178e2b873059de
-ARG LIBTORCH_VERSION=2.7.1
-ARG LIBTORCH_CUDA=cu128
-# Latest cu128 Linux bundle with explicit cxx11 ABI (matches Ubuntu 22.04 / base GCC).
-ARG LIBTORCH_URL=https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip
 
 # LibTorch 2.7.1 API patches for pristine Light_Glue_CPP @ bd825e8 (see third_party/patches/).
 COPY third_party/patches /app/third_party/patches
 
 RUN set -eux; \
     apt-get update; \
-    # Base image ships libtbb2-dev (2020) which Conflicts with libtbb-dev pulled by libopencv-dev.
-    apt-get remove -y libtbb2-dev || true; \
-    apt-get install -y --no-install-recommends \
-        git git-lfs wget unzip \
-        libopencv-dev \
-        cuda-nvcc-12-8 cuda-cudart-dev-12-8 libcublas-dev-12-8 \
-        libcusparse-dev-12-8 libcusolver-dev-12-8 \
-        libcurand-dev-12-8 cuda-nvrtc-dev-12-8 cuda-nvtx-12-8; \
+    apt-get install -y --no-install-recommends git-lfs; \
     git lfs install; \
-    wget -q "${LIBTORCH_URL}" -O /tmp/libtorch.zip; \
-    unzip -q /tmp/libtorch.zip -d /opt; \
-    rm /tmp/libtorch.zip; \
     mkdir -p /app/third_party; \
     git clone https://github.com/MrNeRF/Light_Glue_CPP.git /app/third_party/Light_Glue_CPP; \
     cd /app/third_party/Light_Glue_CPP; \
@@ -62,7 +50,6 @@ RUN set -eux; \
 ENV CUDA_HOME=/usr/local/cuda-12.8
 ENV PATH=/usr/local/cuda-12.8/bin:${PATH}
 ENV LIBTORCH_ROOT=/opt/libtorch
-ENV LD_LIBRARY_PATH=/opt/libtorch/lib:${LD_LIBRARY_PATH}
 
 COPY scripts /app/scripts
 COPY src /app/src
