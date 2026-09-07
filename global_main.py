@@ -2,37 +2,12 @@ from pathlib import Path
 import argparse
 import os
 from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
-from utils.point_cloud_utils import filter_ply, downsample_ply_to_max_size, reduce_decimals_ply, draco_compress_ply
+from utils.point_cloud_utils import post_process_ply
 from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans
 from utils.io import read_portal_csv
 import logging
 from typing import Dict
 import pycolmap
-
-def post_process_ply(output_path, logger):
-    ply_path = output_path / "RefinedPointCloud.ply"
-    filter_ply(ply_path, ply_path, convert_opencv_to_opengl=True, logger=logger)
-
-    # Ensure ply fits in domain data
-    logger.info("Downsampling ply if needed to be under 20 MB file size...")
-    ply_path_reduced = output_path / "RefinedPointCloudReduced.ply"
-    try:
-        downsample_ply_to_max_size(ply_path, ply_path_reduced, 20000000, logger=logger)
-    except Exception as e:
-        logger.error(f"Failed to downsample PLY file: {str(e)}")
-
-    logger.info("Draco compressing the PLY file...")
-    try:
-        # Must be float to do draco compression, but open3d outputs double precision.
-        ply_path_float = output_path / "RefinedPointCloudFloat.ply"
-        try:
-            reduce_decimals_ply(ply_path, ply_path_float, 3, logger=logger)
-        except Exception as e:
-            logger.error(f"Failed to reduce decimals in PLY file: {str(e)}")
-
-        draco_compress_ply(ply_path_float, output_path / "RefinedPointCloud.ply.drc", logger=logger)
-    except Exception as e:
-        logger.error(f"Failed to draco compress the PLY file: {str(e)}")
 
 
 def collect_portal_sizes(scan_ids, job_root_path, logger):
@@ -91,7 +66,8 @@ def main(args):
         log_file=global_log_file,
         domain_id=args.domain_id, 
         job_id=args.job_id, 
-        level=args.log_level
+        level=args.log_level,
+        log_format=args.log_format
     )
 
     # Find all stitch paths

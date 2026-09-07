@@ -15,74 +15,74 @@ pub struct OutputSpec {
     pub mandatory: bool,
 }
 
-const GLOBAL_OUTPUTS: &[OutputSpec] = &[
+const UPDATE_OUTPUTS: &[OutputSpec] = &[
     OutputSpec {
-        relative_path: "refined/global/refined_manifest.json",
+        relative_path: "refined/update/refined_manifest.json",
         display_name: "refined_manifest",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/RefinedPointCloudReduced.ply",
+        relative_path: "refined/update/RefinedPointCloudReduced.ply",
         display_name: "refined_pointcloud",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/RefinedPointCloud.ply.drc",
+        relative_path: "refined/update/RefinedPointCloud.ply.drc",
         display_name: "refined_pointcloud_full_draco",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology_downsampled_0.111.obj",
+        relative_path: "refined/update/topology/topology_downsampled_0.111.obj",
         display_name: "topologymesh_v1_lowpoly_obj",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology_downsampled_0.111.glb",
+        relative_path: "refined/update/topology/topology_downsampled_0.111.glb",
         display_name: "topologymesh_v1_lowpoly_glb",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology_downsampled_0.333.obj",
+        relative_path: "refined/update/topology/topology_downsampled_0.333.obj",
         display_name: "topologymesh_v1_midpoly_obj",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology_downsampled_0.333.glb",
+        relative_path: "refined/update/topology/topology_downsampled_0.333.glb",
         display_name: "topologymesh_v1_midpoly_glb",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology.obj",
+        relative_path: "refined/update/topology/topology.obj",
         display_name: "topologymesh_v1_highpoly_obj",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/topology/topology.glb",
+        relative_path: "refined/update/topology/topology.glb",
         display_name: "topologymesh_v1_highpoly_glb",
         mandatory: false,
     },
     OutputSpec {
-        relative_path: "refined/global/refined_sfm_combined/cameras.bin",
+        relative_path: "refined/update/refined_sfm_combined/cameras.bin",
         display_name: "colmap_cameras_bin",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/refined_sfm_combined/frames.bin",
+        relative_path: "refined/update/refined_sfm_combined/frames.bin",
         display_name: "colmap_frames_bin",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/refined_sfm_combined/images.bin",
+        relative_path: "refined/update/refined_sfm_combined/images.bin",
         display_name: "colmap_images_bin",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/refined_sfm_combined/points3D.bin",
+        relative_path: "refined/update/refined_sfm_combined/points3D.bin",
         display_name: "colmap_points3d_bin",
         mandatory: true,
     },
     OutputSpec {
-        relative_path: "refined/global/refined_sfm_combined/rigs.bin",
+        relative_path: "refined/update/refined_sfm_combined/rigs.bin",
         display_name: "colmap_rigs_bin",
         mandatory: true,
     },
@@ -98,7 +98,7 @@ pub async fn upload_final_outputs(
 ) -> Result<HashMap<String, String>> {
     let mut uploaded = HashMap::new();
 
-    for spec in GLOBAL_OUTPUTS {
+    for spec in UPDATE_OUTPUTS {
         let path = workspace.root().join(spec.relative_path);
         if !path.exists() {
             if spec.mandatory {

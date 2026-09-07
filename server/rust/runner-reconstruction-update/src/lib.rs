@@ -1,4 +1,4 @@
-//! runner-reconstruction-local: minimal runner for local refinement.
+//! runner-reconstruction-update: runner for update refinement.
 
 use std::{
     env,
@@ -17,27 +17,28 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod input;
+mod output;
 mod python;
-mod refined;
+mod strategy;
 mod workspace;
 
 /// Public crate identifier used by workspace smoke tests.
-pub const CRATE_NAME: &str = "runner-reconstruction-local";
+pub const CRATE_NAME: &str = "runner-reconstruction-update";
 
-/// Capability handled by this runner (local refinement).
-pub const CAPABILITY: &str = "/reconstruction/local-refinement/v1";
+/// Capability handled by this runner (update refinement).
+pub const CAPABILITY: &str = "/reconstruction/update-refinement/v1";
 
 /// Convenience slice for wiring all supported capabilities.
 pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
 
-/// Scaffold runner for local refinement.
-pub struct RunnerReconstructionLocal {
+/// Scaffold runner for update refinement.
+pub struct RunnerReconstructionUpdate {
     config: RunnerConfig,
     capability: &'static str,
 }
 
-impl RunnerReconstructionLocal {
-    /// Create a new local refinement runner.
+impl RunnerReconstructionUpdate {
+    /// Create a new update refinement runner.
     pub fn new() -> Self {
         Self::with_capability(CAPABILITY, load_config())
     }
@@ -75,29 +76,14 @@ impl RunnerReconstructionLocal {
     }
 }
 
-impl Default for RunnerReconstructionLocal {
+impl Default for RunnerReconstructionUpdate {
     fn default() -> Self {
         Self::new()
     }
 }
 
-fn load_config() -> RunnerConfig {
-    RunnerConfig::from_env().unwrap_or_else(|err| {
-        warn!(error = %err, "failed to read local runner config; using defaults");
-        RunnerConfig::default()
-    })
-}
-
-/// When true, the job workspace directory is left on disk after the task finishes (same env semantics as splatter-server).
-fn tasks_cleanup_disabled() -> bool {
-    match env::var("DISABLE_TASKS_CLEANUP") {
-        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
-        Err(_) => false,
-    }
-}
-
 #[async_trait::async_trait]
-impl Runner for RunnerReconstructionLocal {
+impl Runner for RunnerReconstructionUpdate {
     fn capability(&self) -> &'static str {
         self.capability
     }
@@ -115,23 +101,14 @@ impl Runner for RunnerReconstructionLocal {
             anyhow::bail!("task cancelled before execution");
         }
 
-        let mut workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
-        let retain_workspace_after_run = tasks_cleanup_disabled();
-        if retain_workspace_after_run {
-            workspace.persist_temp_base();
-        }
-        // By default remove the workspace on exit; set DISABLE_TASKS_CLEANUP to retain it for debugging.
+        let workspace = self.create_workspace(&domain_id, job_id.as_deref(), &task_id)?;
         struct WorkspaceCleanup(std::path::PathBuf);
         impl Drop for WorkspaceCleanup {
             fn drop(&mut self) {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
-        let _workspace_cleanup = if retain_workspace_after_run {
-            None
-        } else {
-            Some(WorkspaceCleanup(workspace.root().to_path_buf()))
-        };
+        let _workspace_cleanup = WorkspaceCleanup(workspace.root().to_path_buf());
 
         let job_ctx = JobContext::from_lease(lease)?;
         job_ctx
@@ -150,7 +127,6 @@ impl Runner for RunnerReconstructionLocal {
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "<temp>".into()),
-            retain_workspace_after_run = retain_workspace_after_run,
             "workspace prepared"
         );
         let _ = ctx
@@ -169,29 +145,67 @@ impl Runner for RunnerReconstructionLocal {
             }))
             .await;
 
-        let datasets = input::materialize_datasets(&ctx, &workspace).await?;
+        let materialized = input::materialize_refined_scans(&ctx, &workspace).await?;
         if ctx.ctrl.is_cancelled().await {
             anyhow::bail!("task cancelled during input materialization");
         }
+
+        let scan_names: Vec<String> = materialized
+            .iter()
+            .map(|scan| scan.scan_name.clone())
+            .collect();
         let _ = ctx
             .ctrl
-            .progress(json!({"pct": 15, "stage": "inputs", "datasets": datasets.len()}))
+            .progress(json!({"pct": 15, "stage": "inputs", "scans": scan_names.len()}))
             .await;
         let _ = ctx
             .ctrl
             .log_event(json!({
                 "level": "info",
                 "stage": "inputs",
-                "message": "inputs materialized",
-                "count": datasets.len(),
+                "message": "refined scans materialized",
+                "count": scan_names.len(),
                 "task_id": task_id,
                 "job_id": job_ctx.metadata.name,
                 "timestamp": Utc::now().to_rfc3339(),
             }))
             .await;
 
-        let scan_names = collect_scan_names(workspace.datasets())?;
-        let python_args = build_python_args(&self.config, &job_ctx, &workspace, &scan_names);
+        let _ = input::materialize_global_colmap(&ctx, &workspace).await?;
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled during input global colmap materialization");
+        }
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "inputs",
+                "message": "refined global colmap materialized",
+                "count": scan_names.len(),
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
+
+        let _ = input::materialize_refine_manifest(&ctx, &workspace).await?;
+        if ctx.ctrl.is_cancelled().await {
+            anyhow::bail!("task cancelled during input global colmap materialization");
+        }
+        let _ = ctx
+            .ctrl
+            .log_event(json!({
+                "level": "info",
+                "stage": "inputs",
+                "message": "refined global manifest materialized",
+                "count": scan_names.len(),
+                "task_id": task_id,
+                "job_id": job_ctx.metadata.name,
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+            .await;
+
+        let python_args = build_python_args(&self.config, &job_ctx, &workspace);
         let _ = ctx
             .ctrl
             .progress(json!({"pct": 20, "stage": "python", "status": "starting"}))
@@ -210,6 +224,7 @@ impl Runner for RunnerReconstructionLocal {
 
         let cancel_token = CancellationToken::new();
         let python_bin = self.config.python_bin.clone();
+        // let python_script = self.config.python_script.clone();
         let python_script = self.config.python_script.clone();
         let python_args_clone = python_args.clone();
         let cancel = cancel_token.clone();
@@ -282,13 +297,11 @@ impl Runner for RunnerReconstructionLocal {
             anyhow::bail!("task cancelled before upload");
         }
 
-        let mut refined_uploader = refined::RefinedUploader::new();
-        let uploaded = refined_uploader
-            .process(&workspace, ctx.output, true)
-            .await?;
+        let name_suffix = job_ctx.domain_data_name_suffix();
+        output::upload_final_outputs(&workspace, ctx.output, &name_suffix, None).await?;
         let _ = ctx
             .ctrl
-            .progress(json!({"pct": 95, "stage": "upload", "uploaded_scans": uploaded.len()}))
+            .progress(json!({"pct": 95, "stage": "upload"}))
             .await;
         let _ = ctx
             .ctrl
@@ -296,7 +309,6 @@ impl Runner for RunnerReconstructionLocal {
                 "level": "info",
                 "stage": "upload",
                 "message": "outputs uploaded",
-                "uploaded_scans": uploaded.len(),
                 "task_id": task_id,
                 "job_id": job_ctx.metadata.name,
                 "timestamp": Utc::now().to_rfc3339(),
@@ -381,7 +393,7 @@ impl JobContext {
             id: job_id.clone(),
             name: job_name,
             domain_id: lease.domain_id.map(|id| id.to_string()).unwrap_or_default(),
-            processing_type: "local_refinement".to_string(),
+            processing_type: "update_refinement".to_string(),
             created_at: Utc::now().to_rfc3339(),
             domain_server_url,
             reconstruction_server_url,
@@ -389,6 +401,16 @@ impl JobContext {
         };
 
         Ok(Self { metadata })
+    }
+
+    fn domain_data_name_suffix(&self) -> String {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&self.metadata.created_at) {
+            return parsed.format("%Y-%m-%d_%H-%M-%S").to_string();
+        }
+        if !self.metadata.name.trim().is_empty() {
+            return self.metadata.name.clone();
+        }
+        "update_job".to_string()
     }
 
     async fn persist_metadata(&self, path: &Path) -> Result<()> {
@@ -405,7 +427,7 @@ impl JobContext {
     }
 }
 
-/// Configuration for the local reconstruction runner.
+/// Configuration for the update reconstruction runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerConfig {
     /// Optional base directory for job workspaces.
@@ -421,14 +443,14 @@ pub struct RunnerConfig {
 }
 
 impl RunnerConfig {
-    pub const ENV_WORKSPACE_ROOT: &'static str = "LOCAL_RUNNER_WORKSPACE_ROOT";
-    pub const ENV_PYTHON_BIN: &'static str = "LOCAL_RUNNER_PYTHON_BIN";
-    pub const ENV_PYTHON_SCRIPT: &'static str = "LOCAL_RUNNER_PYTHON_SCRIPT";
-    pub const ENV_PYTHON_ARGS: &'static str = "LOCAL_RUNNER_PYTHON_ARGS";
-    pub const ENV_CPU_WORKERS: &'static str = "LOCAL_RUNNER_CPU_WORKERS";
+    pub const ENV_WORKSPACE_ROOT: &'static str = "UPDATE_RUNNER_WORKSPACE_ROOT";
+    pub const ENV_PYTHON_BIN: &'static str = "UPDATE_RUNNER_PYTHON_BIN";
+    pub const ENV_PYTHON_SCRIPT: &'static str = "UPDATE_RUNNER_PYTHON_SCRIPT";
+    pub const ENV_PYTHON_ARGS: &'static str = "UPDATE_RUNNER_PYTHON_ARGS";
+    pub const ENV_CPU_WORKERS: &'static str = "UPDATE_RUNNER_CPU_WORKERS";
 
     pub const DEFAULT_PYTHON_BIN: &'static str = "python3";
-    pub const DEFAULT_PYTHON_SCRIPT: &'static str = "main.py";
+    pub const DEFAULT_PYTHON_SCRIPT: &'static str = "update_main.py";
     pub const DEFAULT_CPU_WORKERS: usize = 2;
 
     /// Build a config from environment variables.
@@ -479,60 +501,42 @@ impl Default for RunnerConfig {
     }
 }
 
+fn load_config() -> RunnerConfig {
+    RunnerConfig::from_env().unwrap_or_else(|err| {
+        warn!(error = %err, "failed to read update runner config; using defaults");
+        RunnerConfig::default()
+    })
+}
+
 fn build_python_args(
     config: &RunnerConfig,
     job_ctx: &JobContext,
     workspace: &workspace::Workspace,
-    scan_names: &[String],
 ) -> Vec<String> {
     let mut args = config.python_args.clone();
-    args.push("--mode".to_string());
-    args.push("local_refinement".to_string());
-    args.push("--job_root_path".to_string());
-    args.push(workspace.root().display().to_string());
+    args.push("--data_path".to_string());
+    args.push(
+        workspace
+            .root()
+            .join("refined")
+            .join("local")
+            .display()
+            .to_string(),
+    );
     args.push("--output_path".to_string());
-    args.push(workspace.root().join("refined").display().to_string());
+    args.push(
+        workspace
+            .root()
+            .join("refined")
+            .join("update")
+            .display()
+            .to_string(),
+    );
     args.push("--domain_id".to_string());
     args.push(job_ctx.metadata.domain_id.clone());
     args.push("--job_id".to_string());
     args.push(job_ctx.metadata.name.clone());
-    args.push("--local_refinement_workers".to_string());
-    args.push(config.cpu_workers.to_string());
-
-    if !scan_names.is_empty() {
-        args.push("--scans".to_string());
-        args.extend(scan_names.iter().cloned());
-    }
-
     args
-}
-
-fn collect_scan_names(datasets_path: &Path) -> Result<Vec<String>> {
-    let mut scans = Vec::new();
-    let entries = match std::fs::read_dir(datasets_path) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(scans),
-        Err(err) => {
-            return Err(err)
-                .with_context(|| format!("read_dir datasets path {}", datasets_path.display()))
-        }
-    };
-
-    for entry in entries.flatten() {
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        let name = entry.file_name();
-        if let Some(name_str) = name.to_str() {
-            if !name_str.is_empty() {
-                scans.push(name_str.to_string());
-            }
-        }
-    }
-
-    scans.sort();
-    scans.dedup();
-    Ok(scans)
 }
 
 /// Extract the last non-empty segment from a CID/URL-like string.

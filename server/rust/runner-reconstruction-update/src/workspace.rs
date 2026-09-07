@@ -11,6 +11,8 @@ pub struct Workspace {
     root: PathBuf,
     datasets: PathBuf,
     refined_local: PathBuf,
+    refined_global: PathBuf,
+    refined_update: PathBuf,
     request: PathBuf,
     metadata: PathBuf,
     _temp_guard: Option<TempDir>,
@@ -43,28 +45,26 @@ impl Workspace {
 
         let datasets = root.join("datasets");
         let refined_local = root.join("refined").join("local");
+        let refined_global = root.join("refined").join("global");
+        let refined_update = root.join("refined").join("update");
         let request = root.join("job_request.json");
         let metadata = root.join("job_metadata.json");
 
         create_dir(&datasets)?;
         create_dir(&refined_local)?;
+        create_dir(&refined_global)?;
+        create_dir(&refined_update)?;
 
         Ok(Self {
             root,
             datasets,
             refined_local,
+            refined_global,
+            refined_update,
             request,
             metadata,
             _temp_guard: temp_guard,
         })
-    }
-
-    /// When the workspace used a [`TempDir`] base, dropping `Self` would delete the entire tree.
-    /// Call this when retaining files on disk (e.g. `DISABLE_TASKS_CLEANUP`) so the base directory is not removed on drop.
-    pub fn persist_temp_base(&mut self) {
-        if let Some(dir) = self._temp_guard.take() {
-            let _ = dir.keep();
-        }
     }
 
     /// Root directory for the job workspace.
@@ -80,6 +80,16 @@ impl Workspace {
     /// Path containing local refinement outputs.
     pub fn refined_local(&self) -> &Path {
         &self.refined_local
+    }
+
+    /// Path containing global refinement outputs.
+    pub fn refined_global(&self) -> &Path {
+        &self.refined_global
+    }
+
+    /// Path containing updated refinement outputs.
+    pub fn refined_update(&self) -> &Path {
+        &self.refined_update
     }
 
     /// Path to the job request JSON file (unused but preserved for parity).
