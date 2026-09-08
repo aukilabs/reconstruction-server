@@ -4,8 +4,7 @@ output/**
 /build
 /.vscode
 /jobs
-.venv
-/venv
+.venv*
 /.idea
 /cluster_outlines
 log.txt
@@ -14,4 +13,4 @@ log.txt
 server/rust/server-bin/jobs
 server/rust/data
 *.so
-.env
+/.env*
