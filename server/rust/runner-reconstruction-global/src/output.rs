@@ -86,6 +86,11 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
         display_name: "colmap_rigs_bin",
         mandatory: true,
     },
+    OutputSpec {
+        relative_path: "refined/global/refined_sfm_combined/features.h5",
+        display_name: "colmap_features_h5",
+        mandatory: false,
+    },
 ];
 
 /// Upload the final global outputs expected by downstream systems.
@@ -238,6 +243,7 @@ fn data_type_for_display(display: &str) -> &str {
         "colmap_images_bin" => "colmap_images_bin",
         "colmap_points3d_bin" => "colmap_points3d_bin",
         "colmap_rigs_bin" => "colmap_rigs_bin",
+        "colmap_features_h5" => "colmap_features_h5",
         _ => "binary",
     }
 }
