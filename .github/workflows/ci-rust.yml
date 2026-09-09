@@ -11,6 +11,7 @@ on:
     paths-ignore:
       - docker/Dockerfile.base
       - .github/workflows/build-base-image.yml
+      - charts/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
