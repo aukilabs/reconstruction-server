@@ -1,7 +1,16 @@
 # The Auki session input is becoming a blob, and we cannot follow yet
 
-**Status:** blocked upstream. Nothing in this repo has changed yet.
+**Status:** DONE in this repo, on `fix/auki-session-blob-input`. Waiting on one
+posemesh change before it can run.
 **Affects:** `runner-reconstruction-local-auki-sdk` (`/reconstruction/local-refinement-auki/*`).
+
+> **What is left.** The consumer is converted and its tests pass, including a
+> real two-peer round trip. It needs posemesh branch
+> `fix/compute-task-protocols-handle`, which populates `AukiProtocolsHandle` on
+> the Compute path. Until that is pushed there is no rev to pin, so
+> `server/rust/Cargo.toml` carries a clearly-marked `[patch]` block pointing at a
+> sibling posemesh checkout. **Delete that block and bump the rev when the fix
+> merges.**
 
 ## What changed on the other side
 
@@ -161,13 +170,39 @@ question rather than an open design decision.
    round trip (`runner-proxy/tests/artifacts.rs::the_manifest_route_is_actually_fetchable_by_an_unrelated_peer`)
    that is the natural template for the replacement.
 
-## Until then
+## What actually changed here
 
-This runner still consumes dataset references and still works against a
-publisher that produces them. It will **fail to parse** a manifest from an
-updated publisher — `DatasetReferenceDocument` is `deny_unknown_fields`, so the
-failure is loud and early rather than silent, which is the behaviour we want
-while the two sides are out of step.
+Done, on `fix/auki-session-blob-input`:
 
-Do not deploy an updated robot publisher against this consumer expecting Auki
-session refinement to work.
+- `input.rs` parses and validates the manifest and fetches through
+  `BlobClient::fetch_exact`, trying each validated route in turn.
+- `RunnerReconstructionLocalAukiSdk` takes an `AukiProtocolsHandle`; `bin`
+  composes with `RunnerComposition::with_protocols`.
+- Pins move posemesh `4bed3f76` → `c0f475c`, with `auki-p2p` repointed at the
+  `auki-sdk` repo it moved to. The wasm-bindgen family moves forward as a set,
+  since those crates are `=`-pinned to one another.
+- `input_p2p_tests.rs` → `input_blob_tests.rs`.
+
+Deliberately unchanged: `validate_multiaddrs` and all its route
+canonicalisation, the Domain-binding check against the artifact's own metadata,
+the safe extraction path, and the Python-facing directory layout.
+
+### Two behaviour changes to review
+
+**An expired manifest is a warning, not a rejection.** A blob has no expiry, so
+a passed `available_until` means "this manifest is old", not "the bytes are
+gone". Refusing would turn a probably-fine fetch into a certain failure.
+
+**`AUKI_P2P_ENABLED` is effectively mandatory for this binary**, because
+`with_protocols` fails composition without a peer identity. `with_dataset` had
+the same property, so this is not new behaviour — but it is newly relevant,
+because this binary did not previously compose with either.
+
+### Three old tests intentionally not carried over
+
+`hash and size mismatches leave no partial zip`, `interrupted transfer retries
+from zero`, and `wrong Robot peer id fails before bytes are accepted` now test
+the SDK rather than us: `fetch_exact` verifies every byte's SHA-256 and mutually
+authenticates the remote before returning, and we write to disk only after a
+verified fetch — so there is no partial-file window left to assert on. The
+replacement adds a real two-peer round trip instead.
