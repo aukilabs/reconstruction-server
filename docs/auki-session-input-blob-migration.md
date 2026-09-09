@@ -70,50 +70,75 @@ the stronger of the two.
 
 ## Why we cannot just switch
 
-`ctx.p2p_dataset` was how a **compute-side** runner fetched robot-hosted bulk
-data. Fetching a blob instead needs a `BlobClient`, which needs an
-`AukiPeerProtocols` — and a runner cannot get one:
+**Not for want of a peer identity.** It is worth being precise about this,
+because the obvious guess — that a compute node has no way to read from other
+peers — is wrong, and it would send someone down the wrong path.
 
-- Runners never receive P2P credentials. `LeaseEnvelope::without_p2p_credentials()`
-  strips them before the lease reaches us, deliberately: *"Runners receive
-  protocol-specific facades explicitly in their constructors, never through
-  `TaskCtx` and never as the raw P2P node or credentials."* So we cannot start
-  our own peer.
-- The engine's **robot** path builds an `AukiProtocolsHandle` and hands it to
-  runners through `RunnerComposition::with_protocols`. That is how the publisher
-  mounts its Blob v1 endpoint.
-- The engine's **compute** path does not. From `engine.rs`, in both the pin we
-  use and posemesh HEAD:
+The compute node has all the pieces:
 
-  ```rust
-  // Compute's per-task peer (ComputeP2pHost::start_task) doesn't populate an
-  // AukiProtocolsHandle yet -- see the doc comment on AukiProtocolsHandle.
-  let runners = runners.into().compose(RunnerDependencies::default())
-  ```
+- `run_node_with_shutdown` calls `prepare_peer_identity(&cfg)`, giving it an
+  `Identity`, a `PeerIdentityProof` and a `DdsP2pClient`.
+- For every lease, `ComputeP2pHost::start_task` calls
+  **`AukiPeer::start_external(identity, update, config)`** — the same
+  constructor the robot-side publisher uses, with a DDS-issued P2P credential
+  scoped to the lease's Domain.
+- That peer exposes `protocol_context()`, which is exactly what
+  `BlobClient::new(...)` needs.
+- Its lifetime already brackets our call precisely: `start_task` (engine.rs
+  ~1172) → `run_for_lease` (~1271) → `shutdown_task_peer` (~1330).
 
-So retiring the dataset protocol removed the only mechanism a compute runner had
-for fetching robot-published bulk data, and nothing replaced it. This is an
-upstream gap, not something this repo can work around.
+So a fully authenticated, Domain-scoped, read-capable peer **is alive for the
+whole duration of the runner call.**
+
+What is missing is one wire. The engine never hands that peer's protocol context
+to the runner:
+
+```rust
+// Compute's per-task peer (ComputeP2pHost::start_task) doesn't populate an
+// AukiProtocolsHandle yet -- see the doc comment on AukiProtocolsHandle.
+let runners = runners.into().compose(RunnerDependencies::default())
+```
+
+The **robot** path does the equivalent wiring — composes with an empty
+`AukiProtocolsHandle`, then `protocols_handle.activate(peer.protocol_context())`
+once the peer is up. The compute path composes with `default()` and never
+activates anything.
+
+And we cannot reach around it: runners never receive P2P credentials.
+`LeaseEnvelope::without_p2p_credentials()` strips them before the lease arrives,
+deliberately — *"Runners receive protocol-specific facades explicitly in their
+constructors, never through `TaskCtx` and never as the raw P2P node or
+credentials."* So starting our own peer is not an option, and should not be.
+
+`ctx.p2p_dataset` used to be that wire. Retiring the dataset protocol removed it
+without replacing it. The capability is all there; the accessor is not.
 
 ## The upstream change that unblocks us
 
-Populate an `AukiProtocolsHandle` on the compute path the same way
-`run_robot_node_with_shutdowns` already does for the robot path, and pass it in
-`RunnerDependencies`. Roughly:
+Mirror what the robot path already does, per task rather than per process:
 
-```rust
-let protocols_handle = prepared_peer.as_ref().map(|_| AukiProtocolsHandle::default());
-let runners = runners.into().compose(RunnerDependencies {
-    protocols: protocols_handle.clone(),
-})?;
-// …and activate it once the compute peer's protocol context exists.
-```
+1. Compose with an empty handle instead of `default()`:
 
-The wrinkle is lifetime: compute starts a peer **per task**, while the robot
-starts one for the process, so "the" protocol context is not a single long-lived
-thing on this side. Whoever picks this up should agree with the posemesh owners
-whether the handle is activated per task or the compute node grows a persistent
-peer. That decision is theirs, not ours.
+   ```rust
+   let protocols_handle = prepared_peer.as_ref().map(|_| AukiProtocolsHandle::default());
+   let runners = runners.into().compose(RunnerDependencies {
+       protocols: protocols_handle.clone(),
+   })?;
+   ```
+
+2. Activate it from the task peer once `start_task` returns, before
+   `run_for_lease`, and clear it in `shutdown_task_peer`.
+
+`AukiProtocolsHandle` is already built for this: it is an
+`Arc<RwLock<Option<AukiPeerProtocolContext>>>` whose `activate` is a plain
+assignment, so re-activating it per task is naturally supported. The one
+addition it needs is a `clear()` on teardown, so a runner cannot hold a context
+belonging to a peer that has been shut down.
+
+Per-task activation is the right shape here — the peer's lifetime already
+matches the runner's exactly, so there is no need for the compute node to grow a
+persistent peer. Worth confirming with the posemesh owners, but as a review
+question rather than an open design decision.
 
 ## What this repo does when it lands
 
