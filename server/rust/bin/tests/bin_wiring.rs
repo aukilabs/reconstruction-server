@@ -1,4 +1,8 @@
-use posemesh_compute_node::{config::NodeConfig, dds::persist, engine::RunnerRegistry};
+use posemesh_compute_node::{
+    config::NodeConfig,
+    dds::persist,
+    engine::{AukiProtocolsHandle, RunnerRegistry},
+};
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
@@ -41,6 +45,9 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
     }
     for runner in
         runner_reconstruction_local_auki_sdk::RunnerReconstructionLocalAukiSdk::for_all_capabilities(
+            // Never activated here: this test only checks which capabilities
+            // get registered, and no runner runs.
+            AukiProtocolsHandle::default(),
         )
     {
         reg = reg.register(runner);

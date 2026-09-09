@@ -9,6 +9,12 @@ path = "src/lib.rs"
 
 [dependencies]
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
+# The Auki session ZIP now arrives over Blob v1 rather than the retired P2P
+# dataset protocol, so this runner talks to the peer itself instead of being
+# handed a fetch closure through TaskCtx.
+auki-p2p = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
+auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc", features = ["blob-endpoint"] }
+posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "c0f475c8cab0fc411cde19ea29869e5e1013993f" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -26,9 +32,12 @@ walkdir = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-auki-p2p = { git = "https://github.com/aukilabs/posemesh.git", rev = "4bed3f76f440d45083ac04860b36fe0203439ea5" }
+auki-sdk = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
+# Tests stand up a fake Robot that SERVES a blob, so they need the provider half
+# this runner deliberately does not depend on at runtime.
+auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc", features = ["blob-fs-provider"] }
+auki-registry = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
 jsonwebtoken = "9"
-posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "4bed3f76f440d45083ac04860b36fe0203439ea5" }
 uuid = { version = "1", features = ["v4"] }
 
 [package.metadata]

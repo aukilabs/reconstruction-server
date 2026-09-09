@@ -17,4 +17,29 @@ publish = false
 deny-warnings = true
 
 [patch.crates-io]
-posemesh-compute-node-runner-api = { git = "https://github.com/aukilabs/posemesh.git", rev = "4bed3f76f440d45083ac04860b36fe0203439ea5" }
+# The runner crates depend on this by version; redirect it to the same source
+# the rest of the graph uses, or the trait impls come from two distinct copies
+# and nothing type-checks. Kept in step with the git patch below.
+posemesh-compute-node-runner-api = { path = "../../../posemesh/core/compute-node-runner-api" }
+
+# ---------------------------------------------------------------------------
+# TEMPORARY: REMOVE WHEN THE POSEMESH FIX IS MERGED AND THE REV ABOVE IS BUMPED
+#
+# The Auki-session blob input needs `AukiProtocolsHandle` to be populated on the
+# Compute path, which posemesh does not do yet. The fix lives on the branch
+# `fix/compute-task-protocols-handle` in the posemesh repo; until that is pushed
+# and merged there is no published rev to pin, so this points at a sibling
+# checkout instead.
+#
+# Assumes posemesh is checked out next to this repo, which is how the dev
+# machines are laid out:
+#
+#   <workspace>/auki/posemesh
+#   <workspace>/auki/reconstruction-server   <- you are here
+#
+# Delete this whole block and set the rev above once the fix lands.
+[patch."https://github.com/aukilabs/posemesh.git"]
+posemesh-compute-node = { path = "../../../posemesh/core/compute-node" }
+posemesh-compute-node-runner-api = { path = "../../../posemesh/core/compute-node-runner-api" }
+posemesh-node-registration = { path = "../../../posemesh/core/node-registration" }
+posemesh-domain-http = { path = "../../../posemesh/core/domain-http" }

@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
-posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "4bed3f76f440d45083ac04860b36fe0203439ea5" }
+posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "c0f475c8cab0fc411cde19ea29869e5e1013993f" }
 runner-reconstruction-local = { path = "../runner-reconstruction-local" }
 runner-reconstruction-local-auki-sdk = { path = "../runner-reconstruction-local-auki-sdk" }
 runner-reconstruction-global = { path = "../runner-reconstruction-global" }

@@ -2,9 +2,21 @@
 //!
 //! Unlike `/reconstruction/local-refinement/v1` -- which receives one Domain artifact
 //! per DMT scan file (ARposes.csv, Frames.mp4, ...) -- this capability receives one
-//! small Domain artifact describing a Robot-hosted Auki capture ZIP. The ZIP is fetched
-//! through `TaskCtx`'s authenticated P2P dataset handle and expanded here, on the Rust
-//! side, so the Python entrypoint still sees the same plain on-disk capture folder.
+//! small Domain artifact describing a Robot-hosted Auki capture ZIP. The ZIP is
+//! fetched over authenticated Blob v1 and expanded here, on the Rust side, so the
+//! Python entrypoint still sees the same plain on-disk capture folder.
+//!
+//! The Robot used to publish that ZIP through the P2P dataset protocol and we
+//! fetched it through `TaskCtx::p2p_dataset`. Posemesh retired that protocol;
+//! the Robot now stores the ZIP as one content-addressed blob and publishes a
+//! manifest saying where to fetch it. What arrives here is the same
+//! `scan_path_recording_reference_json` artifact with a different body.
+//!
+//! One consequence worth knowing: **a blob has no expiry.** The dataset
+//! reference carried an `available_until` the publisher enforced; the manifest
+//! carries one that is advisory. We treat a passed deadline as a warning and
+//! still attempt the fetch, because the bytes are very likely still there and
+//! refusing outright would be a worse failure than trying.
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -13,10 +25,12 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
+use auki_protocols::blob::BlobClient;
 use chrono::{DateTime, Utc};
-use compute_runner_api::{MaterializedInput, P2pDatasetReference, TaskCtx, P2P_DATASET_SCHEMA};
+use compute_runner_api::{MaterializedInput, TaskCtx};
 use libp2p_identity::PeerId;
 use multiaddr::{Multiaddr, Protocol};
+use posemesh_compute_node::engine::AukiProtocolsHandle;
 use serde::Deserialize;
 use tokio::{fs as async_fs, task};
 use tracing::{info, warn};
@@ -37,6 +51,8 @@ const SESSION_MARKER_DIR: &str = "sensorlogs";
 const APP_ROOT_SEARCH_DEPTH: usize = 3;
 
 const RECORDING_REFERENCE_DATA_TYPE: &str = "scan_path_recording_reference_json";
+/// Manifest schema the Robot-side publisher writes.
+const BLOB_MANIFEST_SCHEMA: &str = "auki.blob.manifest/1";
 const MAX_REFERENCE_BYTES: u64 = 64 * 1024;
 const MAX_REFERENCE_ROUTES: usize = 16;
 const MAX_CIRCUIT_ROUTES: usize = 3;
@@ -71,6 +87,7 @@ pub struct MaterializedSession {
 pub async fn materialize_session_zip(
     ctx: &TaskCtx<'_>,
     workspace: &Workspace,
+    protocols: &AukiProtocolsHandle,
 ) -> Result<MaterializedSession> {
     let lease_domain = ctx
         .lease
@@ -92,10 +109,6 @@ pub async fn materialize_session_zip(
             ))
         }
     };
-    let p2p_dataset = ctx
-        .p2p_dataset
-        .context("authenticated P2P dataset handle is unavailable for Auki session input")?;
-
     let materialized = ctx
         .input
         .materialize_cid_with_meta(cid)
@@ -106,33 +119,34 @@ pub async fn materialize_session_zip(
     // guard so both valid and rejected references are removed on every exit path.
     let _input_cleanup = TempInputCleanup::for_materialized(&materialized, workspace);
 
-    let reference = read_and_validate_reference(&materialized, lease_domain, Utc::now())
+    let manifest = read_and_validate_manifest(&materialized, lease_domain, Utc::now())
         .await
-        .with_context(|| format!("validate P2P recording reference for CID {cid}"))?;
+        .with_context(|| format!("validate the recording manifest for CID {cid}"))?;
     let scan_name = derive_scan_name(&materialized, &materialized.path);
 
     let input_dir = workspace.root().join("inputs");
     async_fs::create_dir_all(&input_dir)
         .await
         .with_context(|| format!("create P2P input directory {}", input_dir.display()))?;
-    let zip_path = input_dir.join(format!("{}.zip", reference.dataset_id));
+    let zip_path = input_dir.join(format!("{}.zip", manifest.blob.sha256));
     info!(
         cid = %cid,
-        dataset_id = %reference.dataset_id,
-        peer_id = %reference.peer_id,
+        sha256 = %manifest.blob.sha256,
+        peer_id = %manifest.peer_id,
+        routes = manifest.routes.len(),
         scan = %scan_name,
         destination = %zip_path.display(),
-        "fetching Auki session ZIP over authenticated P2P"
+        "fetching the Auki session ZIP over authenticated Blob v1"
     );
-    p2p_dataset
-        .fetch(&reference, &zip_path)
+    // Resolved at the point of use, never cached: on Compute the protocol
+    // context belongs to this task's peer.
+    let protocol_context = protocols
+        .get()
+        .context("the authenticated P2P protocol surface is unavailable for Auki session input")?;
+    let bytes = fetch_blob(&BlobClient::new(protocol_context.protocols()), &manifest).await?;
+    async_fs::write(&zip_path, &bytes)
         .await
-        .with_context(|| {
-            format!(
-                "fetch P2P dataset {} from Robot {}",
-                reference.dataset_id, reference.peer_id
-            )
-        })?;
+        .with_context(|| format!("write the fetched session ZIP to {}", zip_path.display()))?;
 
     let dataset_dir = workspace.datasets().join(&scan_name);
     fs::create_dir_all(&dataset_dir)
@@ -147,9 +161,9 @@ pub async fn materialize_session_zip(
         "expanding auki session zip"
     );
 
-    // The Compute Node adapter has already streamed this ZIP into the task workspace and
-    // verified its size and SHA-256 against the Domain reference. Keep the established
-    // safe extraction path and Python-facing directory layout unchanged.
+    // Blob v1 verifies the SHA-256 of every byte it returns before handing it
+    // over, so the archive on disk is already content-verified. Keep the
+    // established safe extraction path and Python-facing directory layout.
     let extracted_files = extract_zip(&zip_path, &dataset_dir)
         .await
         .with_context(|| {
@@ -184,124 +198,220 @@ pub async fn materialize_session_zip(
     })
 }
 
+/// The Robot's blob manifest, as written by the robot-side publisher.
+///
+/// `deny_unknown_fields` on purpose: a publisher that grows a field we do not
+/// understand should stop us loudly here rather than have us guess. It is also
+/// what makes the dataset-reference/manifest transition fail cleanly rather
+/// than silently while the two sides are out of step.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DatasetReferenceDocument {
+struct BlobManifestDocument {
     schema: String,
-    dataset_id: String,
-    domain_id: Uuid,
-    name: String,
     peer_id: String,
-    multiaddrs: Vec<String>,
-    size_bytes: u64,
-    sha256: String,
-    available_until: DateTime<Utc>,
+    routes: Vec<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    available_until: Option<DateTime<Utc>>,
+    blobs: Vec<BlobManifestEntry>,
+    /// Deprecated alias of `blobs`, emitted by the publisher for one release.
+    /// Accepted and ignored; `blobs` is authoritative.
+    #[serde(default)]
+    #[allow(dead_code)]
+    images: Option<Vec<BlobManifestEntry>>,
 }
 
-async fn read_and_validate_reference(
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlobManifestEntry {
+    #[allow(dead_code)]
+    id: String,
+    sha256: String,
+    #[serde(default)]
+    size_bytes: Option<u64>,
+}
+
+/// A validated manifest for exactly one recording ZIP.
+#[derive(Debug)]
+struct RecordingManifest {
+    peer_id: PeerId,
+    routes: Vec<String>,
+    blob: BlobManifestEntry,
+}
+
+async fn read_and_validate_manifest(
     materialized: &MaterializedInput,
     lease_domain: Uuid,
     now: DateTime<Utc>,
-) -> Result<P2pDatasetReference> {
+) -> Result<RecordingManifest> {
     if materialized.data_type.as_deref() != Some(RECORDING_REFERENCE_DATA_TYPE) {
         anyhow::bail!(
             "Auki session input must have Domain data type {RECORDING_REFERENCE_DATA_TYPE}, got {}",
             materialized.data_type.as_deref().unwrap_or("<missing>")
         );
     }
+    // The Domain binding is checked here, against the artifact's own metadata.
+    // The manifest body no longer repeats it -- this was always the stronger of
+    // the two checks, since it is Domain Server's word rather than the
+    // publisher's.
     let source_domain = materialized
         .domain_id
         .as_deref()
-        .context("recording reference Domain metadata is missing")?;
+        .context("recording manifest Domain metadata is missing")?;
     let source_domain = Uuid::parse_str(source_domain)
-        .context("recording reference Domain metadata is not a UUID")?;
+        .context("recording manifest Domain metadata is not a UUID")?;
     if source_domain != lease_domain {
-        anyhow::bail!("recording reference Domain metadata does not match the task lease");
+        anyhow::bail!("recording manifest Domain metadata does not match the task lease");
     }
 
     let metadata = async_fs::metadata(&materialized.path)
         .await
         .with_context(|| {
             format!(
-                "inspect materialized recording reference {}",
+                "inspect the materialized recording manifest {}",
                 materialized.path.display()
             )
         })?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_REFERENCE_BYTES {
         anyhow::bail!(
-            "materialized recording reference must be a non-empty file no larger than {} bytes",
+            "a materialized recording manifest must be a non-empty file no larger than {} bytes",
             MAX_REFERENCE_BYTES
         );
     }
     let bytes = async_fs::read(&materialized.path).await.with_context(|| {
         format!(
-            "read materialized recording reference {}",
+            "read the materialized recording manifest {}",
             materialized.path.display()
         )
     })?;
-    let document: DatasetReferenceDocument =
-        serde_json::from_slice(&bytes).context("parse strict auki-p2p-dataset reference JSON")?;
-    validate_reference_document(document, materialized, lease_domain, now)
+    let document: BlobManifestDocument = serde_json::from_slice(&bytes).context(
+        "parse the strict Blob v1 recording manifest JSON (a publisher still emitting an \
+         auki-p2p-dataset reference will fail here, which is intended while the two sides \
+         are out of step)",
+    )?;
+    validate_manifest_document(document, now)
 }
 
-fn validate_reference_document(
-    mut document: DatasetReferenceDocument,
-    materialized: &MaterializedInput,
-    lease_domain: Uuid,
+fn validate_manifest_document(
+    document: BlobManifestDocument,
     now: DateTime<Utc>,
-) -> Result<P2pDatasetReference> {
-    if document.schema != P2P_DATASET_SCHEMA {
+) -> Result<RecordingManifest> {
+    if document.schema != BLOB_MANIFEST_SCHEMA {
         anyhow::bail!(
-            "unsupported recording reference schema: {}",
+            "unsupported recording manifest schema: {} (expected {BLOB_MANIFEST_SCHEMA})",
             document.schema
         );
     }
-    let dataset_id = Uuid::parse_str(&document.dataset_id)
-        .context("recording reference dataset_id must be a scan task UUID")?;
-    if dataset_id.to_string() != document.dataset_id {
-        anyhow::bail!("recording reference dataset_id must use canonical UUID form");
-    }
-    if document.domain_id != lease_domain {
-        anyhow::bail!("recording reference Domain does not match the task lease");
-    }
-    if document.name.trim().is_empty() {
-        anyhow::bail!("recording reference name is missing");
-    }
-    if !document.name.starts_with("scan_path_recording_") {
-        anyhow::bail!("recording reference name does not preserve the scan timestamp prefix");
-    }
-    let artifact_name = materialized
-        .name
-        .as_deref()
-        .context("recording reference Domain artifact name is missing")?;
-    if document.name != artifact_name {
-        anyhow::bail!("recording reference name does not match its Domain artifact name");
-    }
-    let peer_id =
-        PeerId::from_str(&document.peer_id).context("recording reference Peer ID is invalid")?;
-    document.multiaddrs = validate_multiaddrs(&document.multiaddrs, peer_id)?;
-    if document.size_bytes == 0 {
-        anyhow::bail!("recording reference size_bytes must be greater than zero");
-    }
-    let digest =
-        hex::decode(&document.sha256).context("recording reference sha256 must be hexadecimal")?;
-    if digest.len() != 32 {
-        anyhow::bail!("recording reference sha256 must contain exactly 32 bytes");
-    }
-    if document.available_until <= now {
-        anyhow::bail!("recording reference has expired");
+    // One recording is one blob. More than one means the publisher used a verb
+    // that splits its output, which this capability cannot reassemble.
+    let blob = match document.blobs.len() {
+        1 => document.blobs.into_iter().next().expect("checked above"),
+        0 => anyhow::bail!("recording manifest lists no blobs"),
+        n => anyhow::bail!(
+            "recording manifest lists {n} blobs; this capability expects exactly one ZIP"
+        ),
+    };
+
+    if let Some(content_type) = document.content_type.as_deref() {
+        if content_type != "application/zip" {
+            anyhow::bail!(
+                "recording manifest declares content type {content_type}; expected application/zip"
+            );
+        }
     }
 
-    Ok(P2pDatasetReference {
-        schema: document.schema,
-        dataset_id: document.dataset_id,
-        domain_id: document.domain_id,
-        name: document.name,
-        peer_id: document.peer_id,
-        multiaddrs: document.multiaddrs,
-        size_bytes: document.size_bytes,
-        sha256: document.sha256,
-        available_until: document.available_until,
+    let digest =
+        hex::decode(&blob.sha256).context("recording manifest sha256 must be hexadecimal")?;
+    if digest.len() != 32 {
+        anyhow::bail!("recording manifest sha256 must contain exactly 32 bytes");
+    }
+    if blob.sha256 != blob.sha256.to_ascii_lowercase() {
+        anyhow::bail!("recording manifest sha256 must be lowercase");
+    }
+    if matches!(blob.size_bytes, Some(0)) {
+        anyhow::bail!("recording manifest size_bytes must be greater than zero");
+    }
+
+    let peer_id =
+        PeerId::from_str(&document.peer_id).context("recording manifest Peer ID is invalid")?;
+    let routes = validate_multiaddrs(&document.routes, peer_id)?;
+
+    // ADVISORY, not enforced. A blob has no expiry and nothing prunes the
+    // publisher's blob root, so a passed deadline says "this manifest is old",
+    // not "the bytes are gone". Refusing would turn a probably-fine fetch into
+    // a certain failure.
+    if let Some(available_until) = document.available_until {
+        if available_until <= now {
+            warn!(
+                %available_until,
+                sha256 = %blob.sha256,
+                "recording manifest is past its advisory availability deadline; \
+                 attempting the fetch anyway"
+            );
+        }
+    }
+
+    Ok(RecordingManifest {
+        peer_id,
+        routes,
+        blob,
+    })
+}
+
+/// Try each validated route in turn, returning the first verified fetch.
+///
+/// Routes are ordered by the publisher and already canonicalised by
+/// `validate_multiaddrs`; a robot behind a relay commonly advertises several,
+/// only some of which this node can reach.
+async fn fetch_blob(client: &BlobClient, manifest: &RecordingManifest) -> Result<Vec<u8>> {
+    let mut last_error = None;
+    for route in &manifest.routes {
+        let parsed: Multiaddr = match route.parse() {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                last_error = Some(anyhow!("route {route} is not a multiaddr: {error}"));
+                continue;
+            }
+        };
+        match client
+            .fetch_exact(manifest.peer_id, parsed, manifest.blob.sha256.clone())
+            .await
+        {
+            Ok(receipt) => {
+                info!(
+                    route = %route,
+                    relayed = receipt.relayed,
+                    bytes = receipt.bytes.len(),
+                    "fetched the Auki session ZIP"
+                );
+                if let Some(expected) = manifest.blob.size_bytes {
+                    if receipt.bytes.len() as u64 != expected {
+                        anyhow::bail!(
+                            "fetched blob is {} bytes but the manifest declared {expected}",
+                            receipt.bytes.len()
+                        );
+                    }
+                }
+                return Ok(receipt.into_bytes());
+            }
+            Err(error) => {
+                warn!(route = %route, %error, "route failed; trying the next one");
+                last_error = Some(anyhow!("route {route}: {error}"));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        anyhow!(
+            "recording manifest for {} carried no usable route",
+            manifest.blob.sha256
+        )
+    }))
+    .with_context(|| {
+        format!(
+            "fetch blob {} from Robot {} over Blob v1",
+            manifest.blob.sha256, manifest.peer_id
+        )
     })
 }
 
@@ -963,5 +1073,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "input_p2p_tests.rs"]
-mod p2p_tests;
+#[path = "input_blob_tests.rs"]
+mod blob_tests;
