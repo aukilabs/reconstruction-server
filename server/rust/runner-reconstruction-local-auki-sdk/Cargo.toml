@@ -14,7 +14,7 @@ compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "
 # handed a fetch closure through TaskCtx.
 auki-p2p = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
 auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc", features = ["blob-endpoint"] }
-posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "c0f475c8cab0fc411cde19ea29869e5e1013993f" }
+posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "5daee4e4ab57f736c6e11360c2606024ded4f49f" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

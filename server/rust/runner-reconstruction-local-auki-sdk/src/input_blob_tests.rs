@@ -105,8 +105,7 @@ fn a_dataset_reference_from_an_old_publisher_is_rejected_loudly() {
         "available_until": Utc::now().to_rfc3339(),
     });
     let error = serde_json::from_value::<BlobManifestDocument>(body)
-        .err()
-        .expect("an auki-p2p-dataset reference must not parse as a manifest");
+        .expect_err("an auki-p2p-dataset reference must not parse as a manifest");
     assert!(error.to_string().contains("unknown field"), "{error}");
 }
 
