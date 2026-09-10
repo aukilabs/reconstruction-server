@@ -43,9 +43,12 @@ RUN set -eux; \
     mkdir -p /app/jobs; \
     chown -R "$USERNAME:$USERNAME" /app/jobs
 
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
+
 USER $USERNAME
 
 # Copy Rust binary from builder
 COPY --from=rust-build /app/target/release/compute-node /app/compute-node
 
-ENTRYPOINT ["/app/compute-node"]
+ENTRYPOINT ["/app/entrypoint.sh"]
