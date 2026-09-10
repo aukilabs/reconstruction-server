@@ -192,7 +192,7 @@ pub async fn materialize_global_colmap(
         .with_context(|| {
             format!(
                 "create dataset directory {}",
-                &workspace
+                workspace
                     .refined_global()
                     .join("refined_sfm_combined")
                     .display()

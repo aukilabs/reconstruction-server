@@ -15,3 +15,10 @@ publish = false
 # Metadata used by scripts/CI; clippy warnings are denied via CI commands.
 [workspace.metadata.ci]
 deny-warnings = true
+
+[patch.crates-io]
+# The runner crates depend on this by version, but it is not published to
+# crates.io -- redirect it to the same git rev the direct `posemesh-compute-node`
+# dependencies use. Keep this rev in lockstep with them: if the two disagree the
+# runner API resolves twice and the trait impls come from distinct copies.
+posemesh-compute-node-runner-api = { git = "https://github.com/aukilabs/posemesh.git", rev = "5daee4e4ab57f736c6e11360c2606024ded4f49f" }

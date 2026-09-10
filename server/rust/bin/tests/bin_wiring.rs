@@ -1,4 +1,8 @@
-use posemesh_compute_node::{config::NodeConfig, dds::persist, engine::RunnerRegistry};
+use posemesh_compute_node::{
+    config::NodeConfig,
+    dds::persist,
+    engine::{AukiProtocolsHandle, RunnerRegistry},
+};
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
@@ -23,6 +27,10 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
         token_safety_ratio: 0.75,
         token_reauth_max_retries: 3,
         token_reauth_jitter_ms: 500,
+        auki_p2p_enabled: false,
+        auki_p2p_listen_multiaddrs: Vec::new(),
+        auki_p2p_advertised_multiaddrs: Vec::new(),
+        auki_p2p_private_key: None,
         register_interval_secs: None,
         register_max_retry: None,
         max_concurrency: 1,
@@ -37,6 +45,9 @@ async fn registry_contains_scaffold_runners_and_run_node_ok() {
     }
     for runner in
         runner_reconstruction_local_auki_sdk::RunnerReconstructionLocalAukiSdk::for_all_capabilities(
+            // Never activated here: this test only checks which capabilities
+            // get registered, and no runner runs.
+            AukiProtocolsHandle::default(),
         )
     {
         reg = reg.register(runner);

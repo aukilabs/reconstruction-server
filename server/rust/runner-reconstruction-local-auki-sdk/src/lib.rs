@@ -2,10 +2,10 @@
 //!
 //! Same contract as `/reconstruction/local-refinement/v1` on both ends -- one workspace
 //! per job, one Python pipeline invocation, refined `sfm/` folders zipped and uploaded as
-//! `refined_scan_<scan>` artifacts -- but the input is a single capture zip
-//! (e.g. `scan_path_recording_2026-08-05_09-33-06.zip`) which is expanded here rather
-//! than a set of per-file DMT artifacts, and the pipeline entrypoint is
-//! `local_auki_main.py` instead of `main.py --mode local_refinement`.
+//! `refined_scan_<scan>` artifacts -- but the input is a small Domain reference to one
+//! Robot-hosted capture ZIP. The ZIP is fetched through the authenticated P2P dataset
+//! handle and expanded here rather than materialized from Domain Server; the pipeline
+//! entrypoint remains `local_auki_main.py` instead of `main.py --mode local_refinement`.
 
 use std::{
     env,
@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::{ArtifactSink, Runner, TaskCtx};
+use posemesh_compute_node::engine::AukiProtocolsHandle;
 use serde::Serialize;
 use serde_json::json;
 use tokio::fs;
@@ -41,23 +42,36 @@ pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
 pub struct RunnerReconstructionLocalAukiSdk {
     config: RunnerConfig,
     capability: &'static str,
+    /// The authenticated peer surface this runner fetches the session ZIP over.
+    ///
+    /// Held, not resolved: on Compute the context behind it belongs to one
+    /// task's peer, so it is looked up at the point of use and never cached.
+    protocols: AukiProtocolsHandle,
 }
 
 impl RunnerReconstructionLocalAukiSdk {
     /// Create a new Auki SDK local refinement runner.
-    pub fn new() -> Self {
-        Self::with_capability(CAPABILITY, load_config())
+    pub fn new(protocols: AukiProtocolsHandle) -> Self {
+        Self::with_capability(CAPABILITY, load_config(), protocols)
     }
 
-    pub fn with_capability(capability: &'static str, config: RunnerConfig) -> Self {
-        Self { config, capability }
+    pub fn with_capability(
+        capability: &'static str,
+        config: RunnerConfig,
+        protocols: AukiProtocolsHandle,
+    ) -> Self {
+        Self {
+            config,
+            capability,
+            protocols,
+        }
     }
 
-    pub fn for_all_capabilities() -> Vec<Self> {
+    pub fn for_all_capabilities(protocols: AukiProtocolsHandle) -> Vec<Self> {
         let config = load_config();
         CAPABILITIES
             .iter()
-            .map(|cap| Self::with_capability(cap, config.clone()))
+            .map(|cap| Self::with_capability(cap, config.clone(), protocols.clone()))
             .collect()
     }
 
@@ -79,12 +93,6 @@ impl RunnerReconstructionLocalAukiSdk {
             job_id,
             task_id,
         )
-    }
-}
-
-impl Default for RunnerReconstructionLocalAukiSdk {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -175,7 +183,7 @@ impl RunnerReconstructionLocalAukiSdk {
             }))
             .await;
 
-        let session = input::materialize_session_zip(&ctx, &workspace).await?;
+        let session = input::materialize_session_zip(&ctx, &workspace, &self.protocols).await?;
         if ctx.ctrl.is_cancelled().await {
             anyhow::bail!("task cancelled during input materialization");
         }
@@ -573,7 +581,7 @@ mod tests {
         assert_eq!(CAPABILITY, "/reconstruction/local-refinement-auki-sdk/v0");
         assert_eq!(CAPABILITIES.len(), 1);
         assert_eq!(
-            RunnerReconstructionLocalAukiSdk::new().capability(),
+            RunnerReconstructionLocalAukiSdk::new(AukiProtocolsHandle::default()).capability(),
             CAPABILITY
         );
     }
@@ -712,7 +720,9 @@ mod tests {
         }))
         .unwrap();
 
-        let runner = RunnerReconstructionLocalAukiSdk::new();
+        // The handle is never activated: this rejects on the input count long
+        // before anything would resolve a protocol context.
+        let runner = RunnerReconstructionLocalAukiSdk::new(AukiProtocolsHandle::default());
         let err = runner
             .run(TaskCtx {
                 lease: &lease,
@@ -725,7 +735,7 @@ mod tests {
             .unwrap_err();
 
         let message = err.to_string();
-        assert!(message.contains("single session zip input"), "{message}");
+        assert!(message.contains("recording reference input"), "{message}");
         assert!(message.contains("cid-a, cid-b"), "{message}");
     }
 

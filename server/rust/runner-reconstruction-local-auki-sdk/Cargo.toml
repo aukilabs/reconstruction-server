@@ -9,17 +9,36 @@ path = "src/lib.rs"
 
 [dependencies]
 compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
+# The Auki session ZIP now arrives over Blob v1 rather than the retired P2P
+# dataset protocol, so this runner talks to the peer itself instead of being
+# handed a fetch closure through TaskCtx.
+auki-p2p = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
+auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc", features = ["blob-endpoint"] }
+posemesh-compute-node = { git = "https://github.com/aukilabs/posemesh.git", rev = "5daee4e4ab57f736c6e11360c2606024ded4f49f" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+libp2p-identity = "0.2.14"
+multiaddr = "0.18.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
+uuid = "1"
 walkdir = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
+[dev-dependencies]
+auki-sdk = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
+# Tests stand up a fake Robot that SERVES a blob, so they need the provider half
+# this runner deliberately does not depend on at runtime.
+auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc", features = ["blob-fs-provider"] }
+auki-registry = { git = "https://github.com/aukilabs/auki-sdk", rev = "3ee1142529d5f64af87f6fc2276d3a6a78e728cc" }
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4"] }
+
 [package.metadata]
-description = "Runner for local refinement of Auki SDK capture sessions delivered as a single session zip."
+description = "Runner for local refinement of Auki SDK capture sessions fetched from an authenticated P2P reference."
