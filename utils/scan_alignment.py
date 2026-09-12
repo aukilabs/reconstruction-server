@@ -10,7 +10,10 @@ import numpy as np
 from utils.io import read_portal_csv, portalPose
 from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
 from utils.dataset_utils import transform_with_scale
-from utils.geometry_utils import QuaternionNormalizationCostFunction
+from utils.geometry_utils import (
+    QuaternionNormalizationCostFunction,
+    TranslationPriorCostFunction,
+)
 from src.cost_functions import RelativeTransformationSim3CostFunction  # Custom ceres costs implemented in C++
 from src.reconstruction_merge import append_reconstruction
 
@@ -97,6 +100,9 @@ PORTAL_OUTLIER_SIGMA_MULT = 3.0
 PORTAL_GRAVITY_PRIOR_WEIGHT = 20.0
 # Huber scale a ≈ weight * 2*sin(θ/2); a=1.0 ≈ firm below ~3° tilt, linear above.
 PORTAL_GRAVITY_PRIOR_HUBER_SCALE = 1.0
+# Soft pin of origin-scan Sim3-delta translation to 0 (stops gauge float off floor_origin).
+# Modest vs portal residual mass — enough to hold ~cm–dm, not override overlaps.
+PORTAL_ORIGIN_PRIOR_WEIGHT = 10.0
 # Local-refine frames are ARKit/gravity aligned → down is COLMAP -X.
 _PORTAL_LOCAL_GRAVITY = np.array([-1.0, 0.0, 0.0], dtype=float)
 
@@ -676,6 +682,21 @@ def _run_ceres_alignment_solve(
             qr_ids_per_scan[scan_idx_ref].add(qr_id)
             qr_ids_per_scan[scan_idx_tgt].add(qr_id)
 
+    # Soft origin-position prior: first aligned scan's stitch maps floor portal → (0,0,0);
+    # pin that scan's Sim3-delta translation so the gauge cannot float off origin.
+    origin_scan_idx = 0
+    origin_scan_id = scan_ids[origin_scan_idx]
+    origin_trans = t_local_scan_translation[origin_scan_idx]
+    origin_prior = TranslationPriorCostFunction(
+        target=(0.0, 0.0, 0.0),
+        weight=PORTAL_ORIGIN_PRIOR_WEIGHT,
+    )
+    problem.add_residual_block(origin_prior, None, [origin_trans])
+    logger.info(
+        f"Origin prior: scan={origin_scan_id} idx={origin_scan_idx} "
+        f"target=(0,0,0) w={PORTAL_ORIGIN_PRIOR_WEIGHT}"
+    )
+
     # Soft gravity prior: trust local-refinement up (COLMAP -X) per scan.
     # residual = w * (R_delta * R_stitch * local_g - world_g), Huber-robustified.
     from src.cost_functions import GravityDirectionPriorSim3DeltaCostFunction
@@ -766,6 +787,11 @@ def _run_ceres_alignment_solve(
         f"Gravity prior vs total Ceres cost: "
         f"pre {0.5*grav_huber0:.3f}/{initial:.3f} ({100*grav_share0:.1f}%), "
         f"post {0.5*grav_huber1:.3f}/{final:.3f} ({100*grav_share1:.1f}%)"
+    )
+    origin_t = np.asarray(t_local_scan_translation[origin_scan_idx], dtype=float).reshape(3)
+    logger.info(
+        f"Origin prior post-solve: scan={origin_scan_id} "
+        f"delta_t={origin_t.tolist()} |t|={float(np.linalg.norm(origin_t)):.4f}m"
     )
 
     t_local_scans = [
