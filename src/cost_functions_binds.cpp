@@ -44,6 +44,17 @@ PYBIND11_MODULE(cost_functions, m) {
         "t_target_observation_translation"_a,
         "t_reference_target_covariance"_a);
 
+  m.def("GravityDirectionPriorCostFunction",
+        &GravityDirectionPriorCostFunction::Create,
+        "local_gravity_direction"_a,
+        "weight"_a);
+
+  m.def("GravityDirectionPriorSim3DeltaCostFunction",
+        &GravityDirectionPriorSim3DeltaCostFunction::Create,
+        "stitch_rotation_xyzw"_a,
+        "local_gravity_direction"_a,
+        "weight"_a);
+
   m.def("PoseCenterConstraintCostFunction",
         &PoseCenterConstraintCostFunction::Create,
         "center"_a,

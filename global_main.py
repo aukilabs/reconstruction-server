@@ -3,7 +3,15 @@ import argparse
 import os
 from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
 from utils.point_cloud_utils import post_process_ply
-from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans, compute_portal_spread_metrics
+from utils.scan_alignment import (
+    align_scans,
+    merge_aligned_scans,
+    refine_alignment,
+    print_alignment_comparison,
+    AlignedScans,
+    compute_portal_spread_metrics,
+    portal_alignment_metrics_to_dict,
+)
 from utils.io import read_portal_csv
 import logging
 from typing import Dict
@@ -86,7 +94,7 @@ def main(args):
         job_root_path,
         logger=logger
     )
-    refined_aligned_scans = refine_alignment(
+    refined_aligned_scans, portal_alignment_metrics = refine_alignment(
         aligned_scans,
         job_root_path,
         logger=logger,
@@ -126,6 +134,7 @@ def main(args):
         job_progress=100,
         portal_sizes=portal_sizes,
         portal_spread_metrics=portal_spread_metrics,
+        portal_alignment_metrics=portal_alignment_metrics_to_dict(portal_alignment_metrics),
     )
 
     sfm_dir = output_path / "refined_sfm_combined"
