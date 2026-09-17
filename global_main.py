@@ -124,6 +124,7 @@ def main(args):
         job_status="refined",
         job_progress=100,
         portal_sizes=portal_sizes,
+        scan_alignment_transforms=refined_aligned_scans.alignment_transforms,
     )
 
     sfm_dir = output_path / "refined_sfm_combined"

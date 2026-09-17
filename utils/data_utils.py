@@ -620,25 +620,13 @@ def save_manifest_json(
 
     #-------------------------
     # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
+    # Sim3 stays COLMAP: global align/merge applies these to local COLMAP SFM; only final portal poses / PLY convert to OpenGL.
     #-------------------------
-    # TODO: should verify this first and save transforms in OpenGL space
-    """
     if scan_alignment_transforms:
         manifest_data["scanAlignmentTransforms"] = {}
         for scan_id, sim3 in scan_alignment_transforms.items():
             pos = sim3.translation
             quat = sim3.rotation.quat
-            #pos, quat = convert_pose_colmap_to_opengl(pos, quat)
-            #colmap_to_gl = np.array([
-            #    [0, 1, 0],
-            #    [1, 0, 0],
-            #    [0, 0, -1]
-            #])
-            #colmap_to_gl_inv = colmap_to_gl # Inverse is the same since it's symmetric
-            #pos = colmap_to_gl @ pos
-            #R = scipy_Rotation.from_quat(quat).as_matrix()
-            #R = colmap_to_gl @ R colmap_to_gl_inv
-            #quat = scipy_Rotation.from_matrix(R).as_quat()
             manifest_data["scanAlignmentTransforms"][scan_id] = {
                 "localToDomain": {
                     "scale": str(float(sim3.scale)),
@@ -653,9 +641,8 @@ def save_manifest_json(
                         "z": str(float(quat[2])),
                         "w": str(float(quat[3])),
                     }
-                } 
+                }
             }
-    """
 
     with open(json_path, 'w') as json_file:
         json.dump(manifest_data, json_file, indent=4)
