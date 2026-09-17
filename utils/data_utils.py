@@ -628,7 +628,7 @@ def save_manifest_json(
             pos = sim3.translation
             quat = sim3.rotation.quat
             manifest_data["scanAlignmentTransforms"][scan_id] = {
-                "localToDomain": {
+                "localToGlobalColmap": {
                     "scale": str(float(sim3.scale)),
                     "position": {
                         "x": str(float(pos[0])),
