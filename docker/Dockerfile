@@ -36,6 +36,17 @@ RUN chmod -R 755 /app/scripts /app/src /app/utils /app/*.py
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && \
     cmake --build build
 
+# Local/dev: install monodepth from vendored tree (private GH not available in build).
+# Keep in sync with docker/colmap-monodepth-pin.txt (SHA 9f268e19…).
+COPY third_party/colmap-monodepth /tmp/colmap-monodepth
+# DA3 pulls an older opencv-python; restore stock rec-server pin (v0.3.3 / v0.4.2).
+RUN python3 -m pip install --no-cache-dir \
+      "/tmp/colmap-monodepth[da3,mesh,fit]" \
+    && (python3 -m pip uninstall -y opencv-python-headless || true) \
+    && python3 -m pip install --no-cache-dir --force-reinstall \
+      "opencv-python==4.13.0.92" \
+    && rm -rf /tmp/colmap-monodepth
+
 # Run reconstruction server as separate user, not root
 RUN set -eux; \
     groupadd --gid "$USER_GID" "$USERNAME"; \

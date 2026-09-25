@@ -155,6 +155,14 @@ RUN set -eux; \
     cd /; \
     rm -rf /tmp/build/*
 
+# colmap-monodepth (optional local mesh hook; pin matches docker/colmap-monodepth-pin.txt)
+# DA3 pulls an older opencv-python; restore stock rec-server pin (v0.3.3 / v0.4.2).
+RUN set -eux; \
+    python3 -m pip install \
+      "colmap-monodepth[da3,mesh,fit] @ git+https://github.com/aukilabs/colmap-monodepth@9f268e19597cfaebf112806bc059e1b0886b31b4"; \
+    python3 -m pip uninstall -y opencv-python-headless || true; \
+    python3 -m pip install --force-reinstall "opencv-python==4.13.0.92"
+
 # Draco
 RUN set -eux; \
     cd /tmp/build; \

@@ -3,6 +3,7 @@ import argparse
 import os
 from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
 from utils.point_cloud_utils import post_process_ply
+from utils.mono_depth_mesh import maybe_run_global_mono_depth_mesh, mono_depth_mesh_enabled
 from utils.scan_alignment import align_scans, merge_aligned_scans, refine_alignment, print_alignment_comparison, AlignedScans
 from utils.io import read_portal_csv
 import logging
@@ -104,6 +105,15 @@ def main(args):
         logger=logger
     )
 
+    maybe_run_global_mono_depth_mesh(
+        mono_depth_mesh_enabled(getattr(args, "mono_depth_mesh", False)),
+        job_root_path,
+        output_path,
+        refined_aligned_scans.scan_ids,
+        refined_aligned_scans.alignment_transforms,
+        log=logger,
+    )
+
     refined_portal_poses = get_mean_portal_poses(refined_aligned_scans, logger)
 
     logger.debug("Aligned portal poses: ")
@@ -161,6 +171,11 @@ if __name__ == "__main__":
     parser.add_argument("--log_level", type=str, default="INFO", 
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
+    )
+    parser.add_argument(
+        "--mono_depth_mesh",
+        action="store_true",
+        help="Fuse local mono-depth meshes after global align (default off; or MONO_DEPTH_MESH=1)",
     )
     args = parser.parse_args()
     main(args)

@@ -6,14 +6,24 @@ use anyhow::{anyhow, Context, Result};
 use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
 use compute_runner_api::ArtifactSink;
 use tokio::task;
-use tracing::info;
+use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::workspace::Workspace;
 
 const REQUIRED_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
-const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt"];
+/// SfM + mono-depth debug intermediates (depths/mesh) shipped inside RefinedScan.zip for now.
+const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt", ".png", ".ply", ".json", ".npy"];
+/// Top-level dirs under `refined/local/<scan>/` included in the zip (paths keep the dir prefix).
+const ZIP_SCAN_SUBDIRS: &[&str] = &["sfm", "infer", "fit", "carve", "mesh"];
+
+/// Optional mesh outputs under `refined/local/<scan>/mesh/` (file name, artifact name suffix, data_type).
+const OPTIONAL_MESH_ARTIFACTS: &[(&str, &str, &str)] = &[
+    ("tsdf_mesh.ply", "mesh", "tsdf_mesh_ply"),
+    ("tsdf_points.ply", "mesh_points", "tsdf_points_ply"),
+    ("meta.json", "mesh_meta", "tsdf_mesh_meta_json"),
+];
 
 /// Tracks which scans have already been uploaded from the local refinement folder.
 #[derive(Default)]
@@ -28,9 +38,9 @@ impl RefinedUploader {
         }
     }
 
-    /// Scan `workspace.refined_local()` for completed scans, zipping any new `sfm`
-    /// folders and uploading them through the artifact sink. Returns the list of
-    /// scan identifiers that were uploaded during this call.
+    /// Scan `workspace.refined_local()` for completed scans, zipping `sfm` plus
+    /// optional mono-depth intermediates (`infer`/`fit`/`carve`/`mesh`) and uploading
+    /// through the artifact sink. Returns the list of scan identifiers uploaded.
     pub async fn process(
         &mut self,
         workspace: &Workspace,
@@ -64,9 +74,11 @@ impl RefinedUploader {
                 continue;
             }
 
-            let zip_bytes = zip_directory(&sfm_path, ZIP_ALLOWED_EXTENSIONS)
+            // Zip scan root so entries are `sfm/…`, `infer/…`, `fit/…`, `carve/…`, `mesh/…`.
+            // Global unpacks into `refined/local/<scan>/` and reads carve/fit depths from there.
+            let zip_bytes = zip_scan_root(&entry.path(), ZIP_SCAN_SUBDIRS, ZIP_ALLOWED_EXTENSIONS)
                 .await
-                .with_context(|| format!("zip scan directory {}", sfm_path.display()))?;
+                .with_context(|| format!("zip scan directory {}", entry.path().display()))?;
             if zip_bytes.is_empty() {
                 continue;
             }
@@ -95,6 +107,8 @@ impl RefinedUploader {
                 }
             }
 
+            upload_optional_mesh_artifacts(&entry.path(), &scan_id, sink).await?;
+
             self.completed.insert(scan_id.clone());
             uploaded.push(scan_id);
         }
@@ -103,41 +117,58 @@ impl RefinedUploader {
     }
 }
 
-async fn zip_directory(dir: &Path, allowed_extensions: &[&str]) -> Result<Vec<u8>> {
-    let dir = dir.to_path_buf();
+async fn zip_scan_root(
+    scan_root: &Path,
+    subdirs: &[&str],
+    allowed_extensions: &[&str],
+) -> Result<Vec<u8>> {
+    let scan_root = scan_root.to_path_buf();
+    let subdirs: Vec<String> = subdirs.iter().map(|s| s.to_string()).collect();
     let allowed = allowed_extensions
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
-    let bytes = task::spawn_blocking(move || zip_directory_blocking(&dir, &allowed)).await??;
+    let bytes =
+        task::spawn_blocking(move || zip_scan_root_blocking(&scan_root, &subdirs, &allowed))
+            .await??;
     Ok(bytes)
 }
 
-fn zip_directory_blocking(dir: &Path, allowed_extensions: &[String]) -> Result<Vec<u8>> {
+fn zip_scan_root_blocking(
+    scan_root: &Path,
+    subdirs: &[String],
+    allowed_extensions: &[String],
+) -> Result<Vec<u8>> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = FileOptions::default().compression_method(CompressionMethod::Stored);
     let mut has_files = false;
 
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path == dir {
+    for sub in subdirs {
+        let dir = scan_root.join(sub);
+        if !dir.is_dir() {
             continue;
         }
-        if entry.file_type().is_dir() {
-            continue;
+        for entry in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path == dir {
+                continue;
+            }
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            if !should_include_file(path, allowed_extensions) {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(scan_root)
+                .map_err(|_| anyhow!("failed to strip prefix"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            writer.start_file(relative, options)?;
+            let bytes = std::fs::read(path)?;
+            writer.write_all(&bytes)?;
+            has_files = true;
         }
-        if !should_include_file(path, allowed_extensions) {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(dir)
-            .map_err(|_| anyhow!("failed to strip prefix"))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        writer.start_file(relative, options)?;
-        let bytes = std::fs::read(path)?;
-        writer.write_all(&bytes)?;
-        has_files = true;
     }
 
     if !has_files {
@@ -170,6 +201,71 @@ fn has_required_sfm_files(sfm: &Path) -> bool {
         .all(|name| sfm.join(name).exists())
 }
 
+async fn upload_optional_mesh_artifacts(
+    scan_root: &Path,
+    scan_id: &str,
+    sink: &dyn ArtifactSink,
+) -> Result<()> {
+    let mesh_dir = scan_root.join("mesh");
+    if !mesh_dir.is_dir() {
+        debug!(scan = %scan_id, "mesh directory missing; skipping mesh artifact upload");
+        return Ok(());
+    }
+
+    for (file_name, name_suffix, data_type) in OPTIONAL_MESH_ARTIFACTS {
+        let path = mesh_dir.join(file_name);
+        if !path.is_file() {
+            debug!(
+                scan = %scan_id,
+                file = file_name,
+                "optional mesh artifact missing; skipping"
+            );
+            continue;
+        }
+
+        let rel_path = mesh_artifact_rel_path(scan_id, file_name);
+        let artifact_name = format!("refined_scan_{}_{}", name_suffix, scan_id);
+        let req = DomainArtifactRequest {
+            rel_path: &rel_path,
+            name: &artifact_name,
+            data_type,
+            existing_id: None,
+            content: DomainArtifactContent::File(&path),
+        };
+
+        match sink.put_domain_artifact(req).await {
+            Ok(_) => {
+                info!(
+                    scan = %scan_id,
+                    rel_path = %rel_path,
+                    "uploaded optional mesh artifact"
+                );
+            }
+            Err(err) if is_conflict_err(&err) => {
+                info!(
+                    scan = %scan_id,
+                    rel_path = %rel_path,
+                    "mesh artifact already exists in domain (409); skipping upload"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    scan = %scan_id,
+                    rel_path = %rel_path,
+                    error = %err,
+                    "optional mesh artifact upload failed; continuing"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn mesh_artifact_rel_path(scan_id: &str, file_name: &str) -> String {
+    format!("refined/local/{}/mesh/{}", scan_id, file_name)
+}
+
 fn is_conflict_err(err: &anyhow::Error) -> bool {
     let needle1 = "409";
     let needle2 = "conflict";
@@ -180,4 +276,17 @@ fn is_conflict_err(err: &anyhow::Error) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mesh_artifact_rel_path;
+
+    #[test]
+    fn mesh_artifact_rel_path_matches_domain_layout() {
+        assert_eq!(
+            mesh_artifact_rel_path("scan_a", "tsdf_mesh.ply"),
+            "refined/local/scan_a/mesh/tsdf_mesh.ply"
+        );
+    }
 }

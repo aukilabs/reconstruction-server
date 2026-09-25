@@ -1,0 +1,4 @@
+# Pinned optional dependency for mono-depth mesh (local refine hook).
+# Installed in docker/Dockerfile.base; keep SHA in sync with production images.
+# Local/dev Dockerfile installs from third_party/colmap-monodepth (same SHA).
+colmap-monodepth[da3,mesh,fit] @ git+https://github.com/aukilabs/colmap-monodepth@9f268e19597cfaebf112806bc059e1b0886b31b4

@@ -35,8 +35,8 @@ Notes:
 - `REG_SECRET` comes from registering a **compute node** in the Posemesh Console.
 - `SECP256K1_PRIVHEX` is the hex-encoded private key of the **staked** EVM wallet for that node.
 - Optional runner tuning:
-  - `LOCAL_RUNNER_CPU_WORKERS` (default `2`)
-  - `GLOBAL_RUNNER_CPU_WORKERS` (default `2`)
+  - `LOCAL_RUNNER_CPU_WORKERS` (default `0` — main thread only; avoids CUDA-in-fork)
+  - `GLOBAL_RUNNER_CPU_WORKERS` (default `0`)
 
 How to get the registration secret + wallet key:
 1. Log in to the Posemesh Console at `https://console.auki.network/`.
@@ -134,7 +134,7 @@ Here are some common issues you may encounter, with suggested fixes:
 - **Symptom:** Server stops or computer restarts during job processing
 - **Fix:**  
   - Monitor system RAM and temperatures, and check for overheating or insufficient resources.  
-  - Try lowering `LOCAL_RUNNER_CPU_WORKERS` / `GLOBAL_RUNNER_CPU_WORKERS` in your `.env`.
+  - Defaults are already `0` (main thread). Only raise workers if you intentionally run multi-scan pools without CUDA in the parent.
 
 ### “out of shm” error
 - **Symptom:** Job fails with “out of shared memory.”  

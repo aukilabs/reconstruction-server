@@ -62,6 +62,31 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
         mandatory: false,
     },
     OutputSpec {
+        relative_path: "refined/global/topology/topology_alphashape.obj",
+        display_name: "topologymesh_alphashape_obj",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/topology/topology_alphashape.glb",
+        display_name: "topologymesh_alphashape_glb",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/mesh/tsdf_mesh.ply",
+        display_name: "tsdf_mesh",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/mesh/tsdf_points.ply",
+        display_name: "tsdf_mesh_points",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/global/mesh/meta.json",
+        display_name: "tsdf_mesh_meta",
+        mandatory: false,
+    },
+    OutputSpec {
         relative_path: "refined/global/refined_sfm_combined/cameras.bin",
         display_name: "colmap_cameras_bin",
         mandatory: true,
@@ -233,6 +258,11 @@ fn data_type_for_display(display: &str) -> &str {
         "topologymesh_v1_midpoly_glb" => "glb",
         "topologymesh_v1_highpoly_obj" => "obj",
         "topologymesh_v1_highpoly_glb" => "glb",
+        "topologymesh_alphashape_obj" => "obj",
+        "topologymesh_alphashape_glb" => "glb",
+        "tsdf_mesh" => "tsdf_mesh_ply",
+        "tsdf_mesh_points" => "tsdf_points_ply",
+        "tsdf_mesh_meta" => "tsdf_mesh_meta_json",
         "colmap_cameras_bin" => "colmap_cameras_bin",
         "colmap_frames_bin" => "colmap_frames_bin",
         "colmap_images_bin" => "colmap_images_bin",

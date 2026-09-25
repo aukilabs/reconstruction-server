@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mesh viewer</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #0b0d10; font-family: ui-sans-serif, system-ui, sans-serif; }
+    #c { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 2;
+      background: rgba(12, 14, 18, 0.72); border: 1px solid #2a313c;
+      border-radius: 10px; padding: 10px 12px; color: #e8eef7;
+      font-size: 13px; line-height: 1.4; backdrop-filter: blur(8px);
+      max-width: min(420px, calc(100vw - 24px));
+    }
+    #hud b { color: #9fd0ff; }
+    #hud .err { color: #ff8f8f; }
+    #hud .muted { color: #9aa6b5; }
+  </style>
+</head>
+<body>
+  <div id="hud">Loading mesh…</div>
+  <canvas id="c"></canvas>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const hud = document.getElementById("hud");
+    const canvas = document.getElementById("c");
+    const params = new URLSearchParams(location.search);
+    const plyUrl = params.get("ply") || "/pointcloud.ply";
+    // force=mesh|points; default auto (indexed PLY → mesh)
+    const mode = (params.get("mode") || "auto").toLowerCase();
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight, false);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d10);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 5000);
+    // Trial: +X as world up (vs Three.js Y-up / COLMAP Z-up).
+    camera.up.set(1, 0, 0);
+    camera.position.set(1, 0, -3);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
+    key.position.set(2, 4, 3);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xb7d0ff, 0.35);
+    fill.position.set(-3, 1, -2);
+    scene.add(fill);
+
+    function fitCameraToObject(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z) * 0.5 || 1;
+      const dist = radius / Math.tan((camera.fov * Math.PI) / 360) * 1.4;
+      camera.near = Math.max(dist / 200, 0.001);
+      camera.far = dist * 40;
+      camera.updateProjectionMatrix();
+      // Elevate along X+ (world up); approach from -Z.
+      camera.position.copy(center).add(new THREE.Vector3(dist * 0.25, dist * 0.35, -dist));
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    function setHud(html) { hud.innerHTML = html; }
+
+    setHud(`Fetching <b>${plyUrl}</b>…`);
+
+    const loader = new PLYLoader();
+    loader.load(
+      plyUrl,
+      (geometry) => {
+        const hasColor = geometry.getAttribute("color") != null;
+        const hasIndex = geometry.index != null && geometry.index.count > 0;
+        const asMesh = mode === "mesh" || (mode === "auto" && hasIndex);
+        if (!geometry.getAttribute("normal")) geometry.computeVertexNormals();
+
+        let obj;
+        let kind;
+        if (asMesh && hasIndex) {
+          const material = new THREE.MeshStandardMaterial({
+            vertexColors: hasColor,
+            color: hasColor ? 0xffffff : 0xb7c7d9,
+            metalness: 0.05,
+            roughness: 0.72,
+            side: THREE.DoubleSide,
+          });
+          obj = new THREE.Mesh(geometry, material);
+          kind = "mesh";
+        } else if (asMesh && !hasIndex) {
+          // Triangle soup without index: still try Mesh (non-indexed)
+          const material = new THREE.MeshStandardMaterial({
+            vertexColors: hasColor,
+            color: hasColor ? 0xffffff : 0xb7c7d9,
+            metalness: 0.05,
+            roughness: 0.72,
+            side: THREE.DoubleSide,
+          });
+          obj = new THREE.Mesh(geometry, material);
+          kind = "mesh (non-indexed)";
+        } else {
+          const material = new THREE.PointsMaterial({
+            size: 0.01,
+            vertexColors: hasColor,
+            color: hasColor ? 0xffffff : 0x9fd0ff,
+            sizeAttenuation: true,
+          });
+          obj = new THREE.Points(geometry, material);
+          kind = "points";
+        }
+
+        scene.add(obj);
+        fitCameraToObject(obj);
+        const nVert = geometry.getAttribute("position")?.count ?? 0;
+        const nTri = hasIndex ? Math.floor(geometry.index.count / 3) : (kind.startsWith("mesh") ? Math.floor(nVert / 3) : 0);
+        setHud(
+          `<b>${kind}</b><br>` +
+          `${nVert.toLocaleString()} verts` + (nTri ? ` · ${nTri.toLocaleString()} tris` : "") + `<br>` +
+          `<span class="muted">${plyUrl}</span><br>` +
+          `<span class="muted">drag orbit · scroll zoom · right-drag pan</span>`
+        );
+      },
+      (evt) => {
+        if (!evt.total) return;
+        const pct = Math.round((100 * evt.loaded) / evt.total);
+        setHud(`Loading <b>${plyUrl}</b>… ${pct}%`);
+      },
+      (err) => {
+        console.error(err);
+        setHud(`<span class="err">Failed to load ${plyUrl}</span><br><span class="muted">${err}</span>`);
+      }
+    );
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight, false);
+    });
+
+    function tick() {
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+    tick();
+  </script>
+</body>
+</html>

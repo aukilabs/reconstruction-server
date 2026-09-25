@@ -433,7 +433,8 @@ impl RunnerConfig {
 
     pub const DEFAULT_PYTHON_BIN: &'static str = "python3";
     pub const DEFAULT_PYTHON_SCRIPT: &'static str = "main.py";
-    pub const DEFAULT_CPU_WORKERS: usize = 2;
+    // Match local: main-thread only; multi-scan pool is unused in practice and unsafe with CUDA.
+    pub const DEFAULT_CPU_WORKERS: usize = 0;
 
     /// Build a config from environment variables.
     pub fn from_env() -> Result<Self> {

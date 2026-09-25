@@ -1,0 +1,15 @@
+# Core (unit tests / COLMAP IO)
+numpy>=1.24,<2
+Pillow>=10.0
+pytest>=7.0
+addict
+opencv-python-headless>=4.12,<5  # avoid 4.11.0.86: wrong 180° MP4 rotation (RS Dockerfile pin note)
+
+# Depth Anything 3 + torch (install a CUDA torch matching your GPU first)
+# Official install: https://github.com/ByteDance-Seed/Depth-Anything-3
+# Example (Blackwell / sm_120): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# Then: pip install "git+https://github.com/ByteDance-Seed/Depth-Anything-3.git"
+# Note: depth-anything-3 requires Python >=3.9,<=3.13.0 (use 3.12).
+torch>=2.0
+torchvision
+depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3.git

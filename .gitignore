@@ -15,3 +15,8 @@ server/rust/server-bin/jobs
 server/rust/data
 *.so
 .env
+_local/
+_cmp_jobs/
+models/
+compute-node.bak*
+third_party/Light_Glue_CPP/

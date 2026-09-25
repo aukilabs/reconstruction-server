@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colmap-monodepth"
+version = "0.1.0"
+description = "COLMAP sparse → Depth Anything 3 pose-conditioned depth CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+da3 = [
+  "torch>=2.0",
+  "torchvision",
+  "depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3.git",
+]
+mesh = [
+  "open3d>=0.17",
+  "numba>=0.57",
+  # Prefer opencv-python (same as stock rec-server / DA3); avoid headless dual-install.
+  "opencv-python>=4.8",
+]
+fit = [
+  "torch>=2.0",
+  "opencv-python>=4.8",
+]
+dev = [
+  "pytest>=7.0",
+  "numba>=0.57",
+  "opencv-python>=4.8",
+]
+
+[project.scripts]
+colmap-monodepth = "colmap_monodepth.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["colmap_monodepth*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

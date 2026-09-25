@@ -25,7 +25,8 @@ pub struct MaterializedRefinedScan {
 }
 
 /// Materialize each refined scan name into the workspace, downloading from Domain,
-/// keeping the zip under datasets, and extracting into refined/local/<scan>/sfm.
+/// keeping the zip under datasets, and extracting into refined/local/<scan>/
+/// (sfm + optional infer/fit/carve/mesh depth intermediates).
 pub async fn materialize_refined_scans(
     ctx: &TaskCtx<'_>,
     workspace: &Workspace,
@@ -95,17 +96,20 @@ pub async fn materialize_refined_scans(
             .await
             .with_context(|| format!("write refined scan zip {}", zip_path.display()))?;
 
-        let refined_sfm_dir = workspace.refined_local().join(&scan_name).join("sfm");
-        let _ = unzip_refined_scan(bytes, &refined_sfm_dir)
+        // Unpack into scan root so zip entries `sfm/…`, `carve/…`, `fit/…`, `infer/…`, `mesh/…`
+        // land as siblings. Older zips were flat SfM files only — normalize those into `sfm/`.
+        let refined_scan_dir = workspace.refined_local().join(&scan_name);
+        let _ = unzip_refined_scan(bytes, &refined_scan_dir)
             .await
             .with_context(|| {
                 format!(
                     "unzip refined scan {} into {}",
                     zip_path.display(),
-                    refined_sfm_dir.display()
+                    refined_scan_dir.display()
                 )
             })?;
 
+        let refined_sfm_dir = normalize_refined_sfm_layout(&refined_scan_dir)?;
         if !has_required_sfm_files(&refined_sfm_dir) {
             return Err(anyhow!(
                 "refined scan '{}' missing required sfm files under {}",
@@ -125,6 +129,51 @@ pub async fn materialize_refined_scans(
     }
 
     Ok(scans)
+}
+
+/// Prefer `scan/sfm/`; if an older flat zip put SfM files at scan root, move them into `sfm/`.
+fn normalize_refined_sfm_layout(scan_dir: &Path) -> Result<PathBuf> {
+    let sfm_dir = scan_dir.join("sfm");
+    if has_required_sfm_files(&sfm_dir) {
+        return Ok(sfm_dir);
+    }
+    if REQUIRED_SFM_FILES.iter().all(|name| scan_dir.join(name).exists()) {
+        std::fs::create_dir_all(&sfm_dir)
+            .with_context(|| format!("create {}", sfm_dir.display()))?;
+        for name in REQUIRED_SFM_FILES {
+            let src = scan_dir.join(name);
+            let dst = sfm_dir.join(name);
+            if src.exists() && !dst.exists() {
+                std::fs::rename(&src, &dst)
+                    .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))
+                    .with_context(|| format!("move {} -> {}", src.display(), dst.display()))?;
+            }
+        }
+        // Best-effort: move any other flat .bin/.csv/.txt into sfm/
+        if let Ok(entries) = std::fs::read_dir(scan_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if !matches!(ext.as_str(), "bin" | "csv" | "txt") {
+                    continue;
+                }
+                let fname = entry.file_name();
+                let dst = sfm_dir.join(&fname);
+                if dst.exists() {
+                    continue;
+                }
+                let _ = std::fs::rename(&path, &dst).or_else(|_| std::fs::copy(&path, &dst).map(|_| ()));
+            }
+        }
+    }
+    Ok(sfm_dir)
 }
 
 async fn resolve_by_name(

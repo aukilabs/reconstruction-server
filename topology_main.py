@@ -3,6 +3,7 @@ import open3d as o3d
 from utils.io import Model
 import argparse
 from utils.data_utils import setup_logger
+from utils.topology_export import write_topology_lod_meshes
 import numpy as np
 import time
 import logging
@@ -145,19 +146,13 @@ def main(args, logger=None):
             for mesh in meshes:
                 merged_mesh += mesh
 
-            o3d.io.write_triangle_mesh(args.output_dir / "topology.glb", merged_mesh)
-            o3d.io.write_triangle_mesh(args.output_dir / "topology.obj", merged_mesh)
-        
-        with timed_section_scope("Generating lowpoly meshes", logger):
-            full_tri_count = len(merged_mesh.triangles)
-            downsampled = merged_mesh
-            ratio = 1.0
-            for i in range(2):
-                downsampled = downsampled.filter_smooth_laplacian(number_of_iterations=1)
-                ratio /= 3
-                downsampled = downsampled.simplify_quadric_decimation(target_number_of_triangles=int(full_tri_count * ratio))
-                o3d.io.write_triangle_mesh(args.output_dir / f"topology_downsampled_{ratio:.3f}.glb", downsampled)
-                o3d.io.write_triangle_mesh(args.output_dir / f"topology_downsampled_{ratio:.3f}.obj", downsampled)
+        with timed_section_scope("Writing alpha-shape topology", logger):
+            write_topology_lod_meshes(
+                merged_mesh,
+                args.output_dir,
+                basename="topology_alphashape",
+                log=logger,
+            )
 
 if __name__ == "__main__":
     args = parse_args()

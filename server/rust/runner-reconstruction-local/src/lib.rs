@@ -429,7 +429,8 @@ impl RunnerConfig {
 
     pub const DEFAULT_PYTHON_BIN: &'static str = "python3";
     pub const DEFAULT_PYTHON_SCRIPT: &'static str = "main.py";
-    pub const DEFAULT_CPU_WORKERS: usize = 2;
+    // Single-scan jobs only in practice; pool workers fork after CUDA (hloc) and break mono-depth.
+    pub const DEFAULT_CPU_WORKERS: usize = 0;
 
     /// Build a config from environment variables.
     pub fn from_env() -> Result<Self> {

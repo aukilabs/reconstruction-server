@@ -5,6 +5,7 @@ import shutil
 from datetime import datetime
 from typing import NamedTuple
 
+from utils.mono_depth_mesh import DEFAULT_STRIDE, maybe_run_mono_depth_mesh
 from utils.triangulation import process_features_and_matching, triangulate_model
 from utils.data_utils import (
     convert_pose_opengl_to_colmap,
@@ -224,7 +225,10 @@ def refine_dataset_part_two(
     logger,
     colmap_rec_path,
     remove_outputs,
-    start_time
+    start_time,
+    mono_depth_mesh=False,
+    mono_depth_mesh_stride=DEFAULT_STRIDE,
+    mono_depth_mesh_process_res=504,
 ):
     # Prepare data for loop closure
     refined_rec = pycolmap.Reconstruction()
@@ -268,6 +272,16 @@ def refine_dataset_part_two(
         logger
     )
 
+    maybe_run_mono_depth_mesh(
+        mono_depth_mesh,
+        paths.output,
+        paths.images,
+        paths.sfm_dir,
+        stride=mono_depth_mesh_stride,
+        process_res=mono_depth_mesh_process_res,
+        log=logger,
+    )
+
     if remove_outputs:
         logger.info('Remove output directory')
         shutil.rmtree(paths.output)
@@ -288,7 +302,10 @@ def refine_dataset(
     job_id="",
     log_level="INFO",
     log_format="json",
-    pool_executor=None
+    pool_executor=None,
+    mono_depth_mesh=False,
+    mono_depth_mesh_stride=DEFAULT_STRIDE,
+    mono_depth_mesh_process_res=504,
 ):
     """
     Refine a dataset using Structure from Motion techniques.
@@ -303,6 +320,9 @@ def refine_dataset(
         log_level: Logging level
         log_format: Logging format
         pool_executor: ThreadPoolExecutor instance for parallel processing
+        mono_depth_mesh: Run colmap-monodepth mesh after SfM (also MONO_DEPTH_MESH=1)
+        mono_depth_mesh_stride: Frame stride for depth inference
+        mono_depth_mesh_process_res: DA3 process_res knob
     Returns:
         Future object if pool_executor is provided, otherwise None
     """
@@ -363,7 +383,10 @@ def refine_dataset(
             logger,
             colmap_rec_path,
             remove_outputs,
-            start_time
+            start_time,
+            mono_depth_mesh,
+            mono_depth_mesh_stride,
+            mono_depth_mesh_process_res,
         )
         return future
     else:
@@ -374,6 +397,9 @@ def refine_dataset(
             logger,
             colmap_rec_path,
             remove_outputs,
-            start_time
+            start_time,
+            mono_depth_mesh,
+            mono_depth_mesh_stride,
+            mono_depth_mesh_process_res,
         )
         return None

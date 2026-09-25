@@ -1,0 +1,3 @@
+# Minimal ngrok config (v2) so we can tunnel without the host's v3 config.
+# Auth: set NGROK_AUTHTOKEN in the environment, or run `ngrok config add-authtoken …`.
+version: "2"

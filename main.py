@@ -8,6 +8,7 @@ from global_main import main as global_main
 from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
 from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.mono_depth_mesh import DEFAULT_STRIDE, mono_depth_mesh_enabled
 from utils.io import load_yaml, save_to_yaml
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
@@ -79,7 +80,10 @@ def process_local_refinement(args, scan, worker_pool=None):
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level,
-        log_format=args.log_format
+        log_format=args.log_format,
+        mono_depth_mesh=mono_depth_mesh_enabled(getattr(args, "mono_depth_mesh", False)),
+        mono_depth_mesh_stride=getattr(args, "mono_depth_mesh_stride", DEFAULT_STRIDE),
+        mono_depth_mesh_process_res=getattr(args, "mono_depth_mesh_process_res", 504),
     )
     return local_main(local_args, worker_pool)
 
@@ -155,7 +159,8 @@ def global_main_wrapper(args, logger):
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level,
-        log_format=args.log_format
+        log_format=args.log_format,
+        mono_depth_mesh=mono_depth_mesh_enabled(getattr(args, "mono_depth_mesh", False)),
     )
     global_main(global_args)
     logger.info("Done with global refinement")
@@ -292,6 +297,23 @@ def parse_args():
     parser.add_argument("--log_format", choices=["text", "json"], default="json", help="Log output format (text or json)")
 
     parser.add_argument("--scans", nargs="+", default=[], help="List of scans to process")
+    parser.add_argument(
+        "--mono_depth_mesh",
+        action="store_true",
+        help="Run colmap-monodepth dense mesh after local SfM (default off; or MONO_DEPTH_MESH=1)",
+    )
+    parser.add_argument(
+        "--mono_depth_mesh_stride",
+        type=int,
+        default=DEFAULT_STRIDE,
+        help="Frame stride for mono depth mesh inference (default: 3)",
+    )
+    parser.add_argument(
+        "--mono_depth_mesh_process_res",
+        type=int,
+        default=504,
+        help="DA3 process_res for mono depth mesh (default: 504)",
+    )
     args = parser.parse_args()
     if args.job_root_path and not args.domain_id and not args.job_id:
         inferred_ids = infer_domain_and_job_from_job_root(args.job_root_path)
@@ -299,7 +321,7 @@ def parse_args():
             args.domain_id, args.job_id = inferred_ids
             print("Inferred domain_id from job_root_path: ", args.domain_id)
             print("Inferred job_id from job_root_path: ", args.job_id)
-    
+
     if not args.domain_id or not args.job_id:
         parser.error("domain_id and/or job_id were not supplied, and could not be inferred from job_root_path")
     return args
