@@ -156,7 +156,7 @@ def test_run_fit_residual_icp_smoke(tmp_path: Path):
     assert result.meta["mode"] == "residual_icp"
     assert result.meta.get("rematch") is not None
     assert result.meta.get("residual_grid") == [config.res_gh, config.res_gw]
-    assert result.meta["pair_stats"]["cost_mode"] == "temporal"
+    assert result.meta["pair_stats"]["cost_mode"] == "temporal_plus_ranked"
     assert result.meta.get("geo_stride") == config.geo_stride
     assert result.meta.get("geo_uv_samples", 0) > 0
     conf = load_depth_png(depth_png_path(result.confident_depth_dir, names[0]))
@@ -167,6 +167,7 @@ def test_build_geo_pairs_cost_temporal_only_reports_full_union():
     n = 6
     # Cameras along x so spatial neighbors exist beyond temporal radius.
     centers = np.stack([np.arange(n, dtype=np.float64), np.zeros(n), np.zeros(n)], axis=1)
+    forwards = np.tile(np.array([[0.0, 0.0, 1.0]]), (n, 1))
     # Dense covis between non-adjacent views (0,3), (1,4), (2,5).
     obs: dict[int, list[tuple[int, float, float]]] = {}
     for pid, (a, b) in enumerate([(0, 3), (1, 4), (2, 5)]):
@@ -181,7 +182,7 @@ def test_build_geo_pairs_cost_temporal_only_reports_full_union():
         max_geo_pairs=20,
         geo_cost_temporal_only=True,
     )
-    cost_pairs, stats = build_geo_pairs(n, centers, obs, cfg)
+    cost_pairs, stats = build_geo_pairs(n, centers, obs, cfg, forwards=forwards)
     temporal_expected = {(i, i + 1) for i in range(n - 1)}
     assert set(cost_pairs) == temporal_expected
     assert stats["cost_mode"] == "temporal"
@@ -198,9 +199,43 @@ def test_build_geo_pairs_cost_temporal_only_reports_full_union():
         geo_max_baseline_m=10.0,
         max_geo_pairs=20,
         geo_cost_temporal_only=False,
+        geo_cost_mode="union",
     )
-    union_pairs, union_stats = build_geo_pairs(n, centers, obs, cfg_union)
+    union_pairs, union_stats = build_geo_pairs(n, centers, obs, cfg_union, forwards=forwards)
     assert union_stats["cost_mode"] == "union"
-    assert set(union_pairs) == set(build_geo_pairs(n, centers, obs, cfg_union)[0])
+    assert set(union_pairs) == set(build_geo_pairs(n, centers, obs, cfg_union, forwards=forwards)[0])
     assert len(union_pairs) >= len(cost_pairs)
     assert any(abs(a - b) > 1 for a, b in union_pairs)
+
+
+def test_build_geo_pairs_ranked_prefers_wide_revisit():
+    n = 8
+    centers = np.stack([np.arange(n, dtype=np.float64) * 0.2, np.zeros(n), np.zeros(n)], axis=1)
+    forwards = np.tile(np.array([[0.0, 0.0, 1.0]]), (n, 1))
+    # Strong covis on a long-gap pair (0,7) and a short-gap pair (0,2).
+    obs: dict[int, list[tuple[int, float, float]]] = {
+        0: [(0, 10.0, 10.0), (7, 12.0, 12.0)] * 40,
+        1: [(0, 11.0, 11.0), (2, 13.0, 13.0)] * 40,
+    }
+    cfg = FitConfig(
+        temporal_radius=1,
+        covis_min_shared=2,
+        covis_max_per_view=4,
+        geo_max_baseline_m=5.0,
+        max_geo_pairs=40,
+        geo_cost_temporal_only=False,
+        geo_cost_mode="temporal_plus_ranked",
+        geo_wide_pairs_budget=1,
+        geo_index_dt_s=1.0,
+        geo_wide_time_tau_s=10.0,
+        geo_wide_min_angle_deg=1.0,
+        geo_wide_max_angle_deg=80.0,
+    )
+    pairs, stats = build_geo_pairs(n, centers, obs, cfg, forwards=forwards)
+    assert stats["cost_mode"] == "temporal_plus_ranked"
+    temporal_expected = {(i, i + 1) for i in range(n - 1)}
+    assert temporal_expected.issubset(set(pairs))
+    # Budget 1: long-gap (0,7) outranks short-gap covis (0,2).
+    assert (0, 7) in set(pairs)
+    assert (0, 2) not in set(pairs)
+    assert len(pairs) == len(temporal_expected) + 1

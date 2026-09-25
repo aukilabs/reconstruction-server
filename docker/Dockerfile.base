@@ -159,7 +159,7 @@ RUN set -eux; \
 # DA3 pulls an older opencv-python; restore stock rec-server pin (v0.3.3 / v0.4.2).
 RUN set -eux; \
     python3 -m pip install \
-      "colmap-monodepth[da3,mesh,fit] @ git+https://github.com/aukilabs/colmap-monodepth@9f268e19597cfaebf112806bc059e1b0886b31b4"; \
+      "colmap-monodepth[da3,mesh,fit] @ git+https://github.com/aukilabs/colmap-monodepth@9d54bc8aaa11cf981b02ec31f9329810f3f47dba"; \
     python3 -m pip uninstall -y opencv-python-headless || true; \
     python3 -m pip install --force-reinstall "opencv-python==4.13.0.92"
 

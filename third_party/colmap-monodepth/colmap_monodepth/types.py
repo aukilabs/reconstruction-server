@@ -120,8 +120,20 @@ class FitConfig:
     covis_max_per_view: int = 4
     temporal_radius: int = 2
     max_geo_pairs: int = 120
-    # Cost uses temporal neighbors only; pair_stats still reports spatial/covis/union.
-    geo_cost_temporal_only: bool = True
+    # Cost pair selection:
+    # - temporal: temporal neighbors only (legacy geo_cost_temporal_only=True)
+    # - union: capped spatial∪temporal∪covis (legacy geo_cost_temporal_only=False)
+    # - temporal_plus_ranked: all temporal + ranked wide/revisit covis pairs (default)
+    geo_cost_mode: str = "temporal_plus_ranked"
+    # Deprecated override: True forces temporal mode (kept for older callers/tests).
+    geo_cost_temporal_only: bool = False
+    # Ranked wide-pair knobs (temporal_plus_ranked).
+    geo_wide_min_angle_deg: float = 5.0
+    geo_wide_max_angle_deg: float = 40.0
+    geo_wide_time_tau_s: float = 10.0
+    geo_wide_pairs_budget: int = 40
+    # When timestamps are absent, dt ≈ |i-j| * geo_index_dt_s (selected-frame index).
+    geo_index_dt_s: float = 0.1
     track_max_points: int = 2500
     track_max_views: int = 4
     res_gh: int = 12

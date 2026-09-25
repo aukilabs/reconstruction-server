@@ -73,18 +73,67 @@ def collect_track_obs(
     return obs
 
 
+def _pair_key(i: int, j: int) -> tuple[int, int]:
+    return (i, j) if i < j else (j, i)
+
+
+def _triangulation_angle_deg(
+    ci: np.ndarray,
+    cj: np.ndarray,
+    fi: np.ndarray,
+    fj: np.ndarray,
+) -> float:
+    """Approx triangulation angle (deg) at a proxy scene point ahead of both cameras."""
+    fwd = 0.5 * (fi + fj)
+    norm = float(np.linalg.norm(fwd))
+    if norm < 1e-9:
+        fwd = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    else:
+        fwd = fwd / norm
+    baseline = float(np.linalg.norm(ci - cj))
+    depth = max(baseline, 0.5)
+    p = 0.5 * (ci + cj) + fwd * depth
+    v1 = ci - p
+    v2 = cj - p
+    n1 = float(np.linalg.norm(v1))
+    n2 = float(np.linalg.norm(v2))
+    if n1 < 1e-9 or n2 < 1e-9:
+        return 0.0
+    cos_a = float(np.dot(v1, v2) / (n1 * n2))
+    cos_a = float(np.clip(cos_a, -1.0, 1.0))
+    return float(np.degrees(np.arccos(cos_a)))
+
+
+def _angle_band_score(angle_deg: float, lo: float, hi: float) -> float:
+    """1 inside [lo, hi]; linear falloff to 0 by 0° / 2*hi."""
+    if lo <= angle_deg <= hi:
+        return 1.0
+    if angle_deg < lo:
+        return float(np.clip(angle_deg / max(lo, 1e-6), 0.0, 1.0))
+    # above hi: decay to 0 by 2*hi
+    return float(np.clip(1.0 - (angle_deg - hi) / max(hi, 1e-6), 0.0, 1.0))
+
+
 def build_geo_pairs(
     n: int,
     centers: np.ndarray,
     obs: dict[int, list[tuple[int, float, float]]],
     config: FitConfig,
+    *,
+    forwards: np.ndarray | None = None,
+    timestamps: np.ndarray | None = None,
 ) -> tuple[list[tuple[int, int]], dict[str, Any]]:
     """Build geo neighbor pairs for the multi-view depth consistency loss.
 
-    Always computes spatial / temporal / covis candidate sets for ``pair_stats``
-    (report / accuracy context). By default the *cost* pair list is temporal-only
-    so the Adam loop stays cheap; set ``geo_cost_temporal_only=False`` to optimize
-    on the capped spatial∪temporal∪covis union (legacy).
+    Always computes spatial / temporal / covis candidate sets for ``pair_stats``.
+    Cost list mode (``FitConfig.geo_cost_mode``):
+
+    - ``temporal``: temporal neighbors only
+    - ``union``: capped spatial ∪ temporal ∪ covis (legacy)
+    - ``temporal_plus_ranked`` (default): all temporal + ranked wide/revisit covis
+      pairs (prefer mid triangulation angle and larger time gaps)
+
+    ``geo_cost_temporal_only=True`` forces ``temporal`` (back-compat).
     """
     spatial: list[tuple[int, int]] = []
     for i in range(n):
@@ -115,9 +164,7 @@ def build_geo_pairs(
         for a in range(len(views)):
             for b in range(a + 1, len(views)):
                 va, vb = views[a], views[b]
-                if va > vb:
-                    va, vb = vb, va
-                shared[(va, vb)] += 1
+                shared[_pair_key(va, vb)] += 1
 
     neigh: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for (a, b), c in shared.items():
@@ -129,11 +176,10 @@ def build_geo_pairs(
     for i, lst in neigh.items():
         lst.sort(reverse=True)
         for c, j in lst[: config.covis_max_per_view]:
-            pair = (i, j) if i < j else (j, i)
+            pair = _pair_key(i, j)
             covis_weight[pair] = max(covis_weight.get(pair, 0), c)
 
     # Full candidate union (temporal first, then covis by weight, then spatial).
-    # Cap only applies when adding beyond the temporal seed — same as legacy.
     report_union = set(temporal)
     for pair, _c in sorted(covis_weight.items(), key=lambda kv: -kv[1]):
         if len(report_union) >= config.max_geo_pairs:
@@ -146,11 +192,66 @@ def build_geo_pairs(
 
     temporal_set = set(temporal)
     if config.geo_cost_temporal_only:
-        cost_pairs = sorted(temporal_set)
         cost_mode = "temporal"
     else:
+        cost_mode = str(getattr(config, "geo_cost_mode", "temporal_plus_ranked") or "temporal_plus_ranked")
+
+    if cost_mode == "temporal":
+        cost_pairs = sorted(temporal_set)
+    elif cost_mode == "union":
         cost_pairs = sorted(report_union)
-        cost_mode = "union"
+    else:
+        # temporal_plus_ranked
+        if forwards is None:
+            forwards = np.zeros((n, 3), dtype=np.float64)
+            forwards[:, 2] = 1.0
+        else:
+            forwards = np.asarray(forwards, dtype=np.float64)
+            if forwards.shape != (n, 3):
+                raise ValueError(f"forwards must be ({n}, 3), got {forwards.shape}")
+
+        if timestamps is not None:
+            timestamps = np.asarray(timestamps, dtype=np.float64)
+            if timestamps.shape != (n,):
+                raise ValueError(f"timestamps must be ({n},), got {timestamps.shape}")
+
+        scored: list[tuple[float, tuple[int, int]]] = []
+        for (i, j), shared_n in covis_weight.items():
+            if (i, j) in temporal_set:
+                continue
+            baseline = float(np.linalg.norm(centers[i] - centers[j]))
+            if baseline > config.geo_max_baseline_m or baseline < 1e-6:
+                continue
+            angle = _triangulation_angle_deg(
+                centers[i], centers[j], forwards[i], forwards[j]
+            )
+            angle_s = _angle_band_score(
+                angle, config.geo_wide_min_angle_deg, config.geo_wide_max_angle_deg
+            )
+            if timestamps is not None:
+                dt = abs(float(timestamps[i] - timestamps[j]))
+            else:
+                dt = abs(i - j) * float(config.geo_index_dt_s)
+            time_s = 1.0 - float(np.exp(-dt / max(config.geo_wide_time_tau_s, 1e-6)))
+            score = angle_s * time_s * float(np.log1p(shared_n))
+            if score <= 0.0:
+                continue
+            scored.append((score, (i, j)))
+
+        scored.sort(key=lambda t: -t[0])
+        cost_set = set(temporal_set)
+        budget = int(config.geo_wide_pairs_budget)
+        for _score, pair in scored:
+            if len(cost_set) >= config.max_geo_pairs:
+                break
+            if budget <= 0:
+                break
+            if pair in cost_set:
+                continue
+            cost_set.add(pair)
+            budget -= 1
+        cost_pairs = sorted(cost_set)
+        cost_mode = "temporal_plus_ranked"
 
     stats = {
         "spatial": len(set(spatial)),
@@ -192,3 +293,12 @@ def pack_track_pairs(obs: dict[int, list[tuple[int, float, float]]], config: Fit
 def centers_from_frames(extrinsics_w2c: np.ndarray) -> np.ndarray:
     """World-space camera centers for each view."""
     return np.stack([camera_center_from_w2c(T) for T in extrinsics_w2c], axis=0)
+
+
+def forwards_from_w2c(extrinsics_w2c: np.ndarray) -> np.ndarray:
+    """World-space camera +Z (optical axis) for each w2c pose."""
+    out = np.zeros((len(extrinsics_w2c), 3), dtype=np.float64)
+    for i, T in enumerate(extrinsics_w2c):
+        R = T[:3, :3]
+        out[i] = R.T @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    return out

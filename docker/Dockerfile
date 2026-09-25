@@ -37,7 +37,7 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && \
     cmake --build build
 
 # Local/dev: install monodepth from vendored tree (private GH not available in build).
-# Keep in sync with docker/colmap-monodepth-pin.txt (SHA 9f268e19…).
+# Keep in sync with docker/colmap-monodepth-pin.txt (SHA 9d54bc8…).
 COPY third_party/colmap-monodepth /tmp/colmap-monodepth
 # DA3 pulls an older opencv-python; restore stock rec-server pin (v0.3.3 / v0.4.2).
 RUN python3 -m pip install --no-cache-dir \

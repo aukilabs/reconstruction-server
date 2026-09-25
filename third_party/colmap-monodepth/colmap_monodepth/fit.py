@@ -25,6 +25,7 @@ from colmap_monodepth.fit_geometry import (
     colmap_anchors,
     collect_track_obs,
     fit_scale_np,
+    forwards_from_w2c,
     pack_track_pairs,
 )
 from colmap_monodepth.types import (
@@ -107,6 +108,7 @@ class JointDepthFitter:
         self.K = torch.from_numpy(np.stack(Ks, 0)).float().to(device)
         self.T = torch.from_numpy(np.stack(Ts, 0)).float().to(device)
         self.centers = centers_from_frames(frames.extrinsics_w2c)
+        self.forwards = forwards_from_w2c(frames.extrinsics_w2c)
 
         zmin, zmax = config.zmin, config.zmax
         self.col_i: list[int] = []
@@ -153,7 +155,13 @@ class JointDepthFitter:
         self.sample_uv = torch.stack([uu.reshape(-1), vv.reshape(-1)], 1)
 
         obs = collect_track_obs(self.selected, images, cameras, points3d, (self.H, self.W))
-        pairs, pair_stats = build_geo_pairs(self.n, self.centers, obs, config)
+        pairs, pair_stats = build_geo_pairs(
+            self.n,
+            self.centers,
+            obs,
+            config,
+            forwards=self.forwards,
+        )
         self._set_geo_pairs(pairs)
         self.pair_stats = pair_stats
         track_pairs, n_tracks = pack_track_pairs(obs, config)
