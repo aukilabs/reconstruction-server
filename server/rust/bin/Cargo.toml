@@ -5,8 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-compute-runner-api = { package = "posemesh-compute-node-runner-api", version = "0.1.2" }
-posemesh-compute-node = { version = "=0.3.2" }
+node-host = { path = "../node-host" }
 runner-reconstruction-local = { path = "../runner-reconstruction-local" }
 runner-reconstruction-global = { path = "../runner-reconstruction-global" }
 runner-reconstruction-update = { path = "../runner-reconstruction-update" }

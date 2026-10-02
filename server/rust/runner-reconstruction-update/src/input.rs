@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Error, Result};
-use compute_runner_api::TaskCtx;
-use posemesh_domain_http::domain_data::{download_by_id, download_metadata_v1, DownloadQuery};
+use node_host::auki_sdk::DataMetadata;
+use node_host::{TaskContext, TaskIo};
 use tokio::fs;
 use tracing::info;
-use uuid::Uuid;
 
 use crate::strategy::unzip_refined_scan;
 use crate::workspace::Workspace;
@@ -34,39 +33,14 @@ pub struct MaterializedRefinedScan {
 /// Materialize each refined scan name into the workspace, downloading from Domain,
 /// keeping the zip under datasets, and extracting into refined/local/<scan>/sfm.
 pub async fn materialize_refined_scans(
-    ctx: &TaskCtx<'_>,
+    task: &TaskContext,
+    io: &TaskIo,
     workspace: &Workspace,
 ) -> Result<Vec<MaterializedRefinedScan>> {
-    let domain_url = ctx
-        .lease
-        .domain_server_url
-        .as_ref()
-        .map(|u| u.to_string())
-        .unwrap_or_default();
-    let domain_url = domain_url.trim().trim_end_matches('/').to_string();
-
-    let domain_id = ctx
-        .lease
-        .domain_id
-        .map(|id| id.to_string())
-        .unwrap_or_default();
-
-    if domain_url.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_server_url in lease"
-        ));
-    }
-    if domain_id.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_id in lease"
-        ));
-    }
-
-    let client_id = get_client_id();
-    let token = ctx.access_token.get();
+    let domain_id = io.domain_id().to_string();
 
     let mut scans = Vec::new();
-    for name in &ctx.lease.task.inputs_cids {
+    for name in &task.task.inputs_cids {
         if is_url(name) {
             return Err(anyhow!(
                 "update refinement expects refined scan names, got URL: {}",
@@ -74,7 +48,7 @@ pub async fn materialize_refined_scans(
             ));
         }
 
-        let meta = match resolve_by_name(&domain_url, &client_id, &token, &domain_id, name)
+        let meta = match resolve_by_name_and_type(io, &domain_id, name, "refined_scan_zip")
             .await
             .with_context(|| format!("resolve refined scan name {}", name))
         {
@@ -89,10 +63,6 @@ pub async fn materialize_refined_scans(
             "resolved refined scan name to domain data ID"
         );
 
-        let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, &meta.id)
-            .await
-            .map_err(|e| anyhow!("failed to download refined scan '{}': {}", name, e))?;
-
         let scan_name = strip_refined_prefix(name);
         let dataset_dir = workspace.datasets().join(&scan_name);
         fs::create_dir_all(&dataset_dir)
@@ -100,9 +70,12 @@ pub async fn materialize_refined_scans(
             .with_context(|| format!("create dataset directory {}", dataset_dir.display()))?;
 
         let zip_path = dataset_dir.join("RefinedScan.zip");
-        fs::write(&zip_path, &bytes)
+        io.download_to(meta.id, meta.size, &zip_path)
             .await
-            .with_context(|| format!("write refined scan zip {}", zip_path.display()))?;
+            .map_err(|e| anyhow!("failed to download refined scan '{}': {}", name, e))?;
+        let bytes = fs::read(&zip_path)
+            .await
+            .with_context(|| format!("read refined scan zip {}", zip_path.display()))?;
 
         let refined_sfm_dir = workspace.refined_local().join(&scan_name).join("sfm");
         let _ = unzip_refined_scan(bytes, &refined_sfm_dir)
@@ -125,7 +98,7 @@ pub async fn materialize_refined_scans(
 
         scans.push(MaterializedRefinedScan {
             name: name.to_string(),
-            data_id: meta.id,
+            data_id: meta.id.to_string(),
             scan_name,
             dataset_dir,
             zip_path,
@@ -146,36 +119,11 @@ pub struct MaterializedRefinedGlobal {
 }
 
 pub async fn materialize_global_colmap(
-    ctx: &TaskCtx<'_>,
+    task: &TaskContext,
+    io: &TaskIo,
     workspace: &Workspace,
 ) -> Result<MaterializedRefinedGlobal> {
-    let domain_url = ctx
-        .lease
-        .domain_server_url
-        .as_ref()
-        .map(|u| u.to_string())
-        .unwrap_or_default();
-    let domain_url = domain_url.trim().trim_end_matches('/').to_string();
-
-    let domain_id = ctx
-        .lease
-        .domain_id
-        .map(|id| id.to_string())
-        .unwrap_or_default();
-
-    if domain_url.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_server_url in lease"
-        ));
-    }
-    if domain_id.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_id in lease"
-        ));
-    }
-
-    let client_id = get_client_id();
-    let token = ctx.access_token.get();
+    let domain_id = io.domain_id().to_string();
 
     let expected_colmap = [
         ("colmap_images_bin", "images.bin"),
@@ -200,7 +148,7 @@ pub async fn materialize_global_colmap(
         })?;
 
     for (display_name, file_name) in &expected_colmap {
-        for name in &ctx.lease.task.inputs_cids {
+        for name in &task.task.inputs_cids {
             if is_url(name) {
                 return Err(anyhow!(
                     "update refinement expects refined scan names, got URL: {}",
@@ -208,16 +156,9 @@ pub async fn materialize_global_colmap(
                 ));
             }
 
-            let meta = match resolve_by_name_and_type(
-                &domain_url,
-                &client_id,
-                &token,
-                &domain_id,
-                name,
-                display_name,
-            )
-            .await
-            .with_context(|| format!("resolve colmap file name {}", name))
+            let meta = match resolve_by_name_and_type(io, &domain_id, name, display_name)
+                .await
+                .with_context(|| format!("resolve colmap file name {}", name))
             {
                 Ok(meta) => meta,
                 Err(_) => continue,
@@ -230,7 +171,13 @@ pub async fn materialize_global_colmap(
                 "resolved refined scan name to domain data ID"
             );
 
-            let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, &meta.id)
+            let file_path = &workspace
+                .root()
+                .join("refined")
+                .join("global")
+                .join("refined_sfm_combined")
+                .join(file_name);
+            io.download_to(meta.id, meta.size, file_path)
                 .await
                 .map_err(|e| anyhow!("failed to download colmap file '{}': {}", name, e))?;
 
@@ -238,16 +185,6 @@ pub async fn materialize_global_colmap(
                 let prefix = format!("{}{}", display_name, "_");
                 global_refinement_name = name.as_str().strip_prefix(&prefix).unwrap_or(name);
             }
-
-            let file_path = &workspace
-                .root()
-                .join("refined")
-                .join("global")
-                .join("refined_sfm_combined")
-                .join(file_name);
-            fs::write(&file_path, &bytes)
-                .await
-                .with_context(|| format!("write file {}", file_path.display()))?;
         }
     }
 
@@ -281,38 +218,13 @@ pub async fn materialize_global_colmap(
 }
 
 pub async fn materialize_refine_manifest(
-    ctx: &TaskCtx<'_>,
+    task: &TaskContext,
+    io: &TaskIo,
     workspace: &Workspace,
 ) -> Result<(), Error> {
-    let domain_url = ctx
-        .lease
-        .domain_server_url
-        .as_ref()
-        .map(|u| u.to_string())
-        .unwrap_or_default();
-    let domain_url = domain_url.trim().trim_end_matches('/').to_string();
+    let domain_id = io.domain_id().to_string();
 
-    let domain_id = ctx
-        .lease
-        .domain_id
-        .map(|id| id.to_string())
-        .unwrap_or_default();
-
-    if domain_url.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_server_url in lease"
-        ));
-    }
-    if domain_id.is_empty() {
-        return Err(anyhow!(
-            "cannot resolve refined scan by name: no domain_id in lease"
-        ));
-    }
-
-    let client_id = get_client_id();
-    let token = ctx.access_token.get();
-
-    for name in &ctx.lease.task.inputs_cids {
+    for name in &task.task.inputs_cids {
         if is_url(name) {
             return Err(anyhow!(
                 "update refinement expects refined scan names, got URL: {}",
@@ -320,16 +232,9 @@ pub async fn materialize_refine_manifest(
             ));
         }
 
-        let meta = match resolve_by_name_and_type(
-            &domain_url,
-            &client_id,
-            &token,
-            &domain_id,
-            name,
-            "refined_manifest_json",
-        )
-        .await
-        .with_context(|| format!("resolve refined_manifest name {}", name))
+        let meta = match resolve_by_name_and_type(io, &domain_id, name, "refined_manifest_json")
+            .await
+            .with_context(|| format!("resolve refined_manifest name {}", name))
         {
             Ok(meta) => meta,
             Err(_) => continue,
@@ -342,70 +247,28 @@ pub async fn materialize_refine_manifest(
             "resolved refined_manifest to domain data ID"
         );
 
-        let bytes = download_by_id(&domain_url, &client_id, &token, &domain_id, &meta.id)
-            .await
-            .map_err(|e| anyhow!("failed to download refined_manifest '{}': {}", name, e))?;
-
         let file_path = workspace
             .root()
             .join("refined")
             .join("global")
             .join("refined_manifest.json");
-        fs::write(&file_path, &bytes)
+        io.download_to(meta.id, meta.size, &file_path)
             .await
-            .with_context(|| format!("write file {}", file_path.display()))?;
+            .map_err(|e| anyhow!("failed to download refined_manifest '{}': {}", name, e))?;
     }
     Ok(())
 }
 
-async fn resolve_by_name(
-    domain_url: &str,
-    client_id: &str,
-    token: &str,
-    domain_id: &str,
-    name: &str,
-) -> Result<posemesh_domain_http::domain_data::DomainDataMetadata> {
-    let metas = download_metadata_v1(
-        domain_url,
-        client_id,
-        token,
-        domain_id,
-        &DownloadQuery {
-            ids: Vec::new(),
-            name: Some(name.to_string()),
-            data_type: Some("refined_scan_zip".to_string()),
-        },
-    )
-    .await
-    .map_err(|e| anyhow!("failed to query Domain for artifact '{}': {}", name, e))?;
-
-    metas
-        .into_iter()
-        .find(|m| m.name == name && m.data_type == "refined_scan_zip")
-        .ok_or_else(|| anyhow!("artifact '{}' not found in domain {}", name, domain_id))
-}
-
 async fn resolve_by_name_and_type(
-    domain_url: &str,
-    client_id: &str,
-    token: &str,
+    io: &TaskIo,
     domain_id: &str,
     name: &str,
     data_type: &str,
-) -> Result<posemesh_domain_http::domain_data::DomainDataMetadata> {
-    let metas = download_metadata_v1(
-        domain_url,
-        client_id,
-        token,
-        domain_id,
-        &DownloadQuery {
-            ids: Vec::new(),
-            name: Some(name.to_string()),
-            data_type: Some(data_type.to_string()),
-        },
-    )
-    .await
-    .map_err(|e| anyhow!("failed to query Domain for artifact '{}': {}", name, e))?;
+) -> Result<DataMetadata> {
+    let metas = io
+        .find(name, Some(data_type))
+        .await
+        .map_err(|e| anyhow!("failed to query Domain for artifact '{}': {}", name, e))?;
 
     metas
         .into_iter()
@@ -433,13 +296,4 @@ fn has_required_global_sfm_files(sfm: &Path) -> bool {
 
 fn is_url(cid: &str) -> bool {
     cid.starts_with("http://") || cid.starts_with("https://")
-}
-
-fn get_client_id() -> String {
-    if let Ok(id) = std::env::var("CLIENT_ID") {
-        if !id.trim().is_empty() {
-            return id;
-        }
-    }
-    format!("posemesh-compute-node/{}", Uuid::new_v4())
 }
