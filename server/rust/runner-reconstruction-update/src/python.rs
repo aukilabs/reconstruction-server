@@ -26,7 +26,8 @@ pub async fn run_script(
     }
 
     let mut cmd = Command::new(python_bin);
-    cmd.arg(script_path)
+    node_host::process::isolate(&mut cmd)
+        .arg(script_path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -50,8 +51,8 @@ pub async fn run_script(
     let exit_status = tokio::select! {
         status = child.wait() => status,
         _ = cancel.cancelled() => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            node_host::process::terminate_group(&mut child, node_host::process::TERMINATE_GRACE)
+                .await;
             return Err(anyhow!("python execution canceled"));
         }
     }?;
