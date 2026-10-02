@@ -7,6 +7,9 @@ use std::sync::Arc;
 
 /// One capability's work. Progress, events and cancellation go through `task`;
 /// Domain data goes through `io` so uploads land in the DMS receipt.
+// async_trait marks the generated boxed-future method `#[must_use]`, which
+// newer clippy (1.99+) reports as `double_must_use`.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait NodeRunner: Send + Sync {
     fn capability(&self) -> &'static str;
