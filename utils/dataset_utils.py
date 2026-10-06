@@ -16,7 +16,7 @@ from utils.data_utils import (
     export_rec_as_ply,
     parse_info_from_manifest
 )
-from utils.io import Model, read_portal_csv, read_model, write_model
+from utils.io import Model, read_portal_csv, read_model, write_model, write_model_with_rigs
 
 # These are Sam's additions to io.py that will be merged there separately.
 # Import them so update_helper can use them.
@@ -345,7 +345,9 @@ def update_helper(
 
     # Export the merged model for inspection
     os.makedirs(paths.output_path / "refined_sfm_combined", exist_ok=True)
-    write_model(cams_r, imgs_r, pts_r, paths.output_path / "refined_sfm_combined")
+    # All five files (incl. frames.bin/rigs.bin): the update runner uploads them as
+    # mandatory, and splatter / a later update need them as input.
+    write_model_with_rigs(cams_r, imgs_r, pts_r, paths.output_path / "refined_sfm_combined", logger=logger)
     logger.debug(f"Exported updated reconstruction to {paths.output_path / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
