@@ -13,7 +13,7 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::workspace::Workspace;
 
 const REQUIRED_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
-const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt"];
+const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt", ".h5"];
 
 /// Tracks which scans have already been uploaded from the local refinement folder.
 #[derive(Default)]
