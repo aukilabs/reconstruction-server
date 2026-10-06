@@ -658,6 +658,27 @@ def write_model(cameras, images, points3D, path, ext=".bin"):
     return cameras, images, points3D
 
 
+def write_model_with_rigs(cameras, images, points3D, path, logger=None):
+    """Write a binary model with all five COLMAP files, like pycolmap's Reconstruction.write.
+
+    write_model only emits cameras/images/points3D. Re-saving through pycolmap adds
+    rigs.bin and frames.bin: COLMAP reads a model without them as a legacy model and
+    creates one rig per camera and one frame per image (CreateOneRigPerCamera /
+    CreateFrameForImage), then writes all five files.
+    """
+    if logger is None:
+        logger = logging.getLogger()
+    write_model(cameras, images, points3D, path)
+    rec = pycolmap.Reconstruction()
+    rec.read(str(path))
+    rec.write(str(path))
+    for name in ("cameras", "images", "points3D", "frames", "rigs"):
+        if not os.path.isfile(os.path.join(path, name + ".bin")):
+            raise RuntimeError(f"pycolmap did not write {name}.bin to {path}")
+    logger.info("Wrote COLMAP model with rigs/frames to %s: %s", path, rec)
+    return rec
+
+
 def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'BaseImage'], pts: Dict[int, 'Point3D'],
                                   T_a: np.ndarray) -> Tuple[Dict[int, 'Camera'], Dict[int, 'BaseImage'], Dict[int, 'Point3D']]:
     """
