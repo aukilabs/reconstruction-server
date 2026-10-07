@@ -3,8 +3,7 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
-use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
-use compute_runner_api::ArtifactSink;
+use node_host::{ArtifactContent, ArtifactRequest, TaskIo};
 use tokio::task;
 use tracing::info;
 use walkdir::WalkDir;
@@ -34,7 +33,7 @@ impl RefinedUploader {
     pub async fn process(
         &mut self,
         workspace: &Workspace,
-        sink: &dyn ArtifactSink,
+        sink: &TaskIo,
         upload_local_zips: bool,
     ) -> Result<Vec<String>> {
         let mut uploaded = Vec::new();
@@ -72,12 +71,12 @@ impl RefinedUploader {
             }
 
             let artifact_path = format!("refined/local/{}/RefinedScan.zip", scan_id);
-            let req = DomainArtifactRequest {
+            let req = ArtifactRequest {
                 rel_path: &artifact_path,
                 name: &format!("refined_scan_{}", scan_id),
                 data_type: "refined_scan_zip",
                 existing_id: None,
-                content: DomainArtifactContent::Bytes(&zip_bytes),
+                content: ArtifactContent::Bytes(&zip_bytes),
             };
 
             match sink.put_domain_artifact(req).await {

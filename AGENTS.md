@@ -17,9 +17,9 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
 ## Architecture map
 
 - `server/rust/` is the Rust compute-node workspace.
-  - `bin/` builds the executable that exposes health and registration endpoints, loads configuration, registers runners, and drives the engine loop.
-  - `runner-reconstruction-local/` and `runner-reconstruction-global/` adapt local/global reconstruction capabilities.
-  - The workspace depends on Posemesh compute-node crates for DDS registration, DMS polling/leasing, SIWE auth, storage, telemetry, and HTTP routing.
+  - `bin/` builds the executable that loads configuration, registers runners, and drives the host loop.
+  - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities.
+  - `node-host/` runs the node on the Auki SDK task runtime (`auki-sdk`, pinned git revision), which owns DDS registration, DMS leasing/heartbeats and auth; `node-host` provides config, the claim loop, Domain IO and DMS receipts with the wire behaviour of the former `posemesh-compute-node` 0.3.2 host (pinned by `node-host/tests`).
 - Root Python files (`main.py`, `local_main.py`, `global_main.py`, `topology_main.py`, `occlusion_box.py`) and `utils/` hold the reconstruction pipeline code invoked by the runners.
 - `src/` and `CMakeLists.txt` hold C++/pybind components used by the Python pipeline.
 - `docker/Dockerfile` builds the Rust release binary, copies Python/C++ assets into `/app`, builds the C++ bindings, and runs `/app/compute-node` as a non-root user.
@@ -28,7 +28,7 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
 
 ## Runtime and deployment cautions
 
-- The node is environment-driven. Public docs list `REG_SECRET`, `SECP256K1_PRIVHEX`, `DMS_BASE_URL`, `DDS_BASE_URL`, `REQUEST_TIMEOUT_SECS`, `REGISTER_INTERVAL_SECS`, `REGISTER_MAX_RETRY`, `LOG_FORMAT`, `LOCAL_RUNNER_CPU_WORKERS`, and `GLOBAL_RUNNER_CPU_WORKERS` as relevant runtime settings. Use placeholder values only.
+- The node is environment-driven. Public docs list `REG_SECRET`, `SECP256K1_PRIVHEX`, `DMS_BASE_URL`, `DDS_BASE_URL`, `REQUEST_TIMEOUT_SECS`, `REGISTER_INTERVAL_SECS`, `CLIENT_ID`, `LOG_FORMAT`, `LOCAL_RUNNER_CPU_WORKERS`, and `GLOBAL_RUNNER_CPU_WORKERS` as relevant runtime settings. Use placeholder values only.
 - DDS/DMS settings affect registration, task leasing, heartbeats, and result reporting. Be careful when changing config parsing, URL defaults, retry behavior, or capability registration.
 - The chart defaults request substantial CPU/memory and a GPU (`nvidia.com/gpu: 1`) and include a `dedicated=karpenterGPU` toleration. Treat replicas, StatefulSet behavior, GPU resources, tolerations, ingress, and secret pool wiring as operationally sensitive.
 - Dev deployment context observed by the broader Auki v0 workspace maps this repo to the `reconstruction-server` StatefulSet and `reconstruction-<n>.dev.aukiverse.com` host pattern. Treat that as context, not permission to mutate the cluster.

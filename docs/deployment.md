@@ -27,8 +27,8 @@ DMS_BASE_URL=https://dms.auki.network/v1
 DDS_BASE_URL=https://dds.auki.network
 REQUEST_TIMEOUT_SECS=60
 REGISTER_INTERVAL_SECS=120
-REGISTER_MAX_RETRY=-1
 LOG_FORMAT=text
+CLIENT_ID=reconstruction-node/<random uuid per start>
 ```
 
 Notes:

@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
-use compute_runner_api::ArtifactSink;
+use node_host::{ArtifactContent, ArtifactRequest, TaskIo};
 use tracing::{debug, info, warn};
 
 use crate::workspace::Workspace;
@@ -92,7 +91,7 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
 /// Returns a map from display name to the artifact path used for upload.
 pub async fn upload_final_outputs(
     workspace: &Workspace,
-    sink: &dyn ArtifactSink,
+    sink: &TaskIo,
     name_suffix: &str,
     override_manifest_id: Option<&str>,
 ) -> Result<HashMap<String, String>> {
@@ -132,12 +131,12 @@ pub async fn upload_final_outputs(
             None
         };
         match sink
-            .put_domain_artifact(DomainArtifactRequest {
+            .put_domain_artifact(ArtifactRequest {
                 rel_path: spec.relative_path,
                 name: &name,
                 data_type: data_type_for_display(spec.display_name),
                 existing_id,
-                content: DomainArtifactContent::File(&path),
+                content: ArtifactContent::File(&path),
             })
             .await
         {
@@ -176,7 +175,7 @@ pub async fn upload_final_outputs(
 }
 
 async fn upload_json_if_exists(
-    sink: &dyn ArtifactSink,
+    sink: &TaskIo,
     file_name: &str,
     root: &Path,
     name_suffix: &str,
@@ -197,12 +196,12 @@ async fn upload_json_if_exists(
     if let Some((name, data_type)) = crate::strategy::describe_known_output(file_name, name_suffix)
     {
         if let Err(err) = sink
-            .put_domain_artifact(DomainArtifactRequest {
+            .put_domain_artifact(ArtifactRequest {
                 rel_path: file_name,
                 name: &name,
                 data_type: &data_type,
                 existing_id: None,
-                content: DomainArtifactContent::Bytes(&bytes),
+                content: ArtifactContent::Bytes(&bytes),
             })
             .await
         {
@@ -239,5 +238,58 @@ fn data_type_for_display(display: &str) -> &str {
         "colmap_points3d_bin" => "colmap_points3d_bin",
         "colmap_rigs_bin" => "colmap_rigs_bin",
         _ => "binary",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Downstream consumers (DMT, peyote, splatter, update) look these up by name and type.
+    #[test]
+    fn output_names_and_data_types_are_stable() {
+        let table: Vec<(&str, &str, bool)> = GLOBAL_OUTPUTS
+            .iter()
+            .map(|s| {
+                (
+                    s.display_name,
+                    data_type_for_display(s.display_name),
+                    s.mandatory,
+                )
+            })
+            .collect();
+        assert_eq!(
+            table,
+            vec![
+                ("refined_manifest", "refined_manifest_json", true),
+                ("refined_pointcloud", "refined_pointcloud_ply", true),
+                (
+                    "refined_pointcloud_full_draco",
+                    "refined_pointcloud_ply_draco",
+                    false
+                ),
+                ("topologymesh_v1_lowpoly_obj", "obj", false),
+                ("topologymesh_v1_lowpoly_glb", "glb", false),
+                ("topologymesh_v1_midpoly_obj", "obj", false),
+                ("topologymesh_v1_midpoly_glb", "glb", false),
+                ("topologymesh_v1_highpoly_obj", "obj", false),
+                ("topologymesh_v1_highpoly_glb", "glb", false),
+                ("colmap_cameras_bin", "colmap_cameras_bin", true),
+                ("colmap_frames_bin", "colmap_frames_bin", true),
+                ("colmap_images_bin", "colmap_images_bin", true),
+                ("colmap_points3d_bin", "colmap_points3d_bin", true),
+                ("colmap_rigs_bin", "colmap_rigs_bin", true),
+            ]
+        );
+        for (file, base) in [
+            ("outputs_index.json", "outputs_index"),
+            ("result.json", "result"),
+            ("scan_data_summary.json", "scan_data_summary"),
+        ] {
+            assert_eq!(
+                crate::strategy::describe_known_output(file, "2024-01-02_03-04-05"),
+                Some((format!("{base}_2024-01-02_03-04-05"), "json".to_string()))
+            );
+        }
     }
 }

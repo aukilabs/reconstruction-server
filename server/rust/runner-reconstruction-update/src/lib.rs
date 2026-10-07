@@ -3,17 +3,14 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    pin::Pin,
 };
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use compute_runner_api::runner::{DomainArtifactContent, DomainArtifactRequest};
-use compute_runner_api::{ArtifactSink, Runner, TaskCtx};
+use node_host::{ArtifactContent, ArtifactRequest, NodeRunner, TaskContext, TaskIo};
 use serde::Serialize;
 use serde_json::json;
 use tokio::fs;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod input;
@@ -83,21 +80,17 @@ impl Default for RunnerReconstructionUpdate {
 }
 
 #[async_trait::async_trait]
-impl Runner for RunnerReconstructionUpdate {
+impl NodeRunner for RunnerReconstructionUpdate {
     fn capability(&self) -> &'static str {
         self.capability
     }
 
-    async fn run(&self, ctx: TaskCtx<'_>) -> anyhow::Result<()> {
-        let lease = ctx.lease;
-        let domain_id = lease
-            .domain_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "domain".into());
-        let job_id = lease.task.job_id.map(|id| id.to_string());
-        let task_id = lease.task.id.to_string();
+    async fn run(&self, task: &TaskContext, io: &TaskIo) -> anyhow::Result<()> {
+        let domain_id = io.domain_id().to_string();
+        let job_id = task.task.job_id.map(|id| id.to_string());
+        let task_id = task.task.id.to_string();
 
-        if ctx.ctrl.is_cancelled().await {
+        if task.is_cancelled() {
             anyhow::bail!("task cancelled before execution");
         }
 
@@ -110,7 +103,7 @@ impl Runner for RunnerReconstructionUpdate {
         }
         let _workspace_cleanup = WorkspaceCleanup(workspace.root().to_path_buf());
 
-        let job_ctx = JobContext::from_lease(lease)?;
+        let job_ctx = JobContext::from_task(task)?;
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
             .await?;
@@ -129,24 +122,18 @@ impl Runner for RunnerReconstructionUpdate {
                 .unwrap_or_else(|| "<temp>".into()),
             "workspace prepared"
         );
-        let _ = ctx
-            .ctrl
-            .progress(json!({"pct": 5, "stage": "workspace", "status": "prepared"}))
-            .await;
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "workspace",
-                "message": "workspace prepared",
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        let _ = task.progress(json!({"pct": 5, "stage": "workspace", "status": "prepared"}));
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "workspace",
+            "message": "workspace prepared",
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
-        let materialized = input::materialize_refined_scans(&ctx, &workspace).await?;
-        if ctx.ctrl.is_cancelled().await {
+        let materialized = input::materialize_refined_scans(task, io, &workspace).await?;
+        if task.is_cancelled() {
             anyhow::bail!("task cancelled during input materialization");
         }
 
@@ -154,177 +141,121 @@ impl Runner for RunnerReconstructionUpdate {
             .iter()
             .map(|scan| scan.scan_name.clone())
             .collect();
-        let _ = ctx
-            .ctrl
-            .progress(json!({"pct": 15, "stage": "inputs", "scans": scan_names.len()}))
-            .await;
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "inputs",
-                "message": "refined scans materialized",
-                "count": scan_names.len(),
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        let _ = task.progress(json!({"pct": 15, "stage": "inputs", "scans": scan_names.len()}));
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "inputs",
+            "message": "refined scans materialized",
+            "count": scan_names.len(),
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
-        let _ = input::materialize_global_colmap(&ctx, &workspace).await?;
-        if ctx.ctrl.is_cancelled().await {
+        let _ = input::materialize_global_colmap(task, io, &workspace).await?;
+        if task.is_cancelled() {
             anyhow::bail!("task cancelled during input global colmap materialization");
         }
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "inputs",
-                "message": "refined global colmap materialized",
-                "count": scan_names.len(),
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "inputs",
+            "message": "refined global colmap materialized",
+            "count": scan_names.len(),
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
-        let _ = input::materialize_refine_manifest(&ctx, &workspace).await?;
-        if ctx.ctrl.is_cancelled().await {
+        let _ = input::materialize_refine_manifest(task, io, &workspace).await?;
+        if task.is_cancelled() {
             anyhow::bail!("task cancelled during input global colmap materialization");
         }
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "inputs",
-                "message": "refined global manifest materialized",
-                "count": scan_names.len(),
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "inputs",
+            "message": "refined global manifest materialized",
+            "count": scan_names.len(),
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
         let python_args = build_python_args(&self.config, &job_ctx, &workspace);
-        let _ = ctx
-            .ctrl
-            .progress(json!({"pct": 20, "stage": "python", "status": "starting"}))
-            .await;
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "python",
-                "message": "python pipeline starting",
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        let _ = task.progress(json!({"pct": 20, "stage": "python", "status": "starting"}));
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "python",
+            "message": "python pipeline starting",
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
-        let cancel_token = CancellationToken::new();
         let python_bin = self.config.python_bin.clone();
-        // let python_script = self.config.python_script.clone();
         let python_script = self.config.python_script.clone();
-        let python_args_clone = python_args.clone();
-        let cancel = cancel_token.clone();
         let job_root = workspace.root().to_path_buf();
-        let mut python_future: Pin<
-            Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send>,
-        > = Box::pin(async move {
-            python::run_script(
-                &python_bin,
-                &python_script,
-                &python_args_clone,
-                &cancel,
-                Some(&job_root),
-            )
-            .await
-        });
-
-        let python_result = loop {
-            tokio::select! {
-                res = &mut python_future => break res,
-                cancelled = ctx.ctrl.is_cancelled() => {
-                    if cancelled {
-                        cancel_token.cancel();
-                    }
-                }
-            }
-        };
+        // The task's own token: DMS cancel, lost lease or forced shutdown stops Python.
+        let python_result = python::run_script(
+            &python_bin,
+            &python_script,
+            &python_args,
+            &task.cancellation(),
+            Some(&job_root),
+        )
+        .await;
         match &python_result {
             Ok(()) => {
-                let _ = ctx
-                    .ctrl
-                    .progress(json!({"pct": 85, "stage": "python", "status": "completed"}))
-                    .await;
-                let _ = ctx
-                    .ctrl
-                    .log_event(json!({
-                        "level": "info",
-                        "stage": "python",
-                        "message": "python pipeline completed",
-                        "task_id": task_id,
-                        "job_id": job_ctx.metadata.name,
-                        "timestamp": Utc::now().to_rfc3339(),
-                    }))
-                    .await;
+                let _ = task.progress(json!({"pct": 85, "stage": "python", "status": "completed"}));
+                let _ = task.log_event(json!({
+                    "level": "info",
+                    "stage": "python",
+                    "message": "python pipeline completed",
+                    "task_id": task_id,
+                    "job_id": job_ctx.metadata.name,
+                    "timestamp": Utc::now().to_rfc3339(),
+                }));
             }
             Err(err) => {
-                let _ = ctx
-                    .ctrl
-                    .progress(json!({"pct": 20, "stage": "python", "status": "failed"}))
-                    .await;
-                let _ = ctx
-                    .ctrl
-                    .log_event(json!({
-                        "level": "error",
-                        "stage": "python",
-                        "message": err.to_string(),
-                        "task_id": task_id,
-                        "job_id": job_ctx.metadata.name,
-                        "timestamp": Utc::now().to_rfc3339(),
-                    }))
-                    .await;
+                let _ = task.progress(json!({"pct": 20, "stage": "python", "status": "failed"}));
+                let _ = task.log_event(json!({
+                    "level": "error",
+                    "stage": "python",
+                    "message": err.to_string(),
+                    "task_id": task_id,
+                    "job_id": job_ctx.metadata.name,
+                    "timestamp": Utc::now().to_rfc3339(),
+                }));
             }
         }
-        if let Err(err) = upload_task_log(ctx.output, &workspace, &task_id).await {
+        if let Err(err) = upload_task_log(io, &workspace, &task_id).await {
             warn!(error = %err, task_id = %task_id, "failed to upload task log");
         }
         python_result?;
 
-        if ctx.ctrl.is_cancelled().await {
+        if task.is_cancelled() {
             anyhow::bail!("task cancelled before upload");
         }
 
         let name_suffix = job_ctx.domain_data_name_suffix();
-        output::upload_final_outputs(&workspace, ctx.output, &name_suffix, None).await?;
-        let _ = ctx
-            .ctrl
-            .progress(json!({"pct": 95, "stage": "upload"}))
-            .await;
-        let _ = ctx
-            .ctrl
-            .log_event(json!({
-                "level": "info",
-                "stage": "upload",
-                "message": "outputs uploaded",
-                "task_id": task_id,
-                "job_id": job_ctx.metadata.name,
-                "timestamp": Utc::now().to_rfc3339(),
-            }))
-            .await;
+        output::upload_final_outputs(&workspace, io, &name_suffix, None).await?;
+        let _ = task.progress(json!({"pct": 95, "stage": "upload"}));
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "upload",
+            "message": "outputs uploaded",
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
 
-        ctx.ctrl
-            .progress(json!({"progress": 100, "status": "succeeded"}))
-            .await?;
+        task.progress(json!({"progress": 100, "status": "succeeded"}))?;
 
         Ok(())
     }
 }
 
 async fn upload_task_log(
-    sink: &dyn ArtifactSink,
+    sink: &TaskIo,
     workspace: &workspace::Workspace,
     task_id: &str,
 ) -> Result<()> {
@@ -336,12 +267,12 @@ async fn upload_task_log(
 
     let rel_path = format!("logs/{task_id}.txt");
     let name = format!("task_log_{task_id}");
-    sink.put_domain_artifact(DomainArtifactRequest {
+    sink.put_domain_artifact(ArtifactRequest {
         rel_path: &rel_path,
         name: &name,
         data_type: "task_log_txt",
         existing_id: None,
-        content: DomainArtifactContent::File(&log_path),
+        content: ArtifactContent::File(&log_path),
     })
     .await
     .with_context(|| format!("upload task log {}", log_path.display()))?;
@@ -365,7 +296,8 @@ struct JobContext {
 }
 
 impl JobContext {
-    fn from_lease(lease: &compute_runner_api::LeaseEnvelope) -> Result<Self> {
+    fn from_task(task: &TaskContext) -> Result<Self> {
+        let lease = task.credential.lease_snapshot()?;
         let job_id = lease
             .task
             .job_id

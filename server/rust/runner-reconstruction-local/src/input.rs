@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use anyhow::{anyhow, Context, Result};
-use compute_runner_api::{MaterializedInput, TaskCtx};
+use node_host::{Materialized, TaskContext, TaskIo};
 
 use crate::workspace::Workspace;
 
@@ -22,14 +22,14 @@ pub struct MaterializedDataset {
 /// Materialize each CID into the workspace datasets directory, copying the
 /// downloaded content onto disk and returning metadata for later processing.
 pub async fn materialize_datasets(
-    ctx: &TaskCtx<'_>,
+    task: &TaskContext,
+    io: &TaskIo,
     workspace: &Workspace,
 ) -> Result<Vec<MaterializedDataset>> {
     let mut datasets = Vec::new();
-    for cid in &ctx.lease.task.inputs_cids {
-        let materialized = ctx
-            .input
-            .materialize_cid_with_meta(cid)
+    for cid in &task.task.inputs_cids {
+        let materialized = io
+            .materialize(cid)
             .await
             .with_context(|| format!("materialize input CID {}", cid))?;
 
@@ -62,7 +62,7 @@ struct CopyResult {
 }
 
 fn copy_materialized_to_workspace(
-    materialized: &MaterializedInput,
+    materialized: &Materialized,
     workspace: &Workspace,
 ) -> Result<CopyResult> {
     let source_datasets = materialized.root_dir.join("datasets");
@@ -212,4 +212,63 @@ fn copy_dir_recursively(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Res
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The host's download layout must feed the legacy renames the Python pipeline expects.
+    #[test]
+    fn host_download_layout_is_normalized_for_python() {
+        let tmp = tempfile::tempdir().unwrap();
+        let download_root = tmp.path().join("download");
+        let scan = "2024-01-02_03-04-05";
+        let inputs = [
+            ("dmt_manifest", "dmt_manifest_json", "Manifest.json"),
+            ("dmt_arposes", "dmt_arposes_csv", "ARposes.csv"),
+            ("dmt_recording", "dmt_recording_mp4", "Frames.mp4"),
+            (
+                "dmt_intrinsics",
+                "dmt_intrinsics_csv",
+                "CameraIntrinsics.csv",
+            ),
+        ];
+        let mut primary = None;
+        for (prefix, data_type, _) in inputs {
+            let path = node_host::io::download_path(
+                &download_root,
+                &format!("{prefix}_{scan}"),
+                data_type,
+            );
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, data_type).unwrap();
+            primary.get_or_insert(path);
+        }
+        let materialized = Materialized {
+            cid: "cid".into(),
+            path: primary.unwrap(),
+            data_id: None,
+            name: None,
+            data_type: None,
+            domain_id: None,
+            root_dir: download_root,
+            related_files: Vec::new(),
+            extracted_paths: Vec::new(),
+        };
+        let workspace =
+            Workspace::create(Some(&tmp.path().join("ws")), "domain", Some("job"), "task").unwrap();
+
+        let copied = copy_materialized_to_workspace(&materialized, &workspace).unwrap();
+
+        assert_eq!(copied.dataset_root, workspace.datasets().join(scan));
+        for (_, data_type, legacy) in inputs {
+            let content = fs::read_to_string(copied.dataset_root.join(legacy)).unwrap();
+            assert_eq!(content, data_type, "{legacy}");
+        }
+        assert_eq!(
+            copied.manifest_path,
+            Some(copied.dataset_root.join("Manifest.json"))
+        );
+    }
 }
