@@ -423,7 +423,7 @@ def save_manifest_json(
     portal_poses, json_path, job_root_path,
     job_status=None, job_progress=None, job_status_details=None,
     portal_sizes=None, scan_alignment_transforms=None, previous_scan_files=None,
-    portal_spread_metrics=None, portal_alignment_metrics=None):
+    portal_alignment_metrics=None):
 
     job_root_path = Path(job_root_path)
 
@@ -616,13 +616,6 @@ def save_manifest_json(
             },
             "physicalSize": portal_sizes.get(short_id, None)
         })
-        if portal_spread_metrics and short_id in portal_spread_metrics:
-            spread = portal_spread_metrics[short_id]
-            manifest_data["portals"][-1].update({
-                "position_spread_m": spread.position_spread_m,
-                "rotation_spread_deg": spread.rotation_spread_deg,
-                "detection_count": spread.detection_count,
-            })
 
     if portal_alignment_metrics is not None:
         manifest_data["portal_alignment_metrics"] = portal_alignment_metrics
