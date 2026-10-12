@@ -2,7 +2,7 @@ import itertools
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
 import pycolmap
 import pyceres
@@ -10,8 +10,11 @@ import numpy as np
 from utils.io import read_portal_csv, portalPose
 from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
 from utils.dataset_utils import transform_with_scale
-from utils.geometry_utils import QuaternionNormalizationCostFunction
-from src.cost_functions import RelativeTransformationSim3CostFunction # Custom ceres cost implemented in C++
+from utils.geometry_utils import (
+    QuaternionNormalizationCostFunction,
+    TranslationPriorCostFunction,
+)
+from src.cost_functions import RelativeTransformationSim3CostFunction  # Custom ceres costs implemented in C++
 from src.reconstruction_merge import append_reconstruction
 
 @dataclass
@@ -20,6 +23,432 @@ class AlignedScans:
     alignment_transforms: Dict[str, pycolmap.Sim3d]
     raw_portal_detections: Dict[str, Dict[str, List[pycolmap.Rigid3d]]]
     aligned_portal_detections: Dict[str, Dict[str, List[pycolmap.Rigid3d]]]
+
+
+@dataclass(frozen=True)
+class PortalSpreadMetrics:
+    position_spread_m: float
+    rotation_spread_deg: float
+    detection_count: int
+
+
+@dataclass(frozen=True)
+class PortalOverlapEdge:
+    scan_a: str
+    scan_b: str
+    portal_id: str
+    dp_m: float
+    dr_deg: float
+
+
+@dataclass(frozen=True)
+class PortalSpreadRmse:
+    position_m: float
+    rotation_deg: float
+
+
+@dataclass(frozen=True)
+class PortalOverlapGap:
+    position_gap_m: float
+    rotation_gap_deg: float
+
+
+@dataclass(frozen=True)
+class PortalAlignmentPortalRecord:
+    portal_id: str
+    detection_count: int
+    before: PortalSpreadMetrics
+    after: PortalSpreadMetrics
+
+
+@dataclass(frozen=True)
+class PortalAlignmentOverlapRecord:
+    scan_a: str
+    scan_b: str
+    portal_id: str
+    before: PortalOverlapGap
+    after: PortalOverlapGap
+
+
+@dataclass(frozen=True)
+class DownweightedPortalEdge:
+    scan_a: str
+    scan_b: str
+    portal_id: str
+    position_gap_m: float
+    rotation_gap_deg: float
+
+
+@dataclass(frozen=True)
+class PortalAlignmentMetrics:
+    applied: bool
+    accepted: bool
+    cov_scale: int
+    rmse_before: PortalSpreadRmse
+    rmse_after: PortalSpreadRmse
+    rmse_trusted_before: PortalSpreadRmse
+    rmse_trusted_after: PortalSpreadRmse
+    portals: Tuple[PortalAlignmentPortalRecord, ...]
+    overlaps: Tuple[PortalAlignmentOverlapRecord, ...]
+    downweighted_edges: Tuple[DownweightedPortalEdge, ...]
+
+
+# Live knobs (2026-09-12): stronger downweight + stricter outlier gate, plus gravity prior.
+PORTAL_DOWNWEIGHT_COV_SCALE = 10_000
+PORTAL_OUTLIER_SIGMA_MULT = 3.0
+# Soft gravity prior: keep each scan's local-refine up (COLMAP -X) after Sim3 delta.
+PORTAL_GRAVITY_PRIOR_WEIGHT = 20.0
+# Huber scale a ≈ weight * 2*sin(θ/2); a=1.0 ≈ firm below ~3° tilt, linear above.
+PORTAL_GRAVITY_PRIOR_HUBER_SCALE = 1.0
+# Soft pin of origin-scan Sim3-delta translation to 0 (stops gauge float off floor_origin).
+# Modest vs portal residual mass — enough to hold ~cm–dm, not override overlaps.
+PORTAL_ORIGIN_PRIOR_WEIGHT = 10.0
+# Local-refine frames are ARKit/gravity aligned → down is COLMAP -X.
+_PORTAL_LOCAL_GRAVITY = np.array([-1.0, 0.0, 0.0], dtype=float)
+
+
+def logical_portal_edge_key(scan_a: str, scan_b: str, portal_id: str) -> Tuple[str, str, str]:
+    """Canonical key for a scan-pair portal overlap (scan_a <= scan_b)."""
+    sa, sb = sorted([scan_a, scan_b])
+    return (sa, sb, portal_id)
+
+
+def portal_edge_cov_multiplier(
+    scan_id_ref: str,
+    scan_id_tgt: str,
+    portal_id: str,
+    downweighted_edges: Optional[Set[Tuple[str, str, str]]],
+    cov_scale: int = PORTAL_DOWNWEIGHT_COV_SCALE,
+) -> float:
+    """Return cov multiplier (1.0 or cov_scale) for a detection-pair residual block."""
+    if not downweighted_edges:
+        return 1.0
+    key = logical_portal_edge_key(scan_id_ref, scan_id_tgt, portal_id)
+    return float(cov_scale) if key in downweighted_edges else 1.0
+
+
+def _edges_by_key(edges: List[PortalOverlapEdge]) -> Dict[Tuple[str, str, str], PortalOverlapEdge]:
+    return {
+        logical_portal_edge_key(edge.scan_a, edge.scan_b, edge.portal_id): edge
+        for edge in edges
+    }
+
+
+def build_portal_alignment_metrics(
+    before_scans: AlignedScans,
+    after_scans: AlignedScans,
+    flagged_edges: List[PortalOverlapEdge],
+    applied: bool,
+    accepted: bool,
+    cov_scale: int = PORTAL_DOWNWEIGHT_COV_SCALE,
+) -> PortalAlignmentMetrics:
+    """Assemble portal_alignment_metrics payload for manifest wiring (S3)."""
+    metrics_before = compute_portal_spread_metrics(before_scans)
+    metrics_after = compute_portal_spread_metrics(after_scans)
+    rmse_before = compute_portal_spread_rmse(metrics_before)
+    rmse_after = compute_portal_spread_rmse(metrics_after)
+
+    downweighted_keys: Set[Tuple[str, str, str]] = {
+        logical_portal_edge_key(edge.scan_a, edge.scan_b, edge.portal_id)
+        for edge in flagged_edges
+    }
+    edges_before_list = build_portal_overlap_edges(before_scans)
+    edges_after_list = build_portal_overlap_edges(after_scans)
+    rmse_trusted_before = compute_overlap_rmse(
+        edges_before_list,
+        exclude_keys=downweighted_keys if downweighted_keys else None,
+    )
+    rmse_trusted_after = compute_overlap_rmse(
+        edges_after_list,
+        exclude_keys=downweighted_keys if downweighted_keys else None,
+    )
+
+    all_portal_ids = sorted(set(metrics_before.keys()) | set(metrics_after.keys()))
+    portal_records: List[PortalAlignmentPortalRecord] = []
+    for portal_id in all_portal_ids:
+        before_m = metrics_before.get(portal_id)
+        after_m = metrics_after.get(portal_id)
+        detection_count = (
+            after_m.detection_count if after_m is not None
+            else before_m.detection_count if before_m is not None
+            else 0
+        )
+        zero = PortalSpreadMetrics(0.0, 0.0, detection_count)
+        portal_records.append(
+            PortalAlignmentPortalRecord(
+                portal_id=portal_id,
+                detection_count=detection_count,
+                before=before_m if before_m is not None else zero,
+                after=after_m if after_m is not None else zero,
+            )
+        )
+
+    edges_before = _edges_by_key(build_portal_overlap_edges(before_scans))
+    edges_after = _edges_by_key(build_portal_overlap_edges(after_scans))
+    all_edge_keys = sorted(set(edges_before.keys()) | set(edges_after.keys()))
+    overlap_records: List[PortalAlignmentOverlapRecord] = []
+    for key in all_edge_keys:
+        scan_a, scan_b, portal_id = key
+        before_e = edges_before.get(key)
+        after_e = edges_after.get(key)
+        zero_gap = PortalOverlapGap(0.0, 0.0)
+        overlap_records.append(
+            PortalAlignmentOverlapRecord(
+                scan_a=scan_a,
+                scan_b=scan_b,
+                portal_id=portal_id,
+                before=PortalOverlapGap(before_e.dp_m, before_e.dr_deg) if before_e else zero_gap,
+                after=PortalOverlapGap(after_e.dp_m, after_e.dr_deg) if after_e else zero_gap,
+            )
+        )
+
+    downweighted = tuple(
+        DownweightedPortalEdge(
+            scan_a=edge.scan_a,
+            scan_b=edge.scan_b,
+            portal_id=edge.portal_id,
+            position_gap_m=edge.dp_m,
+            rotation_gap_deg=edge.dr_deg,
+        )
+        for edge in flagged_edges
+    )
+
+    return PortalAlignmentMetrics(
+        applied=applied,
+        accepted=accepted,
+        cov_scale=cov_scale,
+        rmse_before=rmse_before,
+        rmse_after=rmse_after,
+        rmse_trusted_before=rmse_trusted_before,
+        rmse_trusted_after=rmse_trusted_after,
+        portals=tuple(portal_records),
+        overlaps=tuple(overlap_records),
+        downweighted_edges=downweighted,
+    )
+
+
+def portal_alignment_metrics_to_dict(metrics: PortalAlignmentMetrics) -> dict:
+    """Serialize PortalAlignmentMetrics for refined_manifest.json (top-level portal_alignment_metrics)."""
+
+    def _spread(spread: PortalSpreadMetrics) -> dict:
+        return {
+            "position_spread_m": spread.position_spread_m,
+            "rotation_spread_deg": spread.rotation_spread_deg,
+        }
+
+    def _gap(gap: PortalOverlapGap) -> dict:
+        return {
+            "position_gap_m": gap.position_gap_m,
+            "rotation_gap_deg": gap.rotation_gap_deg,
+        }
+
+    def _rmse(rmse: PortalSpreadRmse) -> dict:
+        return {
+            "position_m": rmse.position_m,
+            "rotation_deg": rmse.rotation_deg,
+        }
+
+    return {
+        "applied": metrics.applied,
+        "accepted": metrics.accepted,
+        "cov_scale": metrics.cov_scale,
+        "rmse_before": _rmse(metrics.rmse_before),
+        "rmse_after": _rmse(metrics.rmse_after),
+        "rmse_trusted_before": _rmse(metrics.rmse_trusted_before),
+        "rmse_trusted_after": _rmse(metrics.rmse_trusted_after),
+        "portals": [
+            {
+                "portal_id": portal.portal_id,
+                "detection_count": portal.detection_count,
+                "before": _spread(portal.before),
+                "after": _spread(portal.after),
+            }
+            for portal in metrics.portals
+        ],
+        "overlaps": [
+            {
+                "scan_a": overlap.scan_a,
+                "scan_b": overlap.scan_b,
+                "portal_id": overlap.portal_id,
+                "before": _gap(overlap.before),
+                "after": _gap(overlap.after),
+            }
+            for overlap in metrics.overlaps
+        ],
+        "downweighted_edges": [
+            {
+                "scan_a": edge.scan_a,
+                "scan_b": edge.scan_b,
+                "portal_id": edge.portal_id,
+                "position_gap_m": edge.position_gap_m,
+                "rotation_gap_deg": edge.rotation_gap_deg,
+            }
+            for edge in metrics.downweighted_edges
+        ],
+    }
+
+
+def _rotation_angle_deg(quat_a: np.ndarray, quat_b: np.ndarray) -> float:
+    dot = abs(float(np.dot(quat_a, quat_b)))
+    dot = min(1.0, max(-1.0, dot))
+    return float(np.degrees(2.0 * np.arccos(dot)))
+
+
+def compute_portal_spread_metrics(aligned_scans: AlignedScans) -> Dict[str, PortalSpreadMetrics]:
+    """Per-portal RMS position/rotation spread across all aligned detections."""
+    detections_by_portal: Dict[str, List[pycolmap.Rigid3d]] = {}
+
+    if not aligned_scans.aligned_portal_detections:
+        return {}
+
+    for scan_portals in aligned_scans.aligned_portal_detections.values():
+        for portal_id, poses in scan_portals.items():
+            detections_by_portal.setdefault(portal_id, []).extend(poses)
+
+    metrics: Dict[str, PortalSpreadMetrics] = {}
+    for portal_id, detections in detections_by_portal.items():
+        count = len(detections)
+        if count == 0:
+            continue
+        if count == 1:
+            metrics[portal_id] = PortalSpreadMetrics(0.0, 0.0, 1)
+            continue
+
+        mean = mean_pose(detections)
+        positions = np.array([pose.translation for pose in detections])
+        position_delta = positions - mean.translation
+        position_spread_m = float(np.sqrt(np.mean(np.sum(position_delta * position_delta, axis=1))))
+
+        mean_quat = mean.rotation.quat
+        angle_deg = [
+            _rotation_angle_deg(pose.rotation.quat, mean_quat)
+            for pose in detections
+        ]
+        rotation_spread_deg = float(np.sqrt(np.mean(np.square(angle_deg))))
+
+        metrics[portal_id] = PortalSpreadMetrics(
+            position_spread_m=position_spread_m,
+            rotation_spread_deg=rotation_spread_deg,
+            detection_count=count,
+        )
+
+    return metrics
+
+
+def build_portal_overlap_edges(aligned_scans: AlignedScans) -> List[PortalOverlapEdge]:
+    """Logical scan-pair overlap edges from per-scan mean portal poses (world frame)."""
+    portal_scan_means: Dict[str, Dict[str, pycolmap.Rigid3d]] = {}
+
+    for scan_id, scan_portals in aligned_scans.aligned_portal_detections.items():
+        for portal_id, poses in scan_portals.items():
+            if not poses:
+                continue
+            portal_scan_means.setdefault(portal_id, {})[scan_id] = mean_pose(poses)
+
+    edges: List[PortalOverlapEdge] = []
+    for portal_id, scan_means in portal_scan_means.items():
+        for scan_a, scan_b in itertools.combinations(sorted(scan_means.keys()), 2):
+            pose_a = scan_means[scan_a]
+            pose_b = scan_means[scan_b]
+            dp_m = float(np.linalg.norm(pose_a.translation - pose_b.translation))
+            dr_deg = _rotation_angle_deg(pose_a.rotation.quat, pose_b.rotation.quat)
+            edges.append(
+                PortalOverlapEdge(
+                    scan_a=scan_a,
+                    scan_b=scan_b,
+                    portal_id=portal_id,
+                    dp_m=dp_m,
+                    dr_deg=dr_deg,
+                )
+            )
+    return edges
+
+
+def flag_outlier_portal_edges(edges: List[PortalOverlapEdge]) -> List[PortalOverlapEdge]:
+    """Flag edges where dp or dr exceeds median + k·σ (sample stdev, ddof=1)."""
+    if len(edges) < 2:
+        return []
+
+    k = PORTAL_OUTLIER_SIGMA_MULT
+    dp_values = np.array([edge.dp_m for edge in edges], dtype=float)
+    dr_values = np.array([edge.dr_deg for edge in edges], dtype=float)
+
+    thr_p = float(np.median(dp_values) + k * np.std(dp_values, ddof=1))
+    thr_r = float(np.median(dr_values) + k * np.std(dr_values, ddof=1))
+
+    return [
+        edge
+        for edge in edges
+        if edge.dp_m > thr_p or edge.dr_deg > thr_r
+    ]
+
+
+def compute_portal_spread_rmse(
+    metrics: Dict[str, PortalSpreadMetrics],
+) -> PortalSpreadRmse:
+    """Job-level portal-spread RMSE over portals with detection_count >= 2."""
+    eligible = [m for m in metrics.values() if m.detection_count >= 2]
+    if not eligible:
+        return PortalSpreadRmse(position_m=0.0, rotation_deg=0.0)
+
+    pos_sq = [m.position_spread_m ** 2 for m in eligible]
+    rot_sq = [m.rotation_spread_deg ** 2 for m in eligible]
+    return PortalSpreadRmse(
+        position_m=float(np.sqrt(np.mean(pos_sq))),
+        rotation_deg=float(np.sqrt(np.mean(rot_sq))),
+    )
+
+
+def compute_overlap_rmse(
+    edges: List[PortalOverlapEdge],
+    exclude_keys: Optional[Set[Tuple[str, str, str]]] = None,
+) -> PortalSpreadRmse:
+    """Job-level overlap RMSE over logical edges, optionally excluding downweighted keys."""
+    trusted = [
+        edge
+        for edge in edges
+        if exclude_keys is None
+        or logical_portal_edge_key(edge.scan_a, edge.scan_b, edge.portal_id) not in exclude_keys
+    ]
+    if not trusted:
+        return PortalSpreadRmse(position_m=0.0, rotation_deg=0.0)
+
+    pos_sq = [edge.dp_m ** 2 for edge in trusted]
+    rot_sq = [edge.dr_deg ** 2 for edge in trusted]
+    return PortalSpreadRmse(
+        position_m=float(np.sqrt(np.mean(pos_sq))),
+        rotation_deg=float(np.sqrt(np.mean(rot_sq))),
+    )
+
+
+_PORTAL_ACCEPT_POS_ABS_MAX_M = 0.20
+_PORTAL_ACCEPT_ROT_ABS_MAX_DEG = 5.0
+_PORTAL_ACCEPT_WORSEN_RATIO = 2.0
+
+
+def _portal_axis_reject(before: float, after: float, abs_max: float) -> bool:
+    """True if after is catastrophically worse than before on one RMSE axis."""
+    if after <= before:
+        return False
+    if before > 0.0 and after >= _PORTAL_ACCEPT_WORSEN_RATIO * before:
+        return True
+    if (after - before) >= abs_max:
+        return True
+    return False
+
+
+def accept_portal_spread_rmse(before: PortalSpreadRmse, after: PortalSpreadRmse) -> bool:
+    """Accept after solve unless trusted RMSE worsens catastrophically on either axis."""
+    if _portal_axis_reject(
+        before.position_m, after.position_m, _PORTAL_ACCEPT_POS_ABS_MAX_M
+    ):
+        return False
+    if _portal_axis_reject(
+        before.rotation_deg, after.rotation_deg, _PORTAL_ACCEPT_ROT_ABS_MAX_DEG
+    ):
+        return False
+    return True
+
 
 class NoOverlapException(Exception):
     def __init__(self, message='No overlaps!'):
@@ -180,27 +609,20 @@ def align_scans(
     )
 
 
-def refine_alignment(
+def _run_ceres_alignment_solve(
     aligned_scans: AlignedScans,
-    job_root_path: Path,
-    logger: Optional[logging.Logger] = None
+    logger: logging.Logger,
+    downweighted_edges: Optional[Set[Tuple[str, str, str]]] = None,
 ) -> AlignedScans:
-    if logger is None:
-        logger = logging.getLogger("scan_alignment")
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
-    logger.info("Going to optimize chunk alignment...")
+    """Build Ceres problem from aligned scans, solve, return refined AlignedScans."""
     scan_ids = aligned_scans.scan_ids
     t_local_scan_quat = [pycolmap.Rigid3d().rotation.quat for _ in range(len(scan_ids))]
     t_local_scan_translation = [pycolmap.Rigid3d().translation for _ in range(len(scan_ids))]
     problem = pyceres.Problem()
 
-    #loss = pyceres.HuberLoss(0.1)
     loss = None
 
     qr_ids_per_scan = [set() for _ in range(len(scan_ids))]
-    connected_scans = [set() for _ in range(len(scan_ids))]
     detections_per_qr: Dict[str, List[tuple[int, pycolmap.Rigid3d]]] = {}
     for scan_idx, scan_id in enumerate(scan_ids):
         for qr_id, aligned_qr_poses in aligned_scans.aligned_portal_detections[scan_id].items():
@@ -217,41 +639,114 @@ def refine_alignment(
             if scan_idx_ref == scan_idx_tgt:
                 continue
 
+            cov_multiplier = portal_edge_cov_multiplier(
+                scan_ids[scan_idx_ref],
+                scan_ids[scan_idx_tgt],
+                qr_id,
+                downweighted_edges,
+            )
             cov = np.eye(6)
             cov[3:, 3:] *= 0.01
+            cov *= cov_multiplier
 
-            # First relative to second
-            cost_1 = RelativeTransformationSim3CostFunction(t_refworld_qr.rotation.quat,
-                                                          t_refworld_qr.translation,
-                                                          t_tgtworld_qr.rotation.quat,
-                                                          t_tgtworld_qr.translation, cov)
-
+            cost_1 = RelativeTransformationSim3CostFunction(
+                t_refworld_qr.rotation.quat,
+                t_refworld_qr.translation,
+                t_tgtworld_qr.rotation.quat,
+                t_tgtworld_qr.translation,
+                cov,
+            )
             params_1 = [
                 t_local_scan_quat[scan_idx_tgt],
                 t_local_scan_translation[scan_idx_tgt],
                 t_local_scan_quat[scan_idx_ref],
-                t_local_scan_translation[scan_idx_ref]
+                t_local_scan_translation[scan_idx_ref],
             ]
-
             problem.add_residual_block(cost_1, loss, params_1)
 
-            # Second relative to first (to ensure scale impacts in both ways symetrically)
-            cost_2 = RelativeTransformationSim3CostFunction(t_tgtworld_qr.rotation.quat,
-                                                          t_tgtworld_qr.translation,
-                                                          t_refworld_qr.rotation.quat,
-                                                          t_refworld_qr.translation, cov)
+            cost_2 = RelativeTransformationSim3CostFunction(
+                t_tgtworld_qr.rotation.quat,
+                t_tgtworld_qr.translation,
+                t_refworld_qr.rotation.quat,
+                t_refworld_qr.translation,
+                cov,
+            )
             params_2 = [
                 t_local_scan_quat[scan_idx_ref],
                 t_local_scan_translation[scan_idx_ref],
                 t_local_scan_quat[scan_idx_tgt],
-                t_local_scan_translation[scan_idx_tgt]
+                t_local_scan_translation[scan_idx_tgt],
             ]
             problem.add_residual_block(cost_2, loss, params_2)
 
             qr_ids_per_scan[scan_idx_ref].add(qr_id)
             qr_ids_per_scan[scan_idx_tgt].add(qr_id)
-            connected_scans[scan_idx_ref].add(scan_idx_tgt)
-            connected_scans[scan_idx_tgt].add(scan_idx_ref)
+
+    # Soft origin-position prior: first aligned scan's stitch maps floor portal → (0,0,0);
+    # pin that scan's Sim3-delta translation so the gauge cannot float off origin.
+    origin_scan_idx = 0
+    origin_scan_id = scan_ids[origin_scan_idx]
+    origin_trans = t_local_scan_translation[origin_scan_idx]
+    origin_prior = TranslationPriorCostFunction(
+        target=(0.0, 0.0, 0.0),
+        weight=PORTAL_ORIGIN_PRIOR_WEIGHT,
+    )
+    problem.add_residual_block(origin_prior, None, [origin_trans])
+    logger.info(
+        f"Origin prior: scan={origin_scan_id} idx={origin_scan_idx} "
+        f"target=(0,0,0) w={PORTAL_ORIGIN_PRIOR_WEIGHT}"
+    )
+
+    # Soft gravity prior: trust local-refinement up (COLMAP -X) per scan.
+    # residual = w * (R_delta * R_stitch * local_g - world_g), Huber-robustified.
+    from src.cost_functions import GravityDirectionPriorSim3DeltaCostFunction
+
+    gravity_loss = pyceres.HuberLoss(PORTAL_GRAVITY_PRIOR_HUBER_SCALE)
+    gravity_costs = []
+    for scan_idx, scan_id in enumerate(scan_ids):
+        stitch = aligned_scans.alignment_transforms[scan_id]
+        cost = GravityDirectionPriorSim3DeltaCostFunction(
+            np.asarray(stitch.rotation.quat, dtype=float),
+            _PORTAL_LOCAL_GRAVITY,
+            PORTAL_GRAVITY_PRIOR_WEIGHT,
+        )
+        quat = t_local_scan_quat[scan_idx]
+        gravity_costs.append((scan_id, cost, quat))
+        problem.add_residual_block(cost, gravity_loss, [quat])
+        if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
+            problem.set_manifold(quat, pyceres.QuaternionManifold())
+
+    def _gravity_cost_stats(label: str) -> Tuple[float, float]:
+        """Return (sum raw ||r||^2, sum Huber rho) and log per-pass contribution."""
+        raw_sq = []
+        huber_vals = []
+        tilts_deg = []
+        world_down = _PORTAL_LOCAL_GRAVITY
+        for scan_id, cost, quat in gravity_costs:
+            residuals, _ = cost.evaluate(quat)
+            r = np.asarray(residuals, dtype=float).reshape(-1)
+            s = float(np.dot(r, r))
+            raw_sq.append(s)
+            # Ceres LossFunction.evaluate(s) -> [rho, ...]
+            huber_vals.append(float(gravity_loss.evaluate(s)[0]))
+            # Effective world-down tilt after delta*stitch (independent of weight).
+            delta = pycolmap.Rotation3d(quat)
+            stitch_R = aligned_scans.alignment_transforms[scan_id].rotation
+            mapped = (delta * stitch_R).matrix() @ world_down
+            c = float(np.clip(np.dot(mapped, world_down), -1.0, 1.0))
+            tilts_deg.append(float(np.degrees(np.arccos(c))))
+        sum_raw = float(np.sum(raw_sq))
+        sum_huber = float(np.sum(huber_vals))
+        logger.info(
+            f"Gravity prior [{label}]: n={len(gravity_costs)} "
+            f"raw_cost={sum_raw:.3f} huber_cost={sum_huber:.3f} "
+            f"(w={PORTAL_GRAVITY_PRIOR_WEIGHT}, Huber a={PORTAL_GRAVITY_PRIOR_HUBER_SCALE}); "
+            f"tilt_deg mean={np.mean(tilts_deg):.2f} max={np.max(tilts_deg):.2f} "
+            f"p90={np.percentile(tilts_deg, 90):.2f}"
+        )
+        return sum_raw, sum_huber
+
+    grav_raw0, grav_huber0 = _gravity_cost_stats("pre-solve")
 
     for scan_idx in range(len(scan_ids)):
         if len(qr_ids_per_scan[scan_idx]) < 2:
@@ -260,8 +755,6 @@ def refine_alignment(
             if problem.has_parameter_block(quat) and not problem.is_parameter_block_constant(quat):
                 problem.set_manifold(quat, pyceres.QuaternionManifold())
         else:
-            # Keep scale close to 1.0 while still allowing the solver
-            # to absorb the residual scan-to-scan scale drift.
             weight = 5000.0
             scale_cost = QuaternionNormalizationCostFunction(weight=weight)
             params = [t_local_scan_quat[scan_idx]]
@@ -283,13 +776,38 @@ def refine_alignment(
     else:
         logger.info(f"{summary.BriefReport()}")
 
-    t_local_scans = [pycolmap.Sim3d(pycolmap.Rotation3d(quat).norm()**2, pycolmap.Rotation3d(quat), translation) for quat, translation in zip(t_local_scan_quat, t_local_scan_translation)]
+    grav_raw1, grav_huber1 = _gravity_cost_stats("post-solve")
+    # Ceres reports 0.5 * sum rho; compare gravity huber sum on same footing.
+    initial = float(summary.initial_cost)
+    final = float(summary.final_cost)
+    # Our huber_cost is sum rho; Ceres cost is typically 1/2 sum rho.
+    grav_share0 = (0.5 * grav_huber0 / initial) if initial > 0 else 0.0
+    grav_share1 = (0.5 * grav_huber1 / final) if final > 0 else 0.0
+    logger.info(
+        f"Gravity prior vs total Ceres cost: "
+        f"pre {0.5*grav_huber0:.3f}/{initial:.3f} ({100*grav_share0:.1f}%), "
+        f"post {0.5*grav_huber1:.3f}/{final:.3f} ({100*grav_share1:.1f}%)"
+    )
+    origin_t = np.asarray(t_local_scan_translation[origin_scan_idx], dtype=float).reshape(3)
+    logger.info(
+        f"Origin prior post-solve: scan={origin_scan_id} "
+        f"delta_t={origin_t.tolist()} |t|={float(np.linalg.norm(origin_t)):.4f}m"
+    )
+
+    t_local_scans = [
+        pycolmap.Sim3d(
+            pycolmap.Rotation3d(quat).norm() ** 2,
+            pycolmap.Rotation3d(quat),
+            translation,
+        )
+        for quat, translation in zip(t_local_scan_quat, t_local_scan_translation)
+    ]
     for t_local_scan in t_local_scans:
         t_local_scan.rotation.normalize()
 
-    logger.debug('Refined Sim3 transforms:')
+    logger.debug("Refined Sim3 transforms:")
     for scan_idx, t_local_scan in enumerate(t_local_scans):
-        logger.debug(f'Scan {scan_idx} ({scan_ids[scan_idx]}): {t_local_scan}')
+        logger.debug(f"Scan {scan_idx} ({scan_ids[scan_idx]}): {t_local_scan}")
 
     refined_alignment_transforms = {
         scan_id: t_local_scans[scan_idx] * aligned_scans.alignment_transforms[scan_id]
@@ -306,13 +824,127 @@ def refine_alignment(
         for scan_id in scan_ids
     }
 
-    logger.info("Scan alignment refined successfully!")
     return AlignedScans(
         scan_ids=scan_ids,
         alignment_transforms=refined_alignment_transforms,
         raw_portal_detections=aligned_scans.raw_portal_detections,
         aligned_portal_detections=refined_aligned_portal_detections,
     )
+
+
+def refine_alignment(
+    aligned_scans: AlignedScans,
+    job_root_path: Path,
+    logger: Optional[logging.Logger] = None,
+    enable_portal_reweight: bool = True,
+) -> Tuple[AlignedScans, PortalAlignmentMetrics]:
+    if logger is None:
+        logger = logging.getLogger("scan_alignment")
+        logger.setLevel(logging.INFO)
+        if not logger.hasHandlers():
+            logger.addHandler(logging.StreamHandler(sys.stdout))
+    logger.info("Going to optimize chunk alignment...")
+
+    first_result = _run_ceres_alignment_solve(aligned_scans, logger)
+
+    if not enable_portal_reweight:
+        logger.info("Portal reweight pass disabled; using first solve only.")
+        metrics = build_portal_alignment_metrics(
+            first_result,
+            first_result,
+            flagged_edges=[],
+            applied=False,
+            accepted=False,
+        )
+        logger.info("Scan alignment refined successfully!")
+        return first_result, metrics
+
+    overlap_edges = build_portal_overlap_edges(first_result)
+    flagged_edges = flag_outlier_portal_edges(overlap_edges)
+
+    if not flagged_edges:
+        logger.info("No outlier portal overlap edges flagged; skipping reweight pass.")
+        metrics = build_portal_alignment_metrics(
+            first_result,
+            first_result,
+            flagged_edges=[],
+            applied=False,
+            accepted=False,
+        )
+        logger.info("Scan alignment refined successfully!")
+        return first_result, metrics
+
+    downweighted_keys: Set[Tuple[str, str, str]] = {
+        logical_portal_edge_key(edge.scan_a, edge.scan_b, edge.portal_id)
+        for edge in flagged_edges
+    }
+    logger.info(
+        "Outlier portal overlap edges flagged (%d); running reweight pass (cov×%d).",
+        len(flagged_edges),
+        PORTAL_DOWNWEIGHT_COV_SCALE,
+    )
+    for edge in flagged_edges:
+        logger.info(
+            "  downweight %s↔%s portal %s (Δp=%.4f m, Δr=%.2f deg)",
+            edge.scan_a,
+            edge.scan_b,
+            edge.portal_id,
+            edge.dp_m,
+            edge.dr_deg,
+        )
+
+    second_result = _run_ceres_alignment_solve(
+        aligned_scans,
+        logger,
+        downweighted_edges=downweighted_keys,
+    )
+
+    spread_rmse_before = compute_portal_spread_rmse(compute_portal_spread_metrics(first_result))
+    spread_rmse_after = compute_portal_spread_rmse(compute_portal_spread_metrics(second_result))
+    edges_before = build_portal_overlap_edges(first_result)
+    edges_after = build_portal_overlap_edges(second_result)
+    trusted_before = compute_overlap_rmse(edges_before, exclude_keys=downweighted_keys)
+    trusted_after = compute_overlap_rmse(edges_after, exclude_keys=downweighted_keys)
+    accepted = accept_portal_spread_rmse(trusted_before, trusted_after)
+
+    if accepted:
+        logger.info(
+            "Reweight pass accepted (trusted RMSE pos %.6f→%.6f m, rot %.6f→%.6f deg; "
+            "portal-spread pos %.6f→%.6f m, rot %.6f→%.6f deg).",
+            trusted_before.position_m,
+            trusted_after.position_m,
+            trusted_before.rotation_deg,
+            trusted_after.rotation_deg,
+            spread_rmse_before.position_m,
+            spread_rmse_after.position_m,
+            spread_rmse_before.rotation_deg,
+            spread_rmse_after.rotation_deg,
+        )
+        final_result = second_result
+    else:
+        logger.info(
+            "Reweight pass reverted (trusted RMSE pos %.6f→%.6f m, rot %.6f→%.6f deg; "
+            "portal-spread pos %.6f→%.6f m, rot %.6f→%.6f deg).",
+            trusted_before.position_m,
+            trusted_after.position_m,
+            trusted_before.rotation_deg,
+            trusted_after.rotation_deg,
+            spread_rmse_before.position_m,
+            spread_rmse_after.position_m,
+            spread_rmse_before.rotation_deg,
+            spread_rmse_after.rotation_deg,
+        )
+        final_result = first_result
+
+    metrics = build_portal_alignment_metrics(
+        first_result,
+        second_result,
+        flagged_edges=flagged_edges,
+        applied=True,
+        accepted=accepted,
+    )
+    logger.info("Scan alignment refined successfully!")
+    return final_result, metrics
 
 
 def merge_aligned_scans(
