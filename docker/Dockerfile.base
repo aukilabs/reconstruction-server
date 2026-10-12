@@ -74,12 +74,16 @@ RUN set -eux; \
 RUN mkdir -p /usr/include/opencv4
 
 # Python toolchain + base Python deps
+# pybind11 is pinned to COLMAP 4.2.1's own build pin: it builds src/'s extensions,
+# which exchange colmap::Reconstruction objects with pycolmap, so the two must share
+# a pybind11 internals version (3.0.x => 11; 3.1.0 would be 12 and could not share
+# registered types).
 RUN set -eux; \
 # Ubuntu 22.04's setuptools and wheel stay below the fixed releases, and apt cannot reach them.
 # Remove the distro copies after the pip install, or both copies stay in the image.
     python3 -m pip install --upgrade pip 'setuptools>=78.1.1' 'wheel>=0.38.1'; \
     apt-get remove -y python3-pip python3-setuptools python3-wheel; \
-    python3 -m pip install "pybind11[global]==3.0.2" \
+    python3 -m pip install "pybind11[global]==3.0.4" \
                            psutil gputil \
                            enlighten \
                            'open3d==0.20.0' \
@@ -152,6 +156,11 @@ RUN set -eux; \
 # Pinned to a commit past v2.6 (no tagged release yet) because it adds Python
 # bindings for ceres::ProductManifold, required to parameterize COLMAP 4.x's
 # combined 7-dim (quaternion + translation) pose parameter blocks.
+# Do NOT advance this pin to pyceres main: since 86ffa83 it builds against
+# pybind11 3.1.0, whose internals version (12) differs from the 3.0.x series
+# COLMAP 4.2.1 builds against (11). Mismatched internals cannot share registered
+# types, so pycolmap cost functions could no longer be added to a pyceres
+# Problem -- which is exactly what utils/bundle_adjuster.py does.
 RUN set -eux; \
     cd /tmp/build; \
     git clone https://github.com/cvg/pyceres.git; \
@@ -171,13 +180,14 @@ RUN set -eux; \
 # COLMAP (+ its Python bindings)
 RUN set -eux; \
     cd /tmp/build; \
-    git clone --depth 1 --branch 4.1.0 https://github.com/colmap/colmap.git; \
+    git clone --depth 1 --branch 4.2.1 https://github.com/colmap/colmap.git; \
     cd colmap; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \
       -DCUDA_ENABLED=ON \
       -DBLA_VENDOR=Intel10_64lp \
+      -DCOLMAP_HASH_MAP_BACKEND=STD \
       -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"; \
     ninja -j"$(nproc)"; \
     ninja install; \
