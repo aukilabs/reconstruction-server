@@ -1,0 +1,27 @@
+# Allowlist: credentials and local jobs must never enter the build context.
+**
+!docker/
+!docker/Dockerfile.spark
+!docker/entrypoint.sh
+!server/
+!server/rust/
+!server/rust/**
+!scripts/
+!scripts/**
+!src/
+!src/**
+!config/
+!config/**
+!utils/
+!utils/**
+!tests/
+!tests/**
+!*.py
+!CMakeLists.txt
+**/.env
+**/.env.*
+**/.git
+**/target
+**/jobs
+**/__pycache__
+**/*.so
