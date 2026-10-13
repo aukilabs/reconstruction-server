@@ -347,6 +347,10 @@ class RelativeTransformationSim3CostFunction {
       normal_prior_;
 };
 
+// Originally for local refinement as a gravity prior (bundle adjuster config;
+// default false, currently never enabled). Only global refinement uses a
+// gravity prior today, via GravityDirectionPriorSim3DeltaCostFunction below
+// (includes Sim3 scan alignment).
 class GravityDirectionPriorCostFunction {
  public:
   GravityDirectionPriorCostFunction(const Eigen::Vector3d& local_gravity_direction, const double weight)

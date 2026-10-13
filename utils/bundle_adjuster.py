@@ -295,6 +295,8 @@ class PyBundleAdjuster(object):
         else:
             self.featureless_camera_ids.add(image.camera_id)
 
+        # Originally added local refinement as a gravity prior, but not used
+        # right now. Only global refinement uses gravity prior for now.
         use_arkit_gravityprior = self.refinement_config.get('use_arkit_gravityprior', False)
         if (
             use_arkit_gravityprior
