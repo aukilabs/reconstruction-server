@@ -5,7 +5,13 @@ import numpy as np
 from numpy.linalg import norm
 
 from utils.data_utils import vec3_angle, is_floor_portal
-from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction
+from src.cost_functions import (
+    RelativeTransformationSE3CostFunction,
+    RelativeTransformationSE3ViaObservationsCostFunction,
+    PoseCenterConstraintCostFunction,
+    FloorAlignmentCostFunction,
+    GravityDirectionPriorCostFunction,
+)
 
 class PyBundleAdjuster(object):
     # Python implementation of COLMAP bundle adjuster with pyceres
@@ -289,6 +295,23 @@ class PyBundleAdjuster(object):
         else:
             self.featureless_camera_ids.add(image.camera_id)
 
+        # Originally added local refinement as a gravity prior, but not used
+        # right now. Only global refinement uses gravity prior for now.
+        use_arkit_gravityprior = self.refinement_config.get('use_arkit_gravityprior', False)
+        if (
+            use_arkit_gravityprior
+            and arkit_precomputed is not None
+            and image_id in arkit_precomputed
+            and "gravity_direction" in arkit_precomputed[image_id]
+        ):
+            arkit_gravity_direction = arkit_precomputed[image_id]["gravity_direction"]
+            gravity_weight = self.refinement_config.get("gravityprior_weight", 1.0)
+            cost = GravityDirectionPriorCostFunction(arkit_gravity_direction, gravity_weight)
+            params = [
+                pose.rotation.quat
+            ]
+            self.add_residual_block("GravityDirectionPrior", cost, None, params, image_id)
+        
         use_arkit_centerdist = self.refinement_config.get('use_arkit_centerdist', False)
         if not constant_cam_pose and use_arkit_centerdist:
             arkit_cam_from_world = arkit_precomputed[image_id]['cam_from_world']

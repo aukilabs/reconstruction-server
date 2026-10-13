@@ -43,6 +43,31 @@ class QuaternionNormalizationCostFunction(pyceres.CostFunction):
         return True
 
 
+class TranslationPriorCostFunction(pyceres.CostFunction):
+    """Soft prior: residual = weight * (translation - target)."""
+
+    def __init__(self, target=(0.0, 0.0, 0.0), weight=1.0):
+        super().__init__()
+        self.set_num_residuals(3)
+        self.set_parameter_block_sizes([3])
+        self.target = np.asarray(target, dtype=float).reshape(3)
+        self.weight = float(weight)
+
+    def Evaluate(self, parameters, residuals, jacobians):
+        t = np.asarray(parameters[0], dtype=float).reshape(3)
+        err = self.weight * (t - self.target)
+        residuals[0] = float(err[0])
+        residuals[1] = float(err[1])
+        residuals[2] = float(err[2])
+        if jacobians is not None and jacobians[0] is not None:
+            # d(r)/d(t) = weight * I
+            jacobians[0][:] = 0.0
+            jacobians[0][0] = self.weight
+            jacobians[0][4] = self.weight
+            jacobians[0][8] = self.weight
+        return True
+
+
 def align_reconstruction_chunks(
         reconstruction: pycolmap.Reconstruction,
         chunks_image_ids: List[List[int]],

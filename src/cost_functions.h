@@ -347,6 +347,88 @@ class RelativeTransformationSim3CostFunction {
       normal_prior_;
 };
 
+// Originally for local refinement as a gravity prior (bundle adjuster config;
+// default false, currently never enabled). Only global refinement uses a
+// gravity prior today, via GravityDirectionPriorSim3DeltaCostFunction below
+// (includes Sim3 scan alignment).
+class GravityDirectionPriorCostFunction {
+ public:
+  GravityDirectionPriorCostFunction(const Eigen::Vector3d& local_gravity_direction, const double weight)
+      : local_gravity_direction_(local_gravity_direction.normalized()), 
+        weight_(weight),
+        world_gravity_direction_(Eigen::Vector3d(-1.0, 0.0, 0.0)) {}
+
+  static ceres::CostFunction* Create(const Eigen::Vector3d& local_gravity_direction, const double weight) {
+    return new ceres::AutoDiffCostFunction<GravityDirectionPriorCostFunction, 3, 4>(
+        new GravityDirectionPriorCostFunction(local_gravity_direction, weight));
+  }
+
+  template <typename T>
+  bool operator()(const T* const local_from_world_rotation, T* residuals) const {
+
+    const Eigen::Matrix<T, 3, 1> current_local_gravity_direction =
+        EigenQuaternionMap<T>(local_from_world_rotation) *
+        world_gravity_direction_.cast<T>();
+    
+    // Vector difference as residual (x,y,z components)
+    Eigen::Map<Eigen::Matrix<T, 3, 1>> residuals_eigen(residuals);
+    residuals_eigen = T(weight_) * (current_local_gravity_direction - local_gravity_direction_.cast<T>());
+
+    return true;
+  }
+
+ private:
+  Eigen::Vector3d local_gravity_direction_;  // Normalized in constructor
+  Eigen::Vector3d world_gravity_direction_;  // Defined as (-1,0,0) for COLMAP coordinate system
+  double weight_;
+};
+
+// Global refine: optimized Sim3 delta is left-multiplied on the stitch transform
+// (refined = delta * stitch). Pulls R_delta * R_stitch * local_gravity → world_gravity
+// so each scan keeps the up direction implied by local refinement (COLMAP -X).
+class GravityDirectionPriorSim3DeltaCostFunction {
+ public:
+  GravityDirectionPriorSim3DeltaCostFunction(
+      const Eigen::Vector4d& stitch_rotation_xyzw,
+      const Eigen::Vector3d& local_gravity_direction,
+      const double weight)
+      : stitch_rotation_(Eigen::Quaterniond(
+            stitch_rotation_xyzw[3],
+            stitch_rotation_xyzw[0],
+            stitch_rotation_xyzw[1],
+            stitch_rotation_xyzw[2])),
+        local_gravity_direction_(local_gravity_direction.normalized()),
+        weight_(weight),
+        world_gravity_direction_(Eigen::Vector3d(-1.0, 0.0, 0.0)) {}
+
+  static ceres::CostFunction* Create(
+      const Eigen::Vector4d& stitch_rotation_xyzw,
+      const Eigen::Vector3d& local_gravity_direction,
+      const double weight) {
+    return new ceres::AutoDiffCostFunction<GravityDirectionPriorSim3DeltaCostFunction, 3, 4>(
+        new GravityDirectionPriorSim3DeltaCostFunction(
+            stitch_rotation_xyzw, local_gravity_direction, weight));
+  }
+
+  template <typename T>
+  bool operator()(const T* const delta_quat_xyzw, T* residuals) const {
+    const Eigen::Quaternion<T> delta = EigenQuaternionMap<T>(delta_quat_xyzw);
+    const Eigen::Quaternion<T> stitch = stitch_rotation_.cast<T>();
+    const Eigen::Matrix<T, 3, 1> predicted_world_gravity =
+        (delta * stitch) * local_gravity_direction_.cast<T>();
+    Eigen::Map<Eigen::Matrix<T, 3, 1>> residuals_eigen(residuals);
+    residuals_eigen =
+        T(weight_) * (predicted_world_gravity - world_gravity_direction_.cast<T>());
+    return true;
+  }
+
+ private:
+  Eigen::Quaterniond stitch_rotation_;  // world_from_scan at stitch (wxyz internally)
+  Eigen::Vector3d local_gravity_direction_;
+  Eigen::Vector3d world_gravity_direction_;
+  double weight_;
+};
+
 class PoseCenterConstraintCostFunction {
  public:
   PoseCenterConstraintCostFunction(const Eigen::Vector3d& center,
