@@ -5,6 +5,7 @@
 //! `posemesh-compute-node` 0.3.2 host: Domain input layout, artifact upserts
 //! and the `{job, artifacts}` completion/failure receipts.
 
+pub mod capture_identity;
 pub mod config;
 pub mod host;
 pub mod io;
