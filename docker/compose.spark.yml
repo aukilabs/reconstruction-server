@@ -9,9 +9,9 @@ services:
     env_file:
       - ../.env
     environment:
-      DDS_BASE_URL: https://dds.dev.aukiverse.com
-      DMS_BASE_URL: https://dms.dev.aukiverse.com/v1
-      CLIENT_ID: reconstruction-node/spark-uuid-dev
+      DDS_BASE_URL: https://dds.aukiverse.com
+      DMS_BASE_URL: https://dms.aukiverse.com/v1
+      CLIENT_ID: reconstruction-node/spark-uuid
       LOCAL_RUNNER_CPU_WORKERS: "2"
       GLOBAL_RUNNER_CPU_WORKERS: "2"
       UPDATE_RUNNER_CPU_WORKERS: "2"
