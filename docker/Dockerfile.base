@@ -47,11 +47,18 @@ RUN set -eux; \
       iputils-ping \
       bind9-dnsutils \
     ; \
+    apt-get install -y --only-upgrade \
+      openssl \
+      libssl3 \
+      gnupg \
+      linux-libc-dev \
+    ; \
     rm -rf /var/lib/apt/lists/*
 
 # Python toolchain + base Python deps
 RUN set -eux; \
-    python3 -m pip install --upgrade pip setuptools wheel; \
+    python3 -m pip install --upgrade pip 'setuptools>=78.1.1' 'wheel>=0.38.1'; \
+    apt-get remove -y python3-pip python3-setuptools python3-wheel; \
     python3 -m pip install "pybind11[global]==3.0.1" \
                            psutil gputil \
                            enlighten \
@@ -152,6 +159,11 @@ RUN set -eux; \
     git checkout --recurse-submodules 87b266cdb3a894455a9c889276f4e5d5913eb0eb; \
     pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128; \
     python3 -m pip install .; \
+    python3 -m pip install \
+      'pillow>=12.3' \
+      'urllib3>=2.8' \
+      'fsspec>=2026.6' \
+      'soupsieve>=2.8.4'; \
     cd /; \
     rm -rf /tmp/build/*
 
