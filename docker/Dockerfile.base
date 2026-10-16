@@ -27,19 +27,29 @@ RUN set -eux; \
       libboost-system-dev \
       libeigen3-dev \
       libflann-dev \
-      libfreeimage-dev \
+      libopenimageio-dev \
+      openimageio-tools \
+      libopenexr-dev \
       libmetis-dev \
       libgtest-dev \
       libsqlite3-dev \
       libglew-dev \
       qtbase5-dev \
       libqt5opengl5-dev \
+      libqt5svg5-dev \
       libcgal-dev \
       libsuitesparse-dev \
       python3-pip \
       python3-tk \
       python3-dev \
       libmkl-full-dev \
+      cuda-nvcc-12-8 \
+      cuda-cudart-dev-12-8 \
+      libcurand-dev-12-8 \
+      libcublas-dev-12-8 \
+      libcusolver-dev-12-8 \
+      libcusparse-dev-12-8 \
+      libnvjitlink-12-8 \
       ssh \
       netcat-openbsd \
       ca-certificates \
@@ -49,10 +59,18 @@ RUN set -eux; \
     ; \
     rm -rf /var/lib/apt/lists/*
 
+# Ubuntu's OpenImageIO CMake config references an OpenCV include directory
+# for its (unused by COLMAP) OpenCV integration; the dir must merely exist.
+RUN mkdir -p /usr/include/opencv4
+
 # Python toolchain + base Python deps
+# pybind11 is pinned to COLMAP 4.2.1's own build pin: it builds src/'s extensions,
+# which exchange colmap::Reconstruction objects with pycolmap, so the two must share
+# a pybind11 internals version (3.0.x => 11; 3.1.0 would be 12 and could not share
+# registered types).
 RUN set -eux; \
     python3 -m pip install --upgrade pip setuptools wheel; \
-    python3 -m pip install "pybind11[global]==3.0.1" \
+    python3 -m pip install "pybind11[global]==3.0.4" \
                            psutil gputil \
                            enlighten \
                            open3d \
@@ -117,10 +135,26 @@ RUN set -eux; \
     rm -rf /tmp/build/*
 
 # pyCeres
+# Pinned to a commit past v2.6 (no tagged release yet) because it adds Python
+# bindings for ceres::ProductManifold, required to parameterize COLMAP 4.x's
+# combined 7-dim (quaternion + translation) pose parameter blocks.
+# Do NOT advance this pin to pyceres main: since 86ffa83 it builds against
+# pybind11 3.1.0, whose internals version (12) differs from the 3.0.x series
+# COLMAP 4.2.1 builds against (11). Mismatched internals cannot share registered
+# types, so pycolmap cost functions could no longer be added to a pyceres
+# Problem -- which is exactly what utils/bundle_adjuster.py does.
 RUN set -eux; \
     cd /tmp/build; \
-    git clone --depth 1 --branch v2.5 https://github.com/cvg/pyceres.git; \
+    git clone https://github.com/cvg/pyceres.git; \
     cd pyceres; \
+    git checkout 7339d790f364accf3e8f2204d2342a621516a359; \
+    # Work around a pybind11>=3.0 strict-return-type-deduction build failure in
+    # CostFunction::evaluate's lambda (two branches returning differently-typed
+    # py::tuple specializations); not yet fixed upstream.
+    sed -i \
+      -e 's/return py::make_tuple(residuals, jacobians);/return py::tuple(py::make_tuple(residuals, jacobians));/' \
+      -e 's/return py::make_tuple(py::none(), py::none());/return py::tuple(py::make_tuple(py::none(), py::none()));/' \
+      _pyceres/core/cost_functions.h; \
     python3 -m pip install .; \
     cd /; \
     rm -rf /tmp/build/*
@@ -128,14 +162,14 @@ RUN set -eux; \
 # COLMAP (+ its Python bindings)
 RUN set -eux; \
     cd /tmp/build; \
-    git clone https://github.com/colmap/colmap.git; \
+    git clone --depth 1 --branch 4.2.1 https://github.com/colmap/colmap.git; \
     cd colmap; \
-    git checkout 20b2777186654f20745f6c57974924d145bbbd6f; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \
       -DCUDA_ENABLED=ON \
       -DBLA_VENDOR=Intel10_64lp \
+      -DCOLMAP_HASH_MAP_BACKEND=STD \
       -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"; \
     ninja -j"$(nproc)"; \
     ninja install; \
