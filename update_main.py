@@ -1,3 +1,4 @@
+from utils.capture_identity import sort_capture_paths
 from pathlib import Path
 import argparse
 import os
@@ -22,9 +23,8 @@ def main(args):
     # Find all stitch paths
     _, dataset_paths = get_data_paths(args.data_path, "update_refinement")
 
-    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
-    # Starting with oldest scan keeps the origin portal consistent.
-    dataset_paths.sort()
+    # Recording time chooses the origin; UUID lexical order has no time meaning.
+    dataset_paths = sort_capture_paths(dataset_paths, args.data_path.parent.parent, logger)
     
     if dataset_paths:
         logger.info(f"Found {len(dataset_paths)} dataset paths for stitching:")

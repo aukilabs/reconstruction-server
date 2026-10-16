@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Error, Result};
 use node_host::auki_sdk::DataMetadata;
+use node_host::capture_identity::{capture_id, ensure_refined_capture_metadata};
 use node_host::{TaskContext, TaskIo};
 use tokio::fs;
 use tracing::info;
@@ -48,13 +49,14 @@ pub async fn materialize_refined_scans(
             ));
         }
 
-        let meta = match resolve_by_name_and_type(io, &domain_id, name, "refined_scan_zip")
+        // Canonical COLMAP/manifest inputs are handled below; errors fetching an
+        // actual refined scan must not silently drop it from the update.
+        if !name.starts_with("refined_scan_") {
+            continue;
+        }
+        let meta = resolve_by_name_and_type(io, &domain_id, name, "refined_scan_zip")
             .await
-            .with_context(|| format!("resolve refined scan name {}", name))
-        {
-            Ok(meta) => meta,
-            Err(_) => continue,
-        };
+            .with_context(|| format!("resolve refined scan name {}", name))?;
 
         info!(
             target: "runner_reconstruction_update",
@@ -64,6 +66,9 @@ pub async fn materialize_refined_scans(
         );
 
         let scan_name = strip_refined_prefix(name);
+        if capture_id(&scan_name).is_none() {
+            return Err(anyhow!("invalid refined capture name: {}", name));
+        }
         let dataset_dir = workspace.datasets().join(&scan_name);
         fs::create_dir_all(&dataset_dir)
             .await
@@ -95,6 +100,8 @@ pub async fn materialize_refined_scans(
                 refined_sfm_dir.display()
             ));
         }
+
+        ensure_refined_capture_metadata(io, &scan_name, &refined_sfm_dir).await?;
 
         scans.push(MaterializedRefinedScan {
             name: name.to_string(),

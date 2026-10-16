@@ -183,6 +183,7 @@ enum Mode {
     Succeed,
     Fail,
     WaitForCancel,
+    RecoverCaptureMetadata,
 }
 
 struct Scripted {
@@ -198,6 +199,11 @@ impl NodeRunner for Scripted {
 
     async fn run(&self, task: &TaskContext, io: &TaskIo) -> anyhow::Result<()> {
         self.runs.fetch_add(1, Ordering::SeqCst);
+        if self.mode == Mode::RecoverCaptureMetadata {
+            verify_capture_metadata_recovery(io)
+                .await
+                .expect("capture metadata recovery");
+        }
         if self.mode == Mode::WaitForCancel {
             task.cancelled().await;
             anyhow::bail!("task cancelled: python execution");
@@ -226,6 +232,50 @@ impl NodeRunner for Scripted {
         }
         Ok(())
     }
+}
+
+async fn verify_capture_metadata_recovery(io: &TaskIo) -> anyhow::Result<()> {
+    use node_host::capture_identity::{ensure_refined_capture_metadata, CAPTURE_METADATA_FILE};
+    let root = tempfile::tempdir()?;
+    for id in [
+        "2024-01-02_03-04-05",
+        "8c4869c0-99c5-4515-8545-e3674d383338",
+    ] {
+        let sfm = root.path().join(id);
+        tokio::fs::create_dir(&sfm).await?;
+        // This represents an old refined ZIP without capture_metadata.json.
+        ensure_refined_capture_metadata(io, id, &sfm).await?;
+        let metadata: Value =
+            serde_json::from_slice(&tokio::fs::read(sfm.join(CAPTURE_METADATA_FILE)).await?)?;
+        assert_eq!(
+            metadata,
+            json!({"captureId":id,"scanStartTime":"2026-10-13T12:34:56Z"})
+        );
+        assert!(!sfm.join(".source_capture_manifest.json").exists());
+        // Once recovered, cached metadata suffices without another Domain lookup.
+        ensure_refined_capture_metadata(io, id, &sfm).await?;
+    }
+    for (id, succeeds) in [
+        ("2024-01-03_03-04-05", true), // Deleted legacy manifest: time stays unknown.
+        ("7d909fbe-20fa-4a13-8f88-aa5d8b91ceef", false), // UUID time is required.
+        ("2024-01-04_03-04-05", false), // Authorization errors are not missing data.
+        ("2024-01-05_03-04-05", false), // Nor are server failures.
+    ] {
+        let sfm = root.path().join(id);
+        tokio::fs::create_dir(&sfm).await?;
+        assert_eq!(
+            ensure_refined_capture_metadata(io, id, &sfm).await.is_ok(),
+            succeeds
+        );
+        if succeeds {
+            let metadata: Value =
+                serde_json::from_slice(&tokio::fs::read(sfm.join(CAPTURE_METADATA_FILE)).await?)?;
+            assert_eq!(metadata, json!({"captureId":id,"scanStartTime":null}));
+        } else {
+            assert!(!sfm.join(CAPTURE_METADATA_FILE).exists());
+        }
+    }
+    Ok(())
 }
 
 /// A running claim loop over one scripted runner.
@@ -390,4 +440,62 @@ async fn an_existing_artifact_is_replaced_by_id() {
         .await;
     host.stop().await;
     assert!(replace.calls() >= 1);
+}
+
+#[tokio::test]
+async fn old_refined_caches_recover_time_without_hiding_domain_errors() {
+    let fixture = Fixture::new();
+    fixture.mock_lease_and_domain();
+    let mut lookups = Vec::new();
+    for id in [
+        "2024-01-02_03-04-05",
+        "8c4869c0-99c5-4515-8545-e3674d383338",
+    ] {
+        let data_id = Uuid::new_v4();
+        let name = format!("dmt_manifest_{id}");
+        let body = json!({"id":format!("dmt_scan_{id}"),"scanStartTime":"2026-10-13T12:34:56Z","deviceInfo":"must not enter the cache"}).to_string();
+        lookups.push(fixture.server.mock(|when, then| {
+            when.method(GET)
+                .path(fixture.data_path())
+                .query_param("name", &name)
+                .query_param("data_type", "dmt_manifest_json");
+            then.header("content-type", "application/json").json_body(
+                json!({"data":[fixture.metadata(data_id, &name, "dmt_manifest_json", body.len())]}),
+            );
+        }));
+        fixture.server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("{}/{}", fixture.data_path(), data_id))
+                .query_param("raw", "true");
+            then.body(&body);
+        });
+    }
+    for (id, status) in [
+        ("2024-01-03_03-04-05", 404),
+        ("7d909fbe-20fa-4a13-8f88-aa5d8b91ceef", 404),
+        ("2024-01-04_03-04-05", 403),
+        ("2024-01-05_03-04-05", 503),
+    ] {
+        fixture.server.mock(|when, then| {
+            when.method(GET)
+                .path(fixture.data_path())
+                .query_param("name", format!("dmt_manifest_{id}"));
+            then.status(status);
+        });
+    }
+    let complete = fixture.server.mock(|when, then| {
+        when.method(POST)
+            .path(format!("/tasks/{}/complete", fixture.task));
+        then.status(200);
+    });
+    let host = Host::start(&fixture, Mode::RecoverCaptureMetadata);
+    host.wait("metadata recovery and completion", |_| {
+        complete.calls() >= 1
+    })
+    .await;
+    host.stop().await;
+    // Each run reads each source manifest only once; the second call uses the cache.
+    for lookup in lookups {
+        assert_eq!(lookup.calls(), complete.calls());
+    }
 }
