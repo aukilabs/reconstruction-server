@@ -1,0 +1,46 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Navmesh spike overlays</title>
+  <style>
+    body { margin: 0; background: #0b0d10; color: #e8eef7; font-family: ui-sans-serif, system-ui, sans-serif; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    .muted { color: #9aa6b5; font-size: 13px; line-height: 1.45; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 12px; }
+    figure { margin: 0; background: #151a22; border: 1px solid #2a313c; border-radius: 8px; padding: 8px; }
+    img { width: 100%; height: auto; image-rendering: pixelated; background: #000; }
+    figcaption { margin-top: 6px; font-size: 12px; color: #9aa6b5; }
+    a { color: #9fd0ff; }
+    .cta {
+      display: inline-block; margin: 10px 0 4px; padding: 8px 14px;
+      background: #1a222c; border: 1px solid #3a4a5c; border-radius: 8px;
+      color: #e8eef7; text-decoration: none; font-size: 14px; font-weight: 600;
+    }
+    .cta:hover { background: #243040; border-color: #5a7a9c; }
+  </style>
+</head>
+<body>
+  <h1>Grocery navmesh spike — top-down overlays</h1>
+  <p class="muted">Mesh: stronger carve no-floaters · remapped to Y-up · Recast bake · 3D viewer overlays TSDF global at 50% · <a href="summary.json">summary.json</a></p>
+  <p>
+    <a class="cta" href="viewer.html">View Recast navmesh in 3D</a>
+    <span class="muted">
+      · <a href="viewer.html?mesh=nav_floor.ply">floor mesh</a>
+      · <a href="nav_floor.ply" download>download floor PLY</a>
+      · <a href="navmesh_recast.ply" download>download Recast PLY</a>
+      · <a href="navmesh_recast.bin" download>Detour .bin</a>
+      · <a href="../">mesh gallery</a>
+    </span>
+  </p>
+  <p class="muted">Legend (overlay_all): blue≈walkable · yellow≈seeds · red≈blockers · green≈floor evidence</p>
+  <div class="grid">
+    <figure><img src="overlay_all.png" alt="all" /><figcaption>overlay_all</figcaption></figure>
+    <figure><img src="overlay_walkable.png" alt="walk" /><figcaption>overlay_walkable</figcaption></figure>
+    <figure><img src="overlay_evidence.png" alt="ev" /><figcaption>overlay_evidence</figcaption></figure>
+    <figure><img src="overlay_blockers.png" alt="blk" /><figcaption>overlay_blockers</figcaption></figure>
+    <figure><img src="overlay_seeds.png" alt="seed" /><figcaption>overlay_seeds</figcaption></figure>
+  </div>
+</body>
+</html>

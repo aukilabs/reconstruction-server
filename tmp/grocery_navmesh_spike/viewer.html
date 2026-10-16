@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Navmesh 3D viewer</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #0b0d10; font-family: ui-sans-serif, system-ui, sans-serif; }
+    #c { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 2;
+      background: rgba(12, 14, 18, 0.78); border: 1px solid #2a313c;
+      border-radius: 10px; padding: 10px 12px; color: #e8eef7;
+      font-size: 13px; line-height: 1.45; backdrop-filter: blur(8px);
+      max-width: min(420px, calc(100vw - 24px));
+    }
+    #hud b { color: #9fd0ff; }
+    #hud .muted { color: #9aa6b5; }
+    #hud .err { color: #ff8f8f; }
+    #hud a { color: #9fd0ff; }
+    #hud label { display: block; margin-top: 8px; font-size: 12px; color: #9aa6b5; }
+    #hud label.row {
+      display: flex; align-items: center; gap: 8px; color: #e8eef7; font-size: 13px;
+      cursor: pointer;
+    }
+    #hud select {
+      margin-top: 4px; width: 100%; max-width: 280px;
+      background: #1a222c; color: #e8eef7; border: 1px solid #2a313c;
+      border-radius: 6px; padding: 4px 6px; font-size: 12px;
+    }
+    #hud button {
+      margin-top: 8px; margin-right: 6px; background: #1a222c; color: #c8d4e4;
+      border: 1px solid #2a313c; border-radius: 6px;
+      padding: 4px 8px; font-size: 12px; cursor: pointer;
+    }
+    #hud button:hover { background: #243040; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div><b id="title">Navmesh</b> · Y-up</div>
+    <div class="muted">Orbit drag · scroll zoom · right-drag pan</div>
+    <label for="meshPick">Nav / floor mesh
+      <select id="meshPick">
+        <option value="navmesh_recast.ply" selected>Recast navmesh</option>
+        <option value="nav_floor.ply">Floor (pre-Recast)</option>
+      </select>
+    </label>
+    <label class="row" style="margin-top:10px">
+      <input type="checkbox" id="showTsdf" checked />
+      Overlay TSDF global (50%)
+    </label>
+    <label class="row">
+      <input type="checkbox" id="showTraj" checked />
+      Camera trajectories
+    </label>
+    <div class="muted" style="margin-top:6px">
+      <a href="./">← overlays</a>
+      · <a id="dl" href="navmesh_recast.ply" download>download PLY</a>
+      · <a href="../">mesh gallery</a>
+    </div>
+    <button type="button" id="resetView">Reset view</button>
+    <div id="status" class="muted">Loading…</div>
+  </div>
+  <canvas id="c"></canvas>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // Gallery PLY is COLMAP +X-up; nav floor / Recast / traj are Y-up.
+    const TSDF_URL = new URL(
+      "../da3_global_tsdf_colored_undecimated.ply",
+      window.location.href
+    ).href;
+    const TRAJ_URL = new URL(
+      "../traj_global_aligned.json",
+      window.location.href
+    ).href;
+    const BLOB_RADIUS = 0.04;
+    const BLOB_SEGMENTS = 8;
+
+    const statusEl = document.getElementById("status");
+    const titleEl = document.getElementById("title");
+    const dlEl = document.getElementById("dl");
+    const pickEl = document.getElementById("meshPick");
+    const showTsdfEl = document.getElementById("showTsdf");
+    const showTrajEl = document.getElementById("showTraj");
+    const canvas = document.getElementById("c");
+
+    const COLORS = {
+      "navmesh_recast.ply": 0x3ecf8e,
+      "nav_floor.ply": 0x4a9eff,
+    };
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.sortObjects = true;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d10);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 5000);
+    camera.up.set(0, 1, 0);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.screenSpacePanning = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const key = new THREE.DirectionalLight(0xffffff, 0.9);
+    key.position.set(2, 5, 3);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xb7d0ff, 0.35);
+    fill.position.set(-3, 1, -2);
+    scene.add(fill);
+    scene.add(new THREE.AxesHelper(1.5));
+
+    let root = null;
+    let tsdfRoot = null;
+    let trajRoot = null;
+    let tsdfReady = false;
+    let trajReady = false;
+    let trajNote = "";
+    let navLabel = "";
+    const loader = new PLYLoader();
+
+    function remapColmapXUpToYUp(geometry) {
+      const pos = geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        // (x, y, z) → (−y, x, z)
+        pos.setXYZ(i, -y, x, z);
+      }
+      pos.needsUpdate = true;
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+    }
+
+    function fitCamera(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      if (tsdfRoot && tsdfRoot.visible) {
+        box.union(new THREE.Box3().setFromObject(tsdfRoot));
+      }
+      if (trajRoot && trajRoot.visible) {
+        box.union(new THREE.Box3().setFromObject(trajRoot));
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z) * 0.5 || 1;
+      const dist = (radius / Math.tan((camera.fov * Math.PI) / 360)) * 1.6;
+      camera.near = Math.max(dist / 200, 0.001);
+      camera.far = dist * 40;
+      camera.updateProjectionMatrix();
+      camera.position.set(center.x, center.y + dist * 0.45, center.z + dist);
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    function setStatus(msg, isErr = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isErr ? "err" : "muted";
+    }
+
+    function updateStatus() {
+      const parts = [];
+      if (navLabel) parts.push(navLabel);
+      if (tsdfReady && showTsdfEl.checked) parts.push("TSDF 50%");
+      else if (tsdfReady) parts.push("TSDF hidden");
+      else parts.push("TSDF loading…");
+      if (trajReady && showTrajEl.checked) parts.push(trajNote || "traj");
+      else if (trajReady) parts.push("traj hidden");
+      else if (trajNote) parts.push(trajNote);
+      setStatus(parts.join(" · ") + " · +Y up");
+    }
+
+    function colorFromRgb(rgb) {
+      const [r, g, b] = rgb || [1, 0.6, 0.2];
+      return new THREE.Color(r, g, b);
+    }
+
+    function buildTrajectoryRoot(trajDoc) {
+      const group = new THREE.Group();
+      group.name = "trajectory";
+      group.renderOrder = 3;
+      let nCams = 0;
+      let nPolys = 0;
+      for (const poly of trajDoc.polylines || []) {
+        const pts = poly.positions || [];
+        if (pts.length < 1) continue;
+        nPolys += 1;
+        nCams += pts.length;
+        const color = colorFromRgb(poly.color);
+        const polyGroup = new THREE.Group();
+        polyGroup.name = poly.id || "scan";
+
+        const positions = new Float32Array(pts.length * 3);
+        for (let i = 0; i < pts.length; i++) {
+          positions[i * 3] = pts[i][0];
+          positions[i * 3 + 1] = pts[i][1];
+          positions[i * 3 + 2] = pts[i][2];
+        }
+
+        if (pts.length >= 2) {
+          const lineGeo = new THREE.BufferGeometry();
+          lineGeo.setAttribute(
+            "position",
+            new THREE.BufferAttribute(positions.slice(), 3)
+          );
+          polyGroup.add(
+            new THREE.Line(
+              lineGeo,
+              new THREE.LineBasicMaterial({ color })
+            )
+          );
+        }
+
+        const sphereGeo = new THREE.SphereGeometry(
+          BLOB_RADIUS,
+          BLOB_SEGMENTS,
+          BLOB_SEGMENTS
+        );
+        const inst = new THREE.InstancedMesh(
+          sphereGeo,
+          new THREE.MeshStandardMaterial({
+            color,
+            metalness: 0.1,
+            roughness: 0.45,
+            emissive: color.clone().multiplyScalar(0.25),
+          }),
+          pts.length
+        );
+        const m = new THREE.Matrix4();
+        for (let i = 0; i < pts.length; i++) {
+          m.makeTranslation(pts[i][0], pts[i][1], pts[i][2]);
+          inst.setMatrixAt(i, m);
+        }
+        inst.instanceMatrix.needsUpdate = true;
+        polyGroup.add(inst);
+        group.add(polyGroup);
+      }
+      group.userData.nCams = nCams;
+      group.userData.nPolys = nPolys;
+      return group;
+    }
+
+    async function loadTrajectory() {
+      try {
+        const trajDoc = await (await fetch(TRAJ_URL)).json();
+        trajRoot = buildTrajectoryRoot(trajDoc);
+        trajRoot.visible = showTrajEl.checked;
+        scene.add(trajRoot);
+        trajReady = true;
+        trajNote = `traj ${trajRoot.userData.nPolys} scans · ${trajRoot.userData.nCams} cams`;
+        updateStatus();
+      } catch (err) {
+        console.error(err);
+        trajNote = "traj failed";
+        updateStatus();
+      }
+    }
+
+    function disposeObject(obj) {
+      if (!obj) return;
+      scene.remove(obj);
+      obj.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+          else o.material.dispose();
+        }
+      });
+    }
+
+    function loadTsdfOverlay() {
+      setStatus("Loading TSDF global…");
+      loader.load(
+        TSDF_URL,
+        (geometry) => {
+          remapColmapXUpToYUp(geometry);
+          geometry.computeVertexNormals();
+          const hasColor = !!geometry.attributes.color;
+          const material = new THREE.MeshStandardMaterial({
+            color: hasColor ? 0xffffff : 0xb0b8c4,
+            vertexColors: hasColor,
+            metalness: 0.02,
+            roughness: 0.85,
+            transparent: true,
+            opacity: 0.5,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.renderOrder = 0;
+          tsdfRoot = new THREE.Group();
+          tsdfRoot.add(mesh);
+          tsdfRoot.visible = showTsdfEl.checked;
+          scene.add(tsdfRoot);
+          tsdfReady = true;
+          updateStatus();
+        },
+        (ev) => {
+          if (ev.total) {
+            setStatus(
+              `Loading TSDF… ${Math.round((100 * ev.loaded) / ev.total)}%`
+            );
+          }
+        },
+        (err) => {
+          console.error(err);
+          setStatus("Failed to load TSDF global overlay", true);
+        }
+      );
+    }
+
+    function loadMesh(name, refit = true) {
+      const url = new URL(name, window.location.href).href;
+      titleEl.textContent = name;
+      dlEl.href = name;
+      setStatus(`Loading ${name}…`);
+      disposeObject(root);
+      root = null;
+      loader.load(
+        url,
+        (geometry) => {
+          geometry.computeVertexNormals();
+          const color = COLORS[name] ?? 0x4a9eff;
+          const material = new THREE.MeshStandardMaterial({
+            color,
+            metalness: 0.05,
+            roughness: 0.65,
+            side: THREE.DoubleSide,
+            flatShading: true,
+            depthWrite: true,
+          });
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.renderOrder = 1;
+          const wire = new THREE.Mesh(
+            geometry,
+            new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              wireframe: true,
+              transparent: true,
+              opacity: name === "navmesh_recast.ply" ? 0.22 : 0.12,
+              depthWrite: false,
+            })
+          );
+          wire.renderOrder = 2;
+          root = new THREE.Group();
+          root.add(mesh);
+          root.add(wire);
+          scene.add(root);
+          if (refit) fitCamera(root);
+          const nTris = geometry.index
+            ? geometry.index.count / 3
+            : geometry.attributes.position.count / 3;
+          const kind =
+            name === "navmesh_recast.ply"
+              ? "Recast"
+              : "floor (pre-Recast)";
+          navLabel = `${kind} · ~${Math.round(nTris).toLocaleString()} tris`;
+          updateStatus();
+        },
+        (ev) => {
+          if (ev.total) {
+            setStatus(`Loading… ${Math.round((100 * ev.loaded) / ev.total)}%`);
+          }
+        },
+        (err) => {
+          console.error(err);
+          setStatus(`Failed to load ${name}`, true);
+        }
+      );
+    }
+
+    const params = new URLSearchParams(location.search);
+    const initial = params.get("mesh") || "navmesh_recast.ply";
+    if ([...pickEl.options].some((o) => o.value === initial)) {
+      pickEl.value = initial;
+    }
+    if (params.get("tsdf") === "0") showTsdfEl.checked = false;
+    if (params.get("traj") === "0") showTrajEl.checked = false;
+
+    loadTsdfOverlay();
+    loadTrajectory();
+    loadMesh(pickEl.value, true);
+
+    pickEl.addEventListener("change", () => {
+      const url = new URL(location.href);
+      url.searchParams.set("mesh", pickEl.value);
+      history.replaceState(null, "", url);
+      loadMesh(pickEl.value, false);
+    });
+
+    showTsdfEl.addEventListener("change", () => {
+      const url = new URL(location.href);
+      if (showTsdfEl.checked) url.searchParams.delete("tsdf");
+      else url.searchParams.set("tsdf", "0");
+      history.replaceState(null, "", url);
+      if (tsdfRoot) tsdfRoot.visible = showTsdfEl.checked;
+      updateStatus();
+    });
+
+    showTrajEl.addEventListener("change", () => {
+      const url = new URL(location.href);
+      if (showTrajEl.checked) url.searchParams.delete("traj");
+      else url.searchParams.set("traj", "0");
+      history.replaceState(null, "", url);
+      if (trajRoot) trajRoot.visible = showTrajEl.checked;
+      updateStatus();
+    });
+
+    document.getElementById("resetView").addEventListener("click", () => {
+      if (root) fitCamera(root);
+    });
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight, false);
+    });
+
+    (function tick() {
+      requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>

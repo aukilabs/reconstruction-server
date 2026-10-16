@@ -1,0 +1,16 @@
+{
+  "name": "grocery_navmesh_spike",
+  "version": "1.0.0",
+  "description": "Top-down floor evidence + wall blockers + trajectory-seeded flood fill on the locked global mesh.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "recast-navigation": "^0.43.1"
+  }
+}

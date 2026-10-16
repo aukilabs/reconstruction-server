@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+_dump_ply_geom.py
+*.ply
+*.bin
+overlay_*.png
+summary.json
