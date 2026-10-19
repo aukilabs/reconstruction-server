@@ -55,6 +55,9 @@ RUN set -eux; \
       gnupg \
       linux-libc-dev \
     ; \
+# Open3D's native module needs libusb at import time; the CUDA base does not ship it.
+# Remove once the Open3D wheel we pin declares this as a packaged dependency.
+    apt-get install -y --no-install-recommends libusb-1.0-0; \
     rm -rf /var/lib/apt/lists/*
 
 # Python toolchain + base Python deps
@@ -63,12 +66,22 @@ RUN set -eux; \
 # Remove the distro copies after the pip install, or both copies stay in the image.
     python3 -m pip install --upgrade pip 'setuptools>=78.1.1' 'wheel>=0.38.1'; \
     apt-get remove -y python3-pip python3-setuptools python3-wheel; \
+# Open3D floats on PyPI; pin so base rebuilds keep a known-good native ABI.
+# Bump deliberately when moving to a newer Open3D major.
+# Reconstruction also imports pyyaml/sklearn/pandas/pyquaternion/addict at runtime;
+# newer Open3D (and transitive OpenCV) wheels do not always pull them in.
+# Delete a package once an upstream dependency already requires a compatible release.
     python3 -m pip install "pybind11[global]==3.0.1" \
                            psutil gputil \
                            enlighten \
-                           open3d \
+                           'open3d==0.20.0' \
                            trimesh \
-                           alphashape
+                           alphashape \
+                           pyyaml \
+                           scikit-learn \
+                           pandas \
+                           pyquaternion \
+                           addict
 
 
 WORKDIR /tmp/build
@@ -165,11 +178,14 @@ RUN set -eux; \
     python3 -m pip install .; \
 # torch and hloc install older releases of these.
 # Delete a pin once those dependencies already require it.
+# OpenCV arrives transitively today; pin the major so rebuilds stay reproducible.
+# Bump deliberately when moving to a newer OpenCV major.
     python3 -m pip install \
       'pillow>=12.3' \
       'urllib3>=2.8' \
       'fsspec>=2026.6' \
-      'soupsieve>=2.8.4'; \
+      'soupsieve>=2.8.4' \
+      'opencv-python==5.0.0.93'; \
     cd /; \
     rm -rf /tmp/build/*
 
