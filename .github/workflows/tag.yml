@@ -30,9 +30,16 @@ jobs:
 
       - name: Docker build and push
         id: docker-build-and-push
+        env:
+          DOCKER_BUILDKIT: "1"
+          GLOBAL_AUKI_CHECKOUT_TOKEN: ${{ secrets.GLOBAL_AUKI_CHECKOUT_TOKEN }}
         run: |
-
+          if [ -z "${GLOBAL_AUKI_CHECKOUT_TOKEN}" ]; then
+            echo "::error::GLOBAL_AUKI_CHECKOUT_TOKEN is empty. Add this repo to that org secret's repository access."
+            exit 1
+          fi
           docker build \
+            --secret id=github_token,env=GLOBAL_AUKI_CHECKOUT_TOKEN \
             --build-arg "RECONSTRUCTION_VERSION=${{ github.ref_name }}" \
             -t "aukilabs/reconstruction-node:latest" \
             -t "aukilabs/reconstruction-node:${{ github.ref_name }}" \

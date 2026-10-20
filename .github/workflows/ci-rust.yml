@@ -36,6 +36,18 @@ jobs:
         with:
           workspaces: server/rust
 
+      - name: Auth git for private cargo deps
+        env:
+          GLOBAL_AUKI_CHECKOUT_TOKEN: ${{ secrets.GLOBAL_AUKI_CHECKOUT_TOKEN }}
+        run: |
+          if [ -z "${GLOBAL_AUKI_CHECKOUT_TOKEN}" ]; then
+            echo "::error::GLOBAL_AUKI_CHECKOUT_TOKEN is empty. Add this repo to that org secret's repository access."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${GLOBAL_AUKI_CHECKOUT_TOKEN}@github.com/".insteadOf "https://github.com/"
+          mkdir -p "${HOME}/.cargo"
+          printf '%s\n' '[net]' 'git-fetch-with-cli = true' >> "${HOME}/.cargo/config.toml"
+
       - name: Rust fmt check
         working-directory: server/rust
         run: cargo fmt --all --check
@@ -62,9 +74,21 @@ jobs:
 
       - name: Docker build and push
         id: docker-build-and-push
+        env:
+          DOCKER_BUILDKIT: "1"
+          GLOBAL_AUKI_CHECKOUT_TOKEN: ${{ secrets.GLOBAL_AUKI_CHECKOUT_TOKEN }}
         run: |
+          if [ -z "${GLOBAL_AUKI_CHECKOUT_TOKEN}" ]; then
+            echo "::error::GLOBAL_AUKI_CHECKOUT_TOKEN is empty. Add this repo to that org secret's repository access."
+            exit 1
+          fi
           IMAGE="aukilabs/reconstruction-node:${{ github.sha }}"
           echo "Building $IMAGE"
-          docker build --build-arg "RECONSTRUCTION_VERSION=0.0.0+${{ github.sha }}" -t "$IMAGE" -f docker/Dockerfile .
+          docker build \
+            --secret id=github_token,env=GLOBAL_AUKI_CHECKOUT_TOKEN \
+            --build-arg "RECONSTRUCTION_VERSION=0.0.0+${{ github.sha }}" \
+            -t "$IMAGE" \
+            -f docker/Dockerfile \
+            .
           echo "Pushing $IMAGE"
           docker push "$IMAGE"

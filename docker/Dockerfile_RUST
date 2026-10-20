@@ -5,10 +5,14 @@ ARG RECONSTRUCTION_VERSION=0.0.0-local
 FROM --platform=$BUILDPLATFORM rust:1.89-bookworm AS rust-build
 ARG RECONSTRUCTION_VERSION
 ENV RECONSTRUCTION_VERSION="${RECONSTRUCTION_VERSION}"
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /app
 ADD server/rust /app
 # Build release binary for the compute-node crate
-RUN cargo build --release -p bin
+RUN --mount=type=secret,id=github_token \
+    git config --global url."https://x-access-token:$(cat /run/secrets/github_token)@github.com/".insteadOf "https://github.com/" \
+    && cargo build --release -p bin \
+    && rm -f /root/.gitconfig
 
 FROM debian:bookworm-slim AS runtime
 
