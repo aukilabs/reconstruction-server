@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - develop
+      - chore/SC-10-rescan-pr99
     paths:
       - docker/Dockerfile.base
       - .github/workflows/build-base-image.yml
@@ -29,6 +30,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
+      - name: Image tags
+        id: tags
+        run: |
+          set -eu
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/${owner}/reconstruction-server-base:${GITHUB_SHA}"
+            case "${GITHUB_REF}" in
+              refs/heads/develop|refs/heads/main)
+                echo "ghcr.io/${owner}/reconstruction-server-base:latest"
+                ;;
+            esac
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Docker build
         uses: docker/build-push-action@v6
         with:
@@ -37,6 +54,4 @@ jobs:
           cache-to: type=gha,mode=max
           file: docker/Dockerfile.base
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/reconstruction-server-base:latest
-            ghcr.io/${{ github.repository_owner }}/reconstruction-server-base:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.tags }}
