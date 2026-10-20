@@ -55,6 +55,8 @@ RUN set -eux; \
       gnupg \
       linux-libc-dev \
     ; \
+# Open3D's native module needs libusb at import time; the CUDA base does not ship it.
+    apt-get install -y --no-install-recommends libusb-1.0-0; \
     rm -rf /var/lib/apt/lists/*
 
 # Python toolchain + base Python deps
@@ -66,9 +68,14 @@ RUN set -eux; \
     python3 -m pip install "pybind11[global]==3.0.1" \
                            psutil gputil \
                            enlighten \
-                           open3d \
+                           'open3d==0.20.0' \
                            trimesh \
-                           alphashape
+                           alphashape \
+                           pyyaml \
+                           scikit-learn \
+                           pandas \
+                           pyquaternion \
+                           addict
 
 
 WORKDIR /tmp/build
@@ -169,7 +176,8 @@ RUN set -eux; \
       'pillow>=12.3' \
       'urllib3>=2.8' \
       'fsspec>=2026.6' \
-      'soupsieve>=2.8.4'; \
+      'soupsieve>=2.8.4' \
+      'opencv-python==5.0.0.93'; \
     cd /; \
     rm -rf /tmp/build/*
 
