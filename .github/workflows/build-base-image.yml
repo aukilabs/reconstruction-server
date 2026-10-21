@@ -40,3 +40,11 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/reconstruction-server-base:latest
             ghcr.io/${{ github.repository_owner }}/reconstruction-server-base:${{ github.sha }}
+  scan:
+    name: Scan
+    needs: build-base-image
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-scan.yml
+    with:
+      image: ghcr.io/${{ github.repository_owner }}/reconstruction-server-base:${{ github.sha }}
