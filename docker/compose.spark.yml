@@ -1,0 +1,39 @@
+name: reconstruction-spark-dev
+
+services:
+  reconstruction-node:
+    image: ${RECONSTRUCTION_SPARK_IMAGE:-reconstruction-node:spark-dev}
+    platform: linux/arm64
+    container_name: reconstruction-spark-dev
+    # Credentials remain on the host and are supplied only at runtime.
+    env_file:
+      - ../.env
+    environment:
+      DDS_BASE_URL: https://dds.aukiverse.com
+      DMS_BASE_URL: https://dms.aukiverse.com/v1
+      CLIENT_ID: reconstruction-node/spark-uuid
+      LOCAL_RUNNER_CPU_WORKERS: "2"
+      GLOBAL_RUNNER_CPU_WORKERS: "2"
+      UPDATE_RUNNER_CPU_WORKERS: "2"
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PYTHONUNBUFFERED: "1"
+      RUST_LOG: info,auki_auth::machine::registration=debug
+      LOG_FORMAT: json
+    gpus: all
+    shm_size: 1gb
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 2m
+    volumes:
+      - jobs:/app/jobs
+      - model-cache:/home/reconstruction-server/.cache
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+
+volumes:
+  jobs:
+  model-cache:
