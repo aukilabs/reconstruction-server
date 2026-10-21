@@ -12,6 +12,7 @@ from utils.scan_alignment import (
     portal_alignment_metrics_to_dict,
 )
 from utils.io import read_portal_csv
+from utils.merge_features import merge_features_h5
 import logging
 from typing import Dict
 import pycolmap
@@ -137,6 +138,14 @@ def main(args):
     sfm_dir = output_path / "refined_sfm_combined"
     os.makedirs(sfm_dir, exist_ok=True)
     combined_rec.write(sfm_dir)
+
+    # Merge per-scan feature files for localization use
+    scan_feature_paths = [
+        job_root_path / "refined" / "local" / scan_id / "sfm" / "features.h5"
+        for scan_id in refined_aligned_scans.scan_ids
+    ]
+    merged_features_path = sfm_dir / "features.h5"
+    merge_features_h5(scan_feature_paths, merged_features_path)
     
     logger.info(f"Exporting colmap points to PLY")
     obs = pycolmap.ObservationManager(combined_rec)
