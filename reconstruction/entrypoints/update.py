@@ -5,7 +5,7 @@ import os
 from reconstruction.log import add_file_handler, setup_logger
 from reconstruction.io.scan import get_data_paths
 from reconstruction.layout import JobLayout
-from reconstruction.output.failure import write_fail_reason
+from reconstruction.output.failure import report_failure
 from reconstruction.pipeline.update.update import update_helper
 from reconstruction.output.pointcloud import post_process_ply
 
@@ -29,7 +29,7 @@ def main(args):
         update_refinement(args, layout, logger)
     except Exception as e:
         logger.error(f"Update refinement failed with exception: {e}")
-        write_fail_reason(layout.job_root, e, logger)
+        report_failure(layout, e, logger)
         raise e
 
 

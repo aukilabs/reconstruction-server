@@ -4,9 +4,8 @@ import argparse
 import re
 
 from reconstruction.layout import JobLayout
-from reconstruction.output.manifest import save_failed_manifest_json
 from reconstruction.log import setup_logger
-from reconstruction.output.failure import write_fail_reason
+from reconstruction.output.failure import report_failure
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
     """If job_root_path ends with <domain_uuid>/job_<uuid>, return (domain_id, job_id)."""
@@ -60,11 +59,7 @@ def handle_refinement_error(error, layout, logger):
         logger: Logger instance
     """
     logger.error(f"Refinement failed with exception: {error}")
-    write_fail_reason(layout.job_root, error, logger)
-
-    manifest_out_path = layout.job_manifest_json
-    logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
-    save_failed_manifest_json(manifest_out_path, layout.job_root, str(error))
+    report_failure(layout, error, logger)
 
 
 def run(args, refine):

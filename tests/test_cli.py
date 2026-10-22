@@ -60,6 +60,7 @@ class GlobalEntryPointTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertTrue((job_root / "fail_reason.txt").read_text().strip(), proc.stderr[-2000:])
             self.assertIn("Refinement failed", (job_root / "log.txt").read_text())
+            self.assertTrue((job_root / "job_manifest.json").exists())
 
 
 if __name__ == "__main__":

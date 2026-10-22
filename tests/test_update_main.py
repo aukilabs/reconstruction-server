@@ -1,4 +1,5 @@
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,7 @@ class UpdateMainFailureTests(unittest.TestCase):
             update.main(args)
         self.assertIn("no refined scans found", (self.job_root / "fail_reason.txt").read_text())
         self.assertIn("Update refinement failed", (self.job_root / "log.txt").read_text())
+        self.assertEqual(json.loads((self.job_root / "job_manifest.json").read_text())["jobStatus"], "failed")
 
     def test_pipeline_error_exits_non_zero(self):
         # A refined scan but no reference map under refined/global: update_helper raises.
