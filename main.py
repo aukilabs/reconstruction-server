@@ -149,11 +149,6 @@ def global_main_wrapper(args, logger):
     global_args = argparse.Namespace(
         data_dir=Path(args.job_root_path) / "datasets",
         output_path=Path(args.output_path) / "global",
-        use_refined_outputs=True,
-        add_3dpoints=True,
-        basic_stitch_only=False,
-        ply_downsample=0.03,
-        ply_remove_outliers=True,
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level,
