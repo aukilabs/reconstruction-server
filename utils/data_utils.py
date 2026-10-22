@@ -325,6 +325,16 @@ def save_failed_manifest_json(json_path, job_root_path, job_status_details):
     save_manifest_json({}, json_path, job_root_path, job_status="failed", job_progress=100, job_status_details=job_status_details)
 
 
+def write_fail_reason(job_root_path, error, logger):
+    # Write error to fail_reason.txt for the Rust runner to read
+    fail_reason_path = Path(job_root_path) / "fail_reason.txt"
+    try:
+        fail_reason_path.write_text(str(error), encoding="utf-8")
+        logger.info(f"Saved fail reason to: {fail_reason_path}")
+    except Exception as write_err:
+        logger.warning(f"Failed to write fail_reason.txt: {write_err}")
+
+
 def save_manifest_json(
     portal_poses, json_path, job_root_path,
     job_status=None, job_progress=None, job_status_details=None,

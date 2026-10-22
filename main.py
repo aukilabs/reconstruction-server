@@ -7,7 +7,7 @@ from local_main import main as local_main
 from global_main import main as global_main
 from topology_main import main as topology_main
 from occlusion_box import main as occlusion_main
-from utils.data_utils import save_failed_manifest_json, setup_logger
+from utils.data_utils import save_failed_manifest_json, setup_logger, write_fail_reason
 from utils.io import load_yaml, save_to_yaml
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
@@ -234,15 +234,8 @@ def handle_refinement_error(error, args, logger):
         logger: Logger instance
     """
     logger.error(f"Refinement failed with exception: {error}")
-    
-    # Write error to fail_reason.txt for the Rust runner to read
-    fail_reason_path = args.job_root_path / "fail_reason.txt"
-    try:
-        fail_reason_path.write_text(str(error), encoding="utf-8")
-        logger.info(f"Saved fail reason to: {fail_reason_path}")
-    except Exception as write_err:
-        logger.warning(f"Failed to write fail_reason.txt: {write_err}")
-    
+    write_fail_reason(args.job_root_path, error, logger)
+
     manifest_out_path = args.job_root_path / "job_manifest.json"
     logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
     save_failed_manifest_json(manifest_out_path, args.job_root_path, str(error))
