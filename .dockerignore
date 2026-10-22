@@ -1,0 +1,10 @@
+# Keep the build context small: Rust target dirs alone can be several GB.
+.git
+**/target
+**/__pycache__
+.venv
+jobs
+_local
+build
+# Native modules are rebuilt by CMake inside the image.
+**/*.so
