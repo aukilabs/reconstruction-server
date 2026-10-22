@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Set
 import itertools
 import pyceres
-from reconstruction.pipeline.update.update import transform_with_scale
+from reconstruction.geometry.pose import transform_with_scale
 from reconstruction.geometry.costs import QuaternionNormalizationCostFunction, TranslationPriorCostFunction
 from reconstruction.native.cost_functions import RelativeTransformationSim3CostFunction
 from reconstruction.pipeline.global_.alignment import AlignedScans

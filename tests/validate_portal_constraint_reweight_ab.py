@@ -31,7 +31,7 @@ from typing import Tuple
 import numpy as np
 import pycolmap
 
-from reconstruction.pipeline.update.update import transform_with_scale
+from reconstruction.geometry.pose import transform_with_scale
 from reconstruction.pipeline.global_.alignment import AlignedScans, align_scans
 from reconstruction.pipeline.global_.portal_metrics import PortalAlignmentMetrics, PortalSpreadRmse, compute_portal_spread_metrics, compute_portal_spread_rmse
 from reconstruction.pipeline.global_.refine import refine_alignment

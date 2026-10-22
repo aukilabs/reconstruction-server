@@ -7,31 +7,17 @@ import numpy as np
 import logging
 from dataclasses import dataclass
 
-from reconstruction.geometry.pose import mean_pose, convert_pose_opengl_to_colmap, convert_pose_colmap_to_opengl
+from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_opengl, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import parse_info_from_manifest
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
-
-# These are Sam's additions to io.py that will be merged there separately.
-# Import them so update_helper can use them.
+from reconstruction.pipeline.global_.alignment import NoOverlapException, floor_origin_portal_pose
 from reconstruction.pipeline.update.merge import merge_models, apply_similarity_to_new_model
 from reconstruction.io.colmap import validate_model_consistency
 from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
 
-
-# TODO remove in favor of scan_alignment.py
-class NoOverlapException(Exception):
-    def __init__(self, message='No overlaps!'):
-        # Call the base class constructor with the parameters it needs
-        super(NoOverlapException, self).__init__(message)
-
-floor_origin_portal_pose_GL = pycolmap.Rigid3d(
-    pycolmap.Rotation3d(np.array([-0.7071068, 0.0, 0.0, 0.7071068])),
-    np.array([0.0, 0.0, 0.0]))
-p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
-floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)
 
 
 @dataclass
@@ -66,8 +52,11 @@ def _calculate_mean_qr_poses(
             for qr_id, poses in detections_per_qr.items()}
 
 
-# TODO remove in favor of scan_alignment.py
-def _calculate_alignment_transform(
+# TODO(owner): pipeline.global_.alignment.calculate_alignment_transform does the same, except when
+# placed_portal is empty (the first chunk): global picks the first floor portal and flattens its
+# rotation, this uses the first portal as is. Update always aligns to a reference map that has
+# portals, so that branch is not reached here. Merge the two once that is confirmed.
+def _calculate_alignment_to_reference(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
     logger
@@ -96,11 +85,6 @@ def _calculate_alignment_transform(
         origin_portal_id = list(mean_qr_poses.keys())[0]
         return floor_origin_portal_pose * mean_qr_poses[origin_portal_id].inverse()
 
-
-def transform_with_scale(alignment_transform: pycolmap.Sim3d, pose: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
-    pose = pycolmap.Sim3d(1.0, pose.rotation, pose.translation)
-    pose = alignment_transform * pose
-    return pycolmap.Rigid3d(pose.rotation, pose.translation)
 
 
 def _initialize_paths(job_root_path: Path, function: str = "stitching_helper") -> Paths:
@@ -260,7 +244,7 @@ def update_helper(
         
         # Align the new reconstruction to the reference model using detected QR code portals as anchors.
         # This gives a rough alignment good enough for culling outdated geometry from the reference model.
-        alignment_mat = _calculate_alignment_transform(portals_u, portal_r, logger)
+        alignment_mat = _calculate_alignment_to_reference(portals_u, portal_r, logger)
         logger.info(f"Calculated alignment transform for update refinement: \n{alignment_mat.matrix()}")
         cams_u_aligned, imgs_u_aligned, pts_u_aligned = apply_similarity_to_new_model(cams_u, imgs_u, pts_u, alignment_mat.matrix())
 

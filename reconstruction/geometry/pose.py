@@ -166,3 +166,9 @@ def vec3_angle(v, w):
 def cam_center_from_extrinsics(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     # world->cam: x_c = R X + t; center C satisfies R C + t = 0 => C = -R^T t
     return -R.T @ t
+
+
+def transform_with_scale(alignment_transform: pycolmap.Sim3d, pose: pycolmap.Rigid3d) -> pycolmap.Rigid3d:
+    pose = pycolmap.Sim3d(1.0, pose.rotation, pose.translation)
+    pose = alignment_transform * pose
+    return pycolmap.Rigid3d(pose.rotation, pose.translation)

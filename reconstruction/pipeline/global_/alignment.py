@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 from dataclasses import dataclass
-from reconstruction.pipeline.update.update import transform_with_scale
+from reconstruction.geometry.pose import transform_with_scale
 from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, flatten_portal_rotation, is_portal_almost_flat, mean_pose
 from reconstruction.io.portals import portalPose, read_portal_csv
 
