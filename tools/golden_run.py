@@ -126,7 +126,9 @@ def stage_workspace(stage, scans, source, work_dir, domain_id):
 
 
 def stage_command(stage, workspace, job_name, domain_id, scans, python, workers):
-    """The argv built by build_python_args in runner-reconstruction-<stage>/src/lib.rs."""
+    """The runner's argv: `python -m reconstruction <stage>` (python.rs), then build_python_args
+    in runner-reconstruction-<stage>/src/lib.rs."""
+    entry = [python, "-m", "reconstruction", stage]
     if stage in ("local", "global"):
         args = [
             "--mode", f"{stage}_refinement",
@@ -138,9 +140,9 @@ def stage_command(stage, workspace, job_name, domain_id, scans, python, workers)
         ]
         if scans:
             args += ["--scans", *scans]
-        return [python, "main.py", *args]
+        return [*entry, *args]
     return [
-        python, "update_main.py",
+        *entry,
         "--data_path", str(workspace / "refined" / "local"),
         "--output_path", str(workspace / "refined" / "update"),
         "--domain_id", domain_id,

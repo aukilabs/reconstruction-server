@@ -2,6 +2,13 @@
 
 Developer tools. None of them run in production.
 
+- `golden_run.py`, `golden_compare.py`: the golden run, below.
+- `display_result.py`: shows a refined `sfm` folder and its portals in Open3D.
+- `plot_portals_points.py`: plots portal detections in image frames of a dataset.
+- `mp4debug.py`: counts the frames OpenCV reads from `.mp4` files.
+
+Run them from the repository root. `display_result.py` imports the `reconstruction` package, and running a file under `tools/` puts `tools/`, not the root, on `sys.path`, so set `PYTHONPATH=.` (the image sets `PYTHONPATH=/app`).
+
 ## Golden run
 
 The golden run catches behaviour changes in the Python pipeline during refactors. It runs local, global and update on a fixed dataset the way the Rust runners do, then summarizes what should survive a refactor.

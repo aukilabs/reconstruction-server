@@ -29,16 +29,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# occlusion_box.py; disabled in main.py
+# reconstruction.pipeline.occlusion; disabled in the global entry point
 occlusion = ["scikit-learn", "alphashape", "shapely", "matplotlib"]
 test = ["pytest"]
 
-[tool.setuptools]
-# The pipeline is still a flat layout; list it explicitly so setuptools does not try to
-# auto-discover packages among server/, docker/, tests/ and the rest.
-py-modules = ["main", "local_main", "global_main", "update_main", "topology_main", "occlusion_box"]
-# src/ holds the pybind11 modules, built in place by CMake (imported as src.<module>).
-packages = ["utils", "src"]
+[tool.setuptools.packages.find]
+# reconstruction/native/ holds the pybind11 modules that CMake builds from cpp/.
+include = ["reconstruction*"]
 
 [tool.pytest.ini_options]
 # Tests are plain unittest; pytest is optional. Mirrors `PYTHONPATH=. python3 -m unittest discover -s tests`.

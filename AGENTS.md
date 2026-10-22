@@ -20,9 +20,10 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
   - `bin/` builds the executable that loads configuration, registers runners, and drives the host loop.
   - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities.
   - `node-host/` runs the node on the Auki SDK task runtime (`auki-sdk`, pinned git revision), which owns DDS registration, DMS leasing/heartbeats and auth; `node-host` provides config, the claim loop, Domain IO and DMS receipts with the wire behaviour of the former `posemesh-compute-node` 0.3.2 host (pinned by `node-host/tests`).
-- Root Python files (`main.py`, `local_main.py`, `global_main.py`, `topology_main.py`, `occlusion_box.py`) and `utils/` hold the reconstruction pipeline code invoked by the runners.
-- `src/` and `CMakeLists.txt` hold C++/pybind components used by the Python pipeline.
-- `docker/Dockerfile` builds the Rust release binary, copies Python/C++ assets into `/app`, builds the C++ bindings, and runs `/app/compute-node` as a non-root user.
+- `reconstruction/` is the Python pipeline package. The runners start it as `python3 -m reconstruction {local,global,update} <args>` (`reconstruction/__main__.py`); the stage entry points are in `reconstruction/entrypoints/`. Never run a file from inside the package directory or put `reconstruction/` itself on `sys.path`.
+- `cpp/` and `CMakeLists.txt` hold C++/pybind components used by the Python pipeline; CMake builds them into `reconstruction/native/`.
+- `tests/` holds the Python unit tests (unittest; run inside the image with `PYTHONPATH=/app python3 -m unittest discover -s tests -p "test_*.py"`). `tools/` holds developer tools, including the golden run (`tools/README.md`).
+- `docker/Dockerfile` builds the Rust release binary, copies Python/C++ assets into `/app` (with `PYTHONPATH=/app`), builds the C++ bindings, and runs `/app/compute-node` as a non-root user.
 - `charts/reconstruction-server/` contains the Helm chart wrapper and environment values for deployed reconstruction-server instances.
 - `.devcontainer/` provides the GPU-capable development container and build helpers.
 
