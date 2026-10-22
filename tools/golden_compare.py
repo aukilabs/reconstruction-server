@@ -45,8 +45,17 @@ def compare(a, b, tolerances):
     for stage in sorted(set(a) & set(b)):
         sa, sb = a[stage], b[stage]
         for field in EXACT_FIELDS:
-            if sa.get(field) != sb.get(field):
-                problems.append(f"[{stage}] {field}: {sa.get(field)!r} vs {sb.get(field)!r}")
+            fa, fb = sa.get(field), sb.get(field)
+            if fa == fb:
+                continue
+            if isinstance(fa, dict) and isinstance(fb, dict):
+                for key in sorted(set(fa) | set(fb)):
+                    if fa.get(key) != fb.get(key):
+                        problems.append(f"[{stage}] {field} {key}: {fa.get(key)!r} vs {fb.get(key)!r}")
+            elif isinstance(fa, list) and isinstance(fb, list):
+                problems.append(f"[{stage}] {field}: only in A {sorted(set(fa) - set(fb))}, only in B {sorted(set(fb) - set(fa))}")
+            else:
+                problems.append(f"[{stage}] {field}: {fa!r} vs {fb!r}")
 
         files_a, files_b = sa["files"], sb["files"]
         for path in sorted(set(files_a) - set(files_b)):
