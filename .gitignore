@@ -15,3 +15,6 @@ server/rust/server-bin/jobs
 server/rust/data
 *.so
 .env
+
+# Golden-run data and outputs (tools/README.md)
+/_local

@@ -1,0 +1,8 @@
+{
+  "local:sfm.num_points3D": {"rel": 0.06},
+  "local:sfm.mean_reproj_error": {"rel": 0.015},
+  "update:sfm.num_points3D": {"rel": 0.06},
+  "update:sfm.mean_reproj_error": {"rel": 0.015},
+  "update:sfm.num_reg_images": {"rel": 0.01},
+  "update:ply.vertices": {"rel": 0.012}
+}
