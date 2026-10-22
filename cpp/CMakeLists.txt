@@ -21,7 +21,7 @@ pybind11_add_module(
 
 target_link_libraries(cost_functions PUBLIC Eigen3::Eigen Ceres::ceres sophus)
 set_target_properties(cost_functions PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-    ${PROJECT_SOURCE_DIR}/src)
+    ${PROJECT_SOURCE_DIR}/reconstruction/native)
 
 pybind11_add_module(
     ply_export
@@ -29,7 +29,7 @@ pybind11_add_module(
 
 target_link_libraries(ply_export PUBLIC colmap::colmap)
 set_target_properties(ply_export PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-    ${PROJECT_SOURCE_DIR}/src)
+    ${PROJECT_SOURCE_DIR}/reconstruction/native)
 
 pybind11_add_module(
     reconstruction_merge
@@ -37,4 +37,4 @@ pybind11_add_module(
 
 target_link_libraries(reconstruction_merge PUBLIC colmap::colmap)
 set_target_properties(reconstruction_merge PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-    ${PROJECT_SOURCE_DIR}/src)
+    ${PROJECT_SOURCE_DIR}/reconstruction/native)
