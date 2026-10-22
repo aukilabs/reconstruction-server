@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 
+from reconstruction.log import configure
 from reconstruction.pipeline.topology.mesh import main as topology_main
 
 
@@ -17,4 +18,5 @@ def parse_args(argv, prog=None):
 
 
 def main(args):
+    configure()
     topology_main(args)

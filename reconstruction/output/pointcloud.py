@@ -4,14 +4,13 @@ import subprocess
 import shutil
 import numpy as np
 import logging
-import sys
 import pycolmap
 
 # Reduce decimals making the ply file smaller.
 # Also changes the vertex type to float instead of double, which is required by draco encoding.
 def reduce_decimals_ply(ply_path, reduced_ply_path, decimals=2, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     parsing_header = True
     with open(reduced_ply_path, "w") as reduced_ply:
@@ -151,10 +150,7 @@ def post_process_ply(output_path, logger=None):
 
 def export_rec_as_ply(rec, path, convert_to_opengl=False, logger=None):
     if logger is None:
-        logger = logging.getLogger("data_utils")
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger(__name__)
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
     logger.info(f"convert_to_opengl = {convert_to_opengl}")

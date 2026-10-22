@@ -19,7 +19,7 @@ def carve_outdated_reference_geometry(
     Uses new free-space rays to delete conflicting points from the reference model.
     """
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     # 1. Map voxels to reference point IDs
     voxel_to_ref_pids = defaultdict(list)

@@ -1,10 +1,11 @@
 """Plumbing shared by the local and global entry points: arguments, logging, failure handling."""
 from pathlib import Path
 import argparse
+import logging
 import re
 
 from reconstruction.layout import JobLayout
-from reconstruction.log import setup_logger
+from reconstruction.log import configure
 from reconstruction.output.failure import report_failure
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
@@ -72,14 +73,15 @@ def run(args, refine):
     layout = JobLayout(args.job_root_path, args.output_path)
     args.output_path = layout.refined
 
-    logger = setup_logger(
-        name='main',
+    # Every reconstruction.* logger now writes to stderr and the job's log.txt.
+    configure(
         log_file=layout.log_txt,
         domain_id=args.domain_id,
         job_id=args.job_id,
         level=args.log_level,
         log_format=args.log_format
     )
+    logger = logging.getLogger(refine.__module__)
 
     # The runner currently derives scans from datasets to avoid stale client-provided scan lists.
     # Get available scans from datasets directory

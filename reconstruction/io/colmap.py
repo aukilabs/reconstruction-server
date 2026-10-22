@@ -110,7 +110,7 @@ def write_next_bytes(fid, data, format_char_sequence, endian_character="<"):
 
 def detect_model_format(path, ext, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     if (
         os.path.isfile(os.path.join(path, "cameras" + ext))
@@ -495,7 +495,7 @@ def validate_model_consistency(cameras: Dict[int, 'Camera'], images: Dict[int, '
     Returns True if valid, False if inconsistencies were detected.
     """
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     valid = True
     # Camera references in images
@@ -557,7 +557,7 @@ def validate_model_consistency(cameras: Dict[int, 'Camera'], images: Dict[int, '
 
 def read_model(path, ext="", with_points3D=True, validate_consistency=True, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     # try to detect the extension automatically
     if ext == "":
@@ -611,7 +611,7 @@ def write_model_with_rigs(cameras, images, points3D, path, logger=None):
     CreateFrameForImage), then writes all five files.
     """
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
     write_model(cameras, images, points3D, path)
     rec = pycolmap.Reconstruction()
     rec.read(str(path))

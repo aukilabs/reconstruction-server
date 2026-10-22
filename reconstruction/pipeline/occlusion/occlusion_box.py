@@ -6,8 +6,8 @@ import time
 import os
 import yaml
 import logging
-import sys
 
+from reconstruction.log import configure
 from reconstruction.io.model import Model
 from reconstruction.io.config import load_yaml, save_to_yaml
 from reconstruction.pipeline.occlusion.boxes import save_meshes_obj
@@ -43,10 +43,7 @@ def setview_and_capture(vis, jfile, output_file):
 
 def main(config, logger=None):
     if logger is None:
-        logger = logging.getLogger('occlusion_box')
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger(__name__)
 
     # Date and time 
     current_datetime = datetime.datetime.now()
@@ -264,6 +261,7 @@ def main(config, logger=None):
 
 if __name__ == "__main__":
 
+    configure()
     args = parse_arguments()
     config = load_yaml(args.config)
     save_to_yaml(config)

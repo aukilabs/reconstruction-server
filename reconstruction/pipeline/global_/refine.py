@@ -1,7 +1,6 @@
 """Ceres refinement of the scan alignment."""
 import pycolmap
 import numpy as np
-import sys
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Set
@@ -261,10 +260,7 @@ def refine_alignment(
     enable_portal_reweight: bool = True,
 ) -> Tuple[AlignedScans, PortalAlignmentMetrics]:
     if logger is None:
-        logger = logging.getLogger("scan_alignment")
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger(__name__)
     logger.info("Going to optimize chunk alignment...")
 
     first_result = _run_ceres_alignment_solve(aligned_scans, logger)

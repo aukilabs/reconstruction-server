@@ -125,7 +125,7 @@ def assign_cluster_colors(pcd, labels):
 
 def find_best_fit_alphashape(points, alpha=0.5, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     x_arr = points[:, 0]
     y_arr = points[:, 1]
@@ -148,7 +148,7 @@ def find_best_fit_alphashape(points, alpha=0.5, logger=None):
 
 def find_best_fit_alphashape_optimized(points, alpha=2.0, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     x_arr = points[:, 0]
     y_arr = points[:, 1]
@@ -187,7 +187,7 @@ def find_best_fit_alphashape_optimized(points, alpha=2.0, logger=None):
 
 def find_best_fit_convexhull(points, logger=None):
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger(__name__)
 
     x_arr = points[:, 0]
     y_arr = points[:, 1]

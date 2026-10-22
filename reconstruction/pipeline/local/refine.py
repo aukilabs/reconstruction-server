@@ -9,7 +9,7 @@ from reconstruction.pipeline.local.triangulation import process_features_and_mat
 from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, mean_pose, rectify_portal_pose
 from reconstruction.io.scan import load_scan
 from reconstruction.pipeline.local.qr import precompute_arkit_offsets, get_world_space_qr_codes
-from reconstruction.log import setup_logger
+from reconstruction.log import LOCAL_REFINEMENT, setup_logger
 from reconstruction.io.portals import save_portal_csv
 from reconstruction.preprocess.frames import process_frames
 
@@ -310,7 +310,7 @@ def refine_dataset(
 
     # Setup Logging
     logger = setup_logger(
-        name="refine_dataset", 
+        name=LOCAL_REFINEMENT,
         log_file=str(paths.log_path / "local_logs"), 
         domain_id=domain_id, 
         job_id=job_id, 

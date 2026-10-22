@@ -1,7 +1,6 @@
 """Initial alignment of scans through shared portals."""
 import pycolmap
 import numpy as np
-import sys
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -102,10 +101,7 @@ def align_scans(
     logger: Optional[logging.Logger] = None
 ):
     if logger is None:
-        logger = logging.getLogger("scan_alignment")
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger(__name__)
 
     logger.info("Basic scan alignment from overlapping portals...")
 

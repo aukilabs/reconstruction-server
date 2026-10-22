@@ -10,6 +10,7 @@ import pyceres
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
 from reconstruction.pipeline.local.bundle_adjuster import PyBundleAdjuster
+from reconstruction.log import LOCAL_REFINEMENT
 
 
 def run_triangulation(
@@ -22,7 +23,7 @@ def run_triangulation(
     image_ids_per_qr=None
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
-    logger = logging.getLogger('refine_dataset')
+    logger = logging.getLogger(LOCAL_REFINEMENT)
 
     with pycolmap.Database.open(database_path) as database:
         
@@ -296,7 +297,7 @@ def triangulate_model(
         timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr
     )
     # Grab logger by name
-    logger = logging.getLogger('refine_dataset')
+    logger = logging.getLogger(LOCAL_REFINEMENT)
     logger.info(f"Finished the triangulation with statistics: {reconstruction.summary()}")
     return reconstruction
 

@@ -1,10 +1,8 @@
 import open3d as o3d
 from reconstruction.io.model import Model
-from reconstruction.log import setup_logger
 import numpy as np
 import time
 import logging
-import sys
 from colorsys import hsv_to_rgb
 
 
@@ -27,7 +25,7 @@ from contextlib import contextmanager
 @contextmanager
 def timed_section_scope(name, logger):
     if logger is None:
-        logger = setup_logger(name=name)
+        logger = logging.getLogger(__name__)
     time_start = time.time()
     logger.info(f"{name}...")
     yield
@@ -35,10 +33,7 @@ def timed_section_scope(name, logger):
 
 def main(args, logger=None):
     if logger is None:
-        logger = logging.getLogger('topology')
-        logger.setLevel(logging.INFO)
-        if not logger.hasHandlers():
-            logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger(__name__)
 
     if args.input_path.suffix == '.ply':
         pcd = o3d.io.read_point_cloud(args.input_path)
