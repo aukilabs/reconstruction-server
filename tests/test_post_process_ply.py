@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
-from utils.point_cloud_utils import post_process_ply
+from reconstruction.output.pointcloud import post_process_ply
 
 DRACO_ENCODER = "/usr/local/bin/draco_encoder"
 

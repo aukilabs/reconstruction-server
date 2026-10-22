@@ -1,6 +1,6 @@
 from pathlib import Path
 import argparse
-from utils.refinement_util import refine_dataset
+from reconstruction.pipeline.local.refine import refine_dataset
 
 
 def main(args, pool_executor=None):

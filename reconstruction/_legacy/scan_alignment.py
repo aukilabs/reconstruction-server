@@ -7,15 +7,15 @@ from dataclasses import dataclass
 import pycolmap
 import pyceres
 import numpy as np
-from utils.io import read_portal_csv, portalPose
-from utils.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
-from utils.dataset_utils import transform_with_scale
-from utils.geometry_utils import (
+from reconstruction._legacy.io import read_portal_csv, portalPose
+from reconstruction._legacy.data_utils import mean_pose, convert_pose_opengl_to_colmap, is_portal_almost_flat, flatten_portal_rotation
+from reconstruction.pipeline.update.update import transform_with_scale
+from reconstruction.geometry.costs import (
     QuaternionNormalizationCostFunction,
     TranslationPriorCostFunction,
 )
-from src.cost_functions import RelativeTransformationSim3CostFunction  # Custom ceres costs implemented in C++
-from src.reconstruction_merge import append_reconstruction
+from reconstruction.native.cost_functions import RelativeTransformationSim3CostFunction  # Custom ceres costs implemented in C++
+from reconstruction.native.reconstruction_merge import append_reconstruction
 
 @dataclass
 class AlignedScans:
@@ -699,7 +699,7 @@ def _run_ceres_alignment_solve(
 
     # Soft gravity prior: trust local-refinement up (COLMAP -X) per scan.
     # residual = w * (R_delta * R_stitch * local_g - world_g), Huber-robustified.
-    from src.cost_functions import GravityDirectionPriorSim3DeltaCostFunction
+    from reconstruction.native.cost_functions import GravityDirectionPriorSim3DeltaCostFunction
 
     gravity_loss = pyceres.HuberLoss(PORTAL_GRAVITY_PRIOR_HUBER_SCALE)
     gravity_costs = []

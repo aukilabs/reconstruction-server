@@ -2,9 +2,9 @@ from pathlib import Path
 import argparse
 import os
 import sys
-from utils.data_utils import add_file_handler, get_data_paths, setup_logger, write_fail_reason
-from utils.dataset_utils import update_helper
-from utils.point_cloud_utils import post_process_ply
+from reconstruction._legacy.data_utils import add_file_handler, get_data_paths, setup_logger, write_fail_reason
+from reconstruction.pipeline.update.update import update_helper
+from reconstruction.output.pointcloud import post_process_ply
 
 def main(args):
     # Create and configure logger

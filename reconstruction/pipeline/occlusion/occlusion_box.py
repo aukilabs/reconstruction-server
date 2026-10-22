@@ -8,8 +8,8 @@ import yaml
 import logging
 import sys
 
-from utils.io import Model, load_yaml, save_to_yaml, save_meshes_obj
-from utils.occlusion_box_utils import (
+from reconstruction._legacy.io import Model, load_yaml, save_to_yaml, save_meshes_obj
+from reconstruction.pipeline.occlusion.boxes import (
     voxelise, 
     floor_removal, 
     group_points_by_xy, 

@@ -4,7 +4,7 @@ from scipy.spatial.transform import Rotation
 import open3d as o3d
 import json, os
 
-from utils.io import Model
+from reconstruction._legacy.io import Model
 
 
 ####################################################

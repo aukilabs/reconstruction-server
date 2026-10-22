@@ -7,7 +7,7 @@ import numpy as np
 import logging
 from dataclasses import dataclass
 
-from utils.data_utils import (
+from reconstruction._legacy.data_utils import (
     mean_pose,
     convert_pose_opengl_to_colmap,
     convert_pose_colmap_to_opengl,
@@ -15,12 +15,12 @@ from utils.data_utils import (
     export_rec_as_ply,
     parse_info_from_manifest
 )
-from utils.io import read_portal_csv, read_model, write_model, write_model_with_rigs
+from reconstruction._legacy.io import read_portal_csv, read_model, write_model, write_model_with_rigs
 
 # These are Sam's additions to io.py that will be merged there separately.
 # Import them so update_helper can use them.
-from utils.io import merge_models, apply_similarity_to_new_model, validate_model_consistency
-from utils.voxel_raycast_utils import carve_outdated_reference_geometry
+from reconstruction._legacy.io import merge_models, apply_similarity_to_new_model, validate_model_consistency
+from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
 
 
 # TODO remove in favor of scan_alignment.py

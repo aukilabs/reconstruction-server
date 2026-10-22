@@ -31,8 +31,8 @@ from typing import Tuple
 import numpy as np
 import pycolmap
 
-from utils.dataset_utils import transform_with_scale
-from utils.scan_alignment import (
+from reconstruction.pipeline.update.update import transform_with_scale
+from reconstruction._legacy.scan_alignment import (
     AlignedScans,
     PortalAlignmentMetrics,
     PortalSpreadRmse,

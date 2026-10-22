@@ -2,7 +2,7 @@ import json
 import logging
 import unittest
 
-from utils.data_utils import JsonFormatter, setup_logger
+from reconstruction._legacy.data_utils import JsonFormatter, setup_logger
 
 
 def _record(level=logging.WARNING, msg="hello %s", args=("world",)):

@@ -1,8 +1,8 @@
 from pathlib import Path
 import open3d as o3d
-from utils.io import Model
+from reconstruction._legacy.io import Model
 import argparse
-from utils.data_utils import setup_logger
+from reconstruction._legacy.data_utils import setup_logger
 import numpy as np
 import time
 import logging

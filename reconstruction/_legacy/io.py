@@ -11,7 +11,7 @@ import trimesh
 import uuid
 import csv
 from scipy.spatial.transform import Rotation as R
-from utils.data_utils import (convert_pose_colmap_to_opengl)
+from reconstruction._legacy.data_utils import (convert_pose_colmap_to_opengl)
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"]

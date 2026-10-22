@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
-from utils.data_utils import save_manifest_json
-from utils.scan_alignment import (
+from reconstruction._legacy.data_utils import save_manifest_json
+from reconstruction._legacy.scan_alignment import (
     AlignedScans,
     PORTAL_DOWNWEIGHT_COV_SCALE,
     PortalOverlapEdge,

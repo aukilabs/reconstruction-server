@@ -3,11 +3,11 @@ import argparse
 import re
 from concurrent.futures import ProcessPoolExecutor
 
-from local_main import main as local_main
-from global_main import main as global_main
-from topology_main import main as topology_main
-from utils.data_utils import save_failed_manifest_json, setup_logger, write_fail_reason
-from utils.io import load_yaml, save_to_yaml
+from reconstruction.entrypoints.local import main as local_main
+from reconstruction.entrypoints.global_ import main as global_main
+from reconstruction.pipeline.topology.mesh import main as topology_main
+from reconstruction._legacy.data_utils import save_failed_manifest_json, setup_logger, write_fail_reason
+from reconstruction._legacy.io import load_yaml, save_to_yaml
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
     """If job_root_path ends with <domain_uuid>/job_<uuid>, return (domain_id, job_id)."""
@@ -46,7 +46,7 @@ def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
         logger: Logger instance
     """
     # Imported here: occlusion_box pulls in sklearn, shapely, alphashape and matplotlib.
-    from occlusion_box import main as occlusion_main
+    from reconstruction.pipeline.occlusion.occlusion_box import main as occlusion_main
 
     config = load_yaml('config/occlusion_box/default.yaml')
     config.update({

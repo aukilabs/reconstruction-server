@@ -4,7 +4,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from utils.dataset_utils import _get_refined_rec_dir
+from reconstruction.pipeline.update.update import _get_refined_rec_dir
 
 SCAN = "2026-01-01_00-00-00"
 

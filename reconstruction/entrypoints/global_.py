@@ -1,9 +1,9 @@
 from pathlib import Path
 import argparse
 import os
-from utils.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
-from utils.point_cloud_utils import post_process_ply
-from utils.scan_alignment import (
+from reconstruction._legacy.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
+from reconstruction.output.pointcloud import post_process_ply
+from reconstruction._legacy.scan_alignment import (
     align_scans,
     merge_aligned_scans,
     refine_alignment,
@@ -11,7 +11,7 @@ from utils.scan_alignment import (
     AlignedScans,
     portal_alignment_metrics_to_dict,
 )
-from utils.io import read_portal_csv
+from reconstruction._legacy.io import read_portal_csv
 import logging
 from typing import Dict
 import pycolmap

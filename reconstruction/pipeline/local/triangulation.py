@@ -9,7 +9,7 @@ import pyceres
 
 from hloc.triangulation import create_db_from_model, import_features, import_matches
 from hloc import pairs_from_poses, extract_features, match_features, pairs_from_sequential
-from utils.bundle_adjuster import PyBundleAdjuster
+from reconstruction.pipeline.local.bundle_adjuster import PyBundleAdjuster
 
 
 def run_triangulation(

@@ -4,7 +4,7 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-from utils.data_utils import (
+from reconstruction._legacy.data_utils import (
     average_quaternions_svd,
     convert_pose_colmap_to_opengl,
     convert_pose_opengl_to_colmap,
