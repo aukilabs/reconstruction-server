@@ -1,4 +1,9 @@
-use std::{path::Path, process::Stdio};
+use std::{
+    ffi::OsString,
+    fmt,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::{
@@ -8,11 +13,44 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
-/// Run the given python script with provided arguments, streaming stdout/stderr to the log file.
+/// What python runs, before the runner's own arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PythonEntry {
+    /// `python -m <module> <subcommand> <args…>`: the default.
+    Module {
+        module: String,
+        subcommand: &'static str,
+    },
+    /// `python <script> <args…>`: kept for `*_RUNNER_PYTHON_SCRIPT` overrides.
+    Script(PathBuf),
+}
+
+impl fmt::Display for PythonEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PythonEntry::Module { module, subcommand } => write!(f, "-m {module} {subcommand}"),
+            PythonEntry::Script(script) => write!(f, "{}", script.display()),
+        }
+    }
+}
+
+/// The arguments python is started with: the entry, then `args`.
+pub fn command_args(entry: &PythonEntry, args: &[String]) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = match entry {
+        PythonEntry::Module { module, subcommand } => {
+            vec!["-m".into(), module.into(), (*subcommand).into()]
+        }
+        PythonEntry::Script(script) => vec![script.into()],
+    };
+    argv.extend(args.iter().map(OsString::from));
+    argv
+}
+
+/// Run python with the given entry and arguments, streaming stdout/stderr to the log file.
 /// If `job_root` is provided, attempts to read `fail_reason.txt` from it on failure.
-pub async fn run_script(
+pub async fn run_python(
     python_bin: &Path,
-    script_path: &Path,
+    entry: &PythonEntry,
     args: &[String],
     cancel: &CancellationToken,
     job_root: Option<&Path>,
@@ -27,18 +65,13 @@ pub async fn run_script(
 
     let mut cmd = Command::new(python_bin);
     node_host::process::isolate(&mut cmd)
-        .arg(script_path)
-        .args(args)
+        .args(command_args(entry, args))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().with_context(|| {
-        format!(
-            "spawn python process {} {}",
-            python_bin.display(),
-            script_path.display()
-        )
-    })?;
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn python process {} {}", python_bin.display(), entry))?;
 
     let mut tasks = Vec::new();
     if let Some(stdout) = child.stdout.take() {
@@ -145,4 +178,36 @@ where
         line.clear();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(entry: &PythonEntry, args: &[&str]) -> Vec<OsString> {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        command_args(entry, &args)
+    }
+
+    #[test]
+    fn module_entry_puts_the_subcommand_before_the_runner_args() {
+        let entry = PythonEntry::Module {
+            module: "reconstruction".into(),
+            subcommand: "local",
+        };
+        assert_eq!(
+            argv(&entry, &["--job_root_path", "/job"]),
+            ["-m", "reconstruction", "local", "--job_root_path", "/job"].map(OsString::from)
+        );
+        assert_eq!(entry.to_string(), "-m reconstruction local");
+    }
+
+    #[test]
+    fn script_entry_runs_the_script() {
+        let entry = PythonEntry::Script(PathBuf::from("main.py"));
+        assert_eq!(
+            argv(&entry, &["--mode", "local_refinement"]),
+            ["main.py", "--mode", "local_refinement"].map(OsString::from)
+        );
+    }
 }

@@ -192,12 +192,12 @@ impl NodeRunner for RunnerReconstructionUpdate {
         }));
 
         let python_bin = self.config.python_bin.clone();
-        let python_script = self.config.python_script.clone();
+        let python_entry = self.config.python_entry();
         let job_root = workspace.root().to_path_buf();
         // The task's own token: DMS cancel, lost lease or forced shutdown stops Python.
-        let python_result = python::run_script(
+        let python_result = python::run_python(
             &python_bin,
-            &python_script,
+            &python_entry,
             &python_args,
             &task.cancellation(),
             Some(&job_root),
@@ -366,9 +366,11 @@ pub struct RunnerConfig {
     pub workspace_root: Option<PathBuf>,
     /// Python executable used to launch the refinement pipeline.
     pub python_bin: PathBuf,
-    /// Python entrypoint script.
-    pub python_script: PathBuf,
-    /// Additional arguments passed to the python script.
+    /// Module run as `python -m <module> update`.
+    pub python_module: String,
+    /// Script run instead of the module, when `UPDATE_RUNNER_PYTHON_SCRIPT` is set.
+    pub python_script: Option<PathBuf>,
+    /// Additional arguments passed to python, after the module or script.
     pub python_args: Vec<String>,
     /// Number of CPU workers granted to the pipeline.
     pub cpu_workers: usize,
@@ -377,35 +379,48 @@ pub struct RunnerConfig {
 impl RunnerConfig {
     pub const ENV_WORKSPACE_ROOT: &'static str = "UPDATE_RUNNER_WORKSPACE_ROOT";
     pub const ENV_PYTHON_BIN: &'static str = "UPDATE_RUNNER_PYTHON_BIN";
+    pub const ENV_PYTHON_MODULE: &'static str = "UPDATE_RUNNER_PYTHON_MODULE";
     pub const ENV_PYTHON_SCRIPT: &'static str = "UPDATE_RUNNER_PYTHON_SCRIPT";
     pub const ENV_PYTHON_ARGS: &'static str = "UPDATE_RUNNER_PYTHON_ARGS";
     pub const ENV_CPU_WORKERS: &'static str = "UPDATE_RUNNER_CPU_WORKERS";
 
     pub const DEFAULT_PYTHON_BIN: &'static str = "python3";
-    pub const DEFAULT_PYTHON_SCRIPT: &'static str = "update_main.py";
+    pub const DEFAULT_PYTHON_MODULE: &'static str = "reconstruction";
+    pub const PYTHON_SUBCOMMAND: &'static str = "update";
     pub const DEFAULT_CPU_WORKERS: usize = 2;
 
     /// Build a config from environment variables.
     pub fn from_env() -> Result<Self> {
-        let workspace_root = match env::var(Self::ENV_WORKSPACE_ROOT) {
-            Ok(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
+        Self::from_lookup(|key| env::var(key).ok())
+    }
+
+    /// Build a config from a variable lookup (the environment, in `from_env`).
+    pub fn from_lookup(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let workspace_root = match var(Self::ENV_WORKSPACE_ROOT) {
+            Some(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
             _ => None,
         };
 
-        let python_bin = env::var(Self::ENV_PYTHON_BIN)
+        let python_bin = var(Self::ENV_PYTHON_BIN)
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(Self::DEFAULT_PYTHON_BIN));
+            .unwrap_or_else(|| PathBuf::from(Self::DEFAULT_PYTHON_BIN));
 
-        let python_script = env::var(Self::ENV_PYTHON_SCRIPT)
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(Self::DEFAULT_PYTHON_SCRIPT));
+        let python_module = match var(Self::ENV_PYTHON_MODULE) {
+            Some(v) if !v.trim().is_empty() => v,
+            _ => Self::DEFAULT_PYTHON_MODULE.to_string(),
+        };
 
-        let python_args = env::var(Self::ENV_PYTHON_ARGS)
+        let python_script = match var(Self::ENV_PYTHON_SCRIPT) {
+            Some(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
+            _ => None,
+        };
+
+        let python_args = var(Self::ENV_PYTHON_ARGS)
             .map(|raw| raw.split_whitespace().map(|s| s.to_string()).collect())
-            .unwrap_or_else(|_| Vec::new());
+            .unwrap_or_default();
 
-        let cpu_workers = match env::var(Self::ENV_CPU_WORKERS) {
-            Ok(val) if !val.trim().is_empty() => val
+        let cpu_workers = match var(Self::ENV_CPU_WORKERS) {
+            Some(val) if !val.trim().is_empty() => val
                 .parse::<usize>()
                 .with_context(|| format!("invalid {} value", Self::ENV_CPU_WORKERS))?,
             _ => Self::DEFAULT_CPU_WORKERS,
@@ -414,10 +429,22 @@ impl RunnerConfig {
         Ok(Self {
             workspace_root,
             python_bin,
+            python_module,
             python_script,
             python_args,
             cpu_workers,
         })
+    }
+
+    /// What python runs: the script override if set, else the module's subcommand.
+    pub(crate) fn python_entry(&self) -> python::PythonEntry {
+        match &self.python_script {
+            Some(script) => python::PythonEntry::Script(script.clone()),
+            None => python::PythonEntry::Module {
+                module: self.python_module.clone(),
+                subcommand: Self::PYTHON_SUBCOMMAND,
+            },
+        }
     }
 }
 
@@ -426,7 +453,8 @@ impl Default for RunnerConfig {
         Self {
             workspace_root: None,
             python_bin: PathBuf::from(Self::DEFAULT_PYTHON_BIN),
-            python_script: PathBuf::from(Self::DEFAULT_PYTHON_SCRIPT),
+            python_module: Self::DEFAULT_PYTHON_MODULE.to_string(),
+            python_script: None,
             python_args: Vec::new(),
             cpu_workers: Self::DEFAULT_CPU_WORKERS,
         }
@@ -477,5 +505,70 @@ fn extract_last_segment(input: &str) -> String {
     match trimmed.rsplit('/').next() {
         Some(seg) if !seg.is_empty() => seg.to_string(),
         _ => input.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+
+    fn config(vars: &[(&str, &str)]) -> RunnerConfig {
+        let vars: HashMap<&str, &str> = vars.iter().copied().collect();
+        RunnerConfig::from_lookup(|key| vars.get(key).map(|v| v.to_string())).unwrap()
+    }
+
+    fn command_line(config: &RunnerConfig) -> Vec<OsString> {
+        python::command_args(&config.python_entry(), &config.python_args)
+    }
+
+    fn os(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn runs_the_reconstruction_module_by_default() {
+        let config = config(&[("UPDATE_RUNNER_PYTHON_ARGS", "--log_level DEBUG")]);
+        assert_eq!(config.python_bin, PathBuf::from("python3"));
+        assert_eq!(
+            command_line(&config),
+            os(&["-m", "reconstruction", "update", "--log_level", "DEBUG"])
+        );
+    }
+
+    #[test]
+    fn script_override_runs_the_script() {
+        let config = config(&[
+            ("UPDATE_RUNNER_PYTHON_SCRIPT", "legacy.py"),
+            ("UPDATE_RUNNER_PYTHON_ARGS", "--log_level DEBUG"),
+        ]);
+        assert_eq!(
+            command_line(&config),
+            os(&["legacy.py", "--log_level", "DEBUG"])
+        );
+    }
+
+    #[test]
+    fn module_override() {
+        let config = config(&[("UPDATE_RUNNER_PYTHON_MODULE", "other_pipeline")]);
+        assert_eq!(
+            command_line(&config),
+            os(&["-m", "other_pipeline", "update"])
+        );
+    }
+
+    #[test]
+    fn empty_overrides_are_ignored() {
+        let config = config(&[
+            ("UPDATE_RUNNER_PYTHON_SCRIPT", ""),
+            ("UPDATE_RUNNER_PYTHON_MODULE", " "),
+        ]);
+        assert_eq!(config, RunnerConfig::default());
+    }
+
+    #[test]
+    fn empty_environment_matches_default() {
+        assert_eq!(config(&[]), RunnerConfig::default());
     }
 }

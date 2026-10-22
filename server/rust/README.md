@@ -40,6 +40,21 @@ Supporting directories:
    first `SIGINT`/`SIGTERM` stops claiming and lets an active task finish; a
    second interrupts it.
 
+## How runners start Python
+Each runner starts `python3 -m reconstruction <stage> <args>` (`local`,
+`global` or `update`) in its own process group, from the node's working
+directory (`/app` in the image, which also sets `PYTHONPATH=/app`). Each
+stdout/stderr line is parsed as a JSON `{level, message}` log line, and on a
+non-zero exit `<job root>/fail_reason.txt` becomes the failure reason
+(`runner-*/src/python.rs`). Per runner (`LOCAL_`, `GLOBAL_` or `UPDATE_`
+prefix), all optional:
+
+- `<PREFIX>_RUNNER_PYTHON_BIN`: interpreter (default `python3`).
+- `<PREFIX>_RUNNER_PYTHON_MODULE`: package run with `-m` (default `reconstruction`).
+- `<PREFIX>_RUNNER_PYTHON_SCRIPT`: run this script instead of the module
+  (`python3 <script> <args>`).
+- `<PREFIX>_RUNNER_PYTHON_ARGS`: extra arguments, placed before the runner's own.
+
 ## Getting started
 1. Install the pinned toolchain (`rustup toolchain install stable` if missing; the
    workspace ships with `rust-toolchain.toml`).
