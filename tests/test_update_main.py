@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import update_main
+from reconstruction.entrypoints import update
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,7 +29,7 @@ class UpdateMainFailureTests(unittest.TestCase):
             data_path=self.data_path, output_path=self.output_path, domain_id="d1", job_id="job_1", log_level="INFO"
         )
         with self.assertRaises(RuntimeError):
-            update_main.main(args)
+            update.main(args)
         self.assertIn("no refined scans found", (self.job_root / "fail_reason.txt").read_text())
         self.assertIn("Update refinement failed", (self.job_root / "log.txt").read_text())
 
@@ -37,7 +37,8 @@ class UpdateMainFailureTests(unittest.TestCase):
         # A refined scan but no reference map under refined/global: update_helper raises.
         (self.data_path / "2026-01-01_00-00-00" / "sfm").mkdir(parents=True)
         proc = subprocess.run(
-            [sys.executable, "update_main.py", "--data_path", str(self.data_path), "--output_path", str(self.output_path)],
+            [sys.executable, "-m", "reconstruction", "update",
+             "--data_path", str(self.data_path), "--output_path", str(self.output_path)],
             cwd=REPO_ROOT, capture_output=True, text=True,
         )
         self.assertNotEqual(proc.returncode, 0, proc.stderr[-2000:])

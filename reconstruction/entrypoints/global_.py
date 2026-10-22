@@ -1,6 +1,8 @@
+"""Global refinement: align the refined scans into one map, then extract the topology mesh."""
 from pathlib import Path
 import argparse
 import os
+from reconstruction.entrypoints import _refinement
 from reconstruction._legacy.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
 from reconstruction.output.pointcloud import post_process_ply
 from reconstruction._legacy.scan_alignment import (
@@ -11,10 +13,13 @@ from reconstruction._legacy.scan_alignment import (
     AlignedScans,
     portal_alignment_metrics_to_dict,
 )
-from reconstruction._legacy.io import read_portal_csv
+from reconstruction._legacy.io import load_yaml, read_portal_csv, save_to_yaml
+from reconstruction.pipeline.topology.mesh import main as topology_main
 import logging
 from typing import Dict
 import pycolmap
+
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 
 
 def collect_portal_sizes(scan_ids, job_root_path, logger):
@@ -63,7 +68,7 @@ def get_mean_portal_poses(aligned_scans: AlignedScans, logger: logging.Logger) -
     }
 
 
-def main(args):
+def refine_global(args):
     # Create and configure logger
     output_path = args.output_path
     os.makedirs(output_path, exist_ok=True)
@@ -153,17 +158,77 @@ def main(args):
     return
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=Path, 
-                        default="./datasets")
-    parser.add_argument("--output_path", type=Path, default="./refined/global")
-    parser.add_argument("--domain_id", type=str, default="")
-    parser.add_argument("--job_id", type=str, default="")
-    parser.add_argument("--log_level", type=str, default="INFO", 
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Set the logging level (default: INFO)"
+
+def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
+    """Run occlusion box extraction on the given point cloud.
+
+    Args:
+        path: Path to the point cloud file
+        output_dir: Output directory for results
+        logger: Logger instance
+    """
+    # Imported here: occlusion_box pulls in sklearn, shapely, alphashape and matplotlib.
+    from reconstruction.pipeline.occlusion.occlusion_box import main as occlusion_main
+
+    config = load_yaml(CONFIG_DIR / 'occlusion_box' / 'default.yaml')
+    config.update({
+        'path': str(pointcloud_path),
+        'output_dir': str(output_dir),
+        'opengl': True,  # Point cloud already in OpenGL coordinates
+        'display': False
+    })
+
+    logger.info(f"Running occlusion box with config contents:")
+    for key, value in config.items():
+        logger.info(f"{key}: {value}")
+
+    save_to_yaml(config)
+    logger.info("Starting occlusion box extraction...")
+    occlusion_main(config, logger)
+    logger.info("Done with occlusion box extraction!")
+
+
+def global_main_wrapper(args, logger):
+    """Run global refinement process.
+
+    Args:
+        args: Command line arguments
+        logger: Logger instance
+    """
+    logger.info("--------------------------------")
+    logger.info(f"Running global refinement with {len(args.scans)} scans")
+
+    global_args = argparse.Namespace(
+        data_dir=Path(args.job_root_path) / "datasets",
+        output_path=Path(args.output_path) / "global",
+        domain_id=args.domain_id,
+        job_id=args.job_id,
+        log_level=args.log_level,
+        log_format=args.log_format
     )
-    parser.add_argument("--log_format", choices=["text", "json"], default="text", help="Log output format (text or json)")
-    args = parser.parse_args()
-    main(args)
+    refine_global(global_args)
+    logger.info("Done with global refinement")
+    logger.info("--------------------------------")
+
+    logger.info("Start extracting topology...")
+
+    # TODO: needs some fixing and testing before re-enabling
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+
+    topology_args = argparse.Namespace(
+        input_path=global_args.output_path / "RefinedPointCloud.ply",
+        output_dir=global_args.output_path / "topology",
+        floor_height=0.0,
+        floor_height_threshold=0.3,
+        voxel_size=0.05
+    )
+
+    topology_main(topology_args, logger)
+
+
+def parse_args(argv, prog=None):
+    return _refinement.parse_args("global", argv, prog)
+
+
+def main(args):
+    _refinement.run(args, global_main_wrapper)

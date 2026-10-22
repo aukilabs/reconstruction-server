@@ -1,7 +1,7 @@
+"""Update refinement: merge refined scans into the previous global map (<job root>/refined/global)."""
 from pathlib import Path
 import argparse
 import os
-import sys
 from reconstruction._legacy.data_utils import add_file_handler, get_data_paths, setup_logger, write_fail_reason
 from reconstruction.pipeline.update.update import update_helper
 from reconstruction.output.pointcloud import post_process_ply
@@ -63,8 +63,8 @@ def update_refinement(args, job_root_path, logger):
     return
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+def parse_args(argv, prog=None):
+    parser = argparse.ArgumentParser(prog=prog, description="Update refinement")
     parser.add_argument("--data_path", type=Path, default="./local", help="Path to datasets directory")
     parser.add_argument("--output_path", type=Path, default="./merged", help="Path for output files")
     parser.add_argument("--domain_id", type=str, default="")
@@ -73,5 +73,4 @@ if __name__ == "__main__":
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
-    args = parser.parse_args()
-    main(args)
+    return parser.parse_args(argv)

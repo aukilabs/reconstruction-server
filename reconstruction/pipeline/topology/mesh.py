@@ -1,7 +1,5 @@
-from pathlib import Path
 import open3d as o3d
 from reconstruction._legacy.io import Model
-import argparse
 from reconstruction._legacy.data_utils import setup_logger
 import numpy as np
 import time
@@ -34,17 +32,6 @@ def timed_section_scope(name, logger):
     logger.info(f"{name}...")
     yield
     logger.info(f"{name} DONE. Took {time.time() - time_start:.4f} seconds")
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--input_path', type=Path, required=True)
-    parser.add_argument('--output_dir', type=Path, required=True)
-    parser.add_argument('--floor_height', type=float, default=0.0)
-    parser.add_argument('--floor_height_threshold', type=float, default=0.2, help='Max height offset from [floor_height] to count as floor, in meters')
-    parser.add_argument('--voxel_size', type=float, default=0.05, help='Voxel size for clustering, in meters')
-
-    return parser.parse_args()
-
 
 def main(args, logger=None):
     if logger is None:
@@ -158,7 +145,3 @@ def main(args, logger=None):
                 downsampled = downsampled.simplify_quadric_decimation(target_number_of_triangles=int(full_tri_count * ratio))
                 o3d.io.write_triangle_mesh(args.output_dir / f"topology_downsampled_{ratio:.3f}.glb", downsampled)
                 o3d.io.write_triangle_mesh(args.output_dir / f"topology_downsampled_{ratio:.3f}.obj", downsampled)
-
-if __name__ == "__main__":
-    args = parse_args()
-    main(args)
