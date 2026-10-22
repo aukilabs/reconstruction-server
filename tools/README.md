@@ -30,7 +30,7 @@ For each stage:
 | `sfm`: cameras, registered images, 3D points and mean reprojection error for every COLMAP model under `refined/` | Within tolerance |
 | `ply_vertices`: vertex count of every PLY under `refined/` | Within tolerance |
 | `manifests`: key structure (keys only) and portal ids of each `refined_manifest.json` / `job_manifest.json` | Exactly |
-| `uploads`: whether each path in the upload table (`tests/test_upload_contract.py`) exists | Exactly |
+| `uploads`: whether each path in the upload table (`reconstruction/output/uploads.py`) exists | Exactly |
 | `exit_code`, `fail_reason` | Exactly |
 | `json_lines_missing_level_or_message`: stdout/stderr lines that are JSON but lack `level` or `message` | Exactly (should be 0) |
 | `info`: duration and log line counts | Not compared |

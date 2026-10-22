@@ -12,7 +12,6 @@ Run inside the reconstruction image, from the repository root:
 """
 import argparse
 import datetime
-import importlib.util
 import json
 import math
 import os
@@ -29,16 +28,9 @@ STAGES = ("local", "global", "update")
 SFM_FILES = ("cameras.bin", "images.bin", "points3D.bin")
 GLOBAL_SFM_FILES = ("cameras.bin", "frames.bin", "images.bin", "points3D.bin", "rigs.bin")
 
-
-def _load_upload_contract():
-    path = REPO_ROOT / "tests" / "test_upload_contract.py"
-    spec = importlib.util.spec_from_file_location("upload_contract", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-UPLOAD_CONTRACT = _load_upload_contract()
+# Running tools/golden_run.py puts tools/, not the repository root, on sys.path.
+sys.path.insert(0, str(REPO_ROOT))
+from reconstruction.output import uploads as UPLOAD_CONTRACT  # noqa: E402  (data only, no heavy imports)
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,8 @@ pub struct OutputSpec {
     pub mandatory: bool,
 }
 
-// Mirrored in tests/test_upload_contract.py (UPLOAD_TABLE); keep both in sync.
+// Mirrored in reconstruction/output/uploads.py (UPLOAD_TABLE), checked by
+// tests/test_upload_contract.py; keep both in sync.
 const UPDATE_OUTPUTS: &[OutputSpec] = &[
     OutputSpec {
         relative_path: "refined/update/refined_manifest.json",

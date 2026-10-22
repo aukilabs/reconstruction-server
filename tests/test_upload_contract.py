@@ -5,61 +5,23 @@ After Python exits, the Rust runners upload a fixed set of files from the job ro
 - server/rust/runner-reconstruction-{global,update}/src/output.rs: the final outputs
 - server/rust/runner-reconstruction-*/src/lib.rs: the task log
 
-UPLOAD_TABLE is the Python-side copy of those tables. The tests parse the Rust sources, so
-changing the paths, names, data types or required flags on either side fails here first.
-These tests only read files and run without the Docker image.
+reconstruction/output/uploads.py holds the Python-side copy of those tables (UPLOAD_TABLE).
+These tests parse the Rust sources, so changing the paths, names, data types or required flags
+on either side fails here first. They only read files and run without the Docker image.
 """
 import re
 import unittest
-from collections import namedtuple
 from pathlib import Path
+
+from reconstruction.output.uploads import (
+    REFINED_SCAN_REQUIRED_FILES,
+    REFINED_SCAN_ZIP_EXTENSIONS,
+    UPLOAD_TABLE,
+    UploadSpec,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUST_ROOT = REPO_ROOT / "server" / "rust"
-
-# path is relative to the job root. {scan} is a scan folder name, {task_id} the DMS task id.
-# Global and update append "_<suffix>" to the name when uploading.
-UploadSpec = namedtuple("UploadSpec", ["runner", "path", "name", "data_type", "required"])
-
-# The local runner zips refined/local/<scan>/sfm/*.{bin,csv,txt} into RefinedScan.zip,
-# but only when all of these exist. Scans missing any of them are skipped, not failed.
-REFINED_SCAN_REQUIRED_FILES = ("images.bin", "cameras.bin", "points3D.bin", "portals.csv")
-REFINED_SCAN_ZIP_EXTENSIONS = (".bin", ".csv", ".txt")
-
-
-def _final_outputs(runner):
-    prefix = f"refined/{runner}"
-    return [
-        UploadSpec(runner, f"{prefix}/refined_manifest.json", "refined_manifest", "refined_manifest_json", True),
-        UploadSpec(runner, f"{prefix}/RefinedPointCloudReduced.ply", "refined_pointcloud", "refined_pointcloud_ply", True),
-        UploadSpec(runner, f"{prefix}/RefinedPointCloud.ply.drc", "refined_pointcloud_full_draco", "refined_pointcloud_ply_draco", False),
-        UploadSpec(runner, f"{prefix}/topology/topology_downsampled_0.111.obj", "topologymesh_v1_lowpoly_obj", "obj", False),
-        UploadSpec(runner, f"{prefix}/topology/topology_downsampled_0.111.glb", "topologymesh_v1_lowpoly_glb", "glb", False),
-        UploadSpec(runner, f"{prefix}/topology/topology_downsampled_0.333.obj", "topologymesh_v1_midpoly_obj", "obj", False),
-        UploadSpec(runner, f"{prefix}/topology/topology_downsampled_0.333.glb", "topologymesh_v1_midpoly_glb", "glb", False),
-        UploadSpec(runner, f"{prefix}/topology/topology.obj", "topologymesh_v1_highpoly_obj", "obj", False),
-        UploadSpec(runner, f"{prefix}/topology/topology.glb", "topologymesh_v1_highpoly_glb", "glb", False),
-        UploadSpec(runner, f"{prefix}/refined_sfm_combined/cameras.bin", "colmap_cameras_bin", "colmap_cameras_bin", True),
-        UploadSpec(runner, f"{prefix}/refined_sfm_combined/frames.bin", "colmap_frames_bin", "colmap_frames_bin", True),
-        UploadSpec(runner, f"{prefix}/refined_sfm_combined/images.bin", "colmap_images_bin", "colmap_images_bin", True),
-        UploadSpec(runner, f"{prefix}/refined_sfm_combined/points3D.bin", "colmap_points3d_bin", "colmap_points3d_bin", True),
-        UploadSpec(runner, f"{prefix}/refined_sfm_combined/rigs.bin", "colmap_rigs_bin", "colmap_rigs_bin", True),
-        # Uploaded when present. Nothing in the pipeline writes these today.
-        UploadSpec(runner, "outputs_index.json", "outputs_index", "json", False),
-        UploadSpec(runner, "result.json", "result", "json", False),
-        UploadSpec(runner, "scan_data_summary.json", "scan_data_summary", "json", False),
-    ]
-
-
-UPLOAD_TABLE = (
-    [UploadSpec("local", "refined/local/{scan}/RefinedScan.zip", "refined_scan_{scan}", "refined_scan_zip", False)]
-    + _final_outputs("global")
-    + _final_outputs("update")
-    + [
-        UploadSpec(runner, "log.txt", "task_log_{task_id}", "task_log_txt", False)
-        for runner in ("local", "global", "update")
-    ]
-)
 
 
 def _read(rel_path):
