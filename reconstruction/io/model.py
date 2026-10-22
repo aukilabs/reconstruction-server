@@ -102,7 +102,7 @@ class Model:
         # add geometries to visualizer
         for i in frames:
             self.__vis.add_geometry(i)
-    
+
     def get_points(self, in_opengl=False, min_track_len=3, remove_statistical_outlier=True):
         pcd = open3d.geometry.PointCloud()
 
@@ -124,7 +124,7 @@ class Model:
                 nb_neighbors=20, std_ratio=2.0
             )
 
-        # convert to opengl coordinate 
+        # convert to opengl coordinate
         if in_opengl:
             transformation_matrix = np.array([
                 [0, 1, 0, 0],
@@ -133,7 +133,7 @@ class Model:
                 [0, 0, 0, 1]
             ])
             return pcd.transform(transformation_matrix)
-        
+
         return pcd
 
     def get_portals(self, in_opengl=False) -> List[Portal]:
@@ -145,17 +145,17 @@ class Model:
 
             portal = Portal(
                 id=portal.id,
-                short_id=portal.short_id,    
+                short_id=portal.short_id,
                 tvec=tvec,
                 qvec=qvec,
-                image_id=portal.image_id, 
-                size=portal.size, 
+                image_id=portal.image_id,
+                size=portal.size,
                 corners=portal.corners
             )
 
             portals.append(portal)
         return portals
-    
+
     def get_path(self):
         return self._path
 

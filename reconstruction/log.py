@@ -22,18 +22,18 @@ class JsonFormatter(logging.Formatter):
                 "level": record.levelname.lower(),
                 "name": record.name,
                 "tags": {
-                    "domain_id": self.domain_id, 
-                    "job_id": self.job_id, 
+                    "domain_id": self.domain_id,
+                    "job_id": self.job_id,
                     "dataset_id": self.dataset_id},
                 "message": record.getMessage()
             }
-        else: 
+        else:
             record_dict = {
                 "time": s,
                 "level": record.levelname.lower(),
                 "name": record.name,
                 "tags": {
-                    "domain_id": self.domain_id, 
+                    "domain_id": self.domain_id,
                     "job_id": self.job_id},
                 "message": record.getMessage()
             }
@@ -69,7 +69,7 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
                 fmt='%(asctime)s %(name)s %(levelname)s %(message)s'
             )
         )
-       
+
 
     logger.addHandler(console_handler)
 
@@ -77,7 +77,7 @@ def setup_logger(name=None, log_file=None, domain_id="", job_id="", dataset_id=N
 
 
 def add_file_handler(logger, log_file):
-    file_formatter = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s')   
+    file_formatter = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s')
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)

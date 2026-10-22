@@ -26,13 +26,13 @@ def process_frames(
 ):
     """
     Process and extract frames from video if necessary.
-    
+
     Returns:
         Tuple of (reference_list, use_frames_from_video)
     """
     frames_mp4 = paths.scan_folder / 'Frames.mp4'
     logger.info(f"Looking for mp4 encoded frames: {frames_mp4}")
-    
+
     use_frames_from_video = False
     if frames_mp4.exists():
         logger.info(f"Frames mp4 found, unpacking into {paths.images}")

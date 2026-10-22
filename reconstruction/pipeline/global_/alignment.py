@@ -54,7 +54,7 @@ def calculate_alignment_transform(
         for qr_id in scanned_ids
         if qr_id in placed_poses.keys()
     }
-    
+
     has_overlap = len(target_poses) > 0
     is_first_chunk = len(placed_poses) == 0
 
@@ -76,21 +76,21 @@ def calculate_alignment_transform(
                 first_floor_portal_id = qr_id
                 break
             logger.info(f"Skip non-horizontal origin portal candi: {qr_id}")
-        
+
         if first_floor_portal_id is None:
             # First scan must not align using a wall portal, as that would tilt the entire reconstruction!
             logger.info("No floor portal found for origin alignment")
             raise NoOverlapException("No floor portal found for origin alignment")
 
         logger.info(f"Using {first_floor_portal_id} as origin portal to align the reconstruction. Pose: R={scanned_poses[first_floor_portal_id].rotation.matrix()}, t={scanned_poses[first_floor_portal_id].translation}")
-        
+
         # Align only rotating around UP (x in our colmap space), if floor portal is not completely flat don't tilt the entire scan.
         scanned_pose = scanned_poses[first_floor_portal_id]
         rot = scanned_pose.rotation.matrix()
         rot = flatten_portal_rotation(rot)
         scanned_pose_flat = pycolmap.Rigid3d(pycolmap.Rotation3d(rot), scanned_pose.translation)
         alignment_transform = floor_origin_portal_pose * scanned_pose_flat.inverse()
-        
+
         return alignment_transform
 
     raise NoOverlapException()
@@ -163,14 +163,14 @@ def align_scans(
 
             for qr_id, poses in aligned_portal_detections_by_scan[scanID].items():
                 placed_portal_poses[qr_id] = mean_pose(poses)
-            
+
         except NoOverlapException:
             consecutive_alignment_fails += 1
             if consecutive_alignment_fails > len(scans_to_align):
                 # All failed, no more overlappin scans.
                 logger.info(f"All remaining {len(scans_to_align)} scans have no overlap with the previous {len(scans_already_aligned)} scans. STOPPING!")
                 raise
-            
+
             # Add back to queue to retry again at the end after all others (may have more overlap after align other scans first)
             logger.info(f"No overlap with the previous {len(scans_already_aligned)} scans. Adding back to queue to retry again at the end after all others (may have more overlap after align other scans first)")
             scans_to_align.append(scanID)

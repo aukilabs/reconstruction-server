@@ -65,7 +65,7 @@ def save_manifest_json(
 
             created_datetime = parser.isoparse(job_metadata_json["created_at"])
             current_datetime = datetime.datetime.now(datetime.timezone.utc)
-            
+
             manifest_data["createdAt"] = job_metadata_json["created_at"]
             manifest_data["jobDuration"] = float((current_datetime - created_datetime).total_seconds())
             manifest_data["jobID"] = job_metadata_json["id"]
@@ -77,7 +77,7 @@ def save_manifest_json(
             manifest_data["dataIDs"] = job_metadata_json["data_ids"]
             if previous_scan_files is not None:
                 manifest_data["dataIDs"].extend(previous_scan_files)
-            
+
     except Exception as e:
         print("No job metadata found for manifest")
         print(e)
@@ -136,7 +136,7 @@ def save_manifest_json(
         print("Could not get memory info for manifest")
         print(e)
         pass
-    
+
     try:
         if torch.cuda.is_available():
             manifest_data["serverDetails"]["cudaAvailable"] = True
@@ -178,7 +178,7 @@ def save_manifest_json(
             # list of one or many poses
             # Don't run mean_pose if we already reduced to one pose before.
             pose = poses_for_qr[0] if len(poses_for_qr) == 1 else mean_pose(poses_for_qr)
-            
+
         pose = rectify_portal_pose(pose)
 
         pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
@@ -254,7 +254,7 @@ def save_manifest_json(
                         "z": str(float(quat[2])),
                         "w": str(float(quat[3])),
                     }
-                } 
+                }
             }
     """
 

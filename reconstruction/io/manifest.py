@@ -17,13 +17,13 @@ def parse_info_from_manifest(manifest_path: Path) -> Tuple[Dict[str, Tuple[np.nd
     for p in portals:
         sid = p.get('shortId') or p.get('shortID') or p.get('id')
         pose = p.get('pose') or p.get('averagePose')  # use pose; fallback to averagePose
-        if sid is None or pose is None: 
+        if sid is None or pose is None:
             continue
         pos = pose.get('position', {})
         rot = pose.get('rotation', {})
-        if not all(k in pos for k in ('x','y','z')): 
+        if not all(k in pos for k in ('x','y','z')):
             continue
-        if not all(k in rot for k in ('x','y','z','w')): 
+        if not all(k in rot for k in ('x','y','z','w')):
             continue
         t = np.array([pos['x'], pos['y'], pos['z']], dtype=np.float64)
         R = quaternion_to_rotation_matrix((rot['x'], rot['y'], rot['z'], rot['w']))

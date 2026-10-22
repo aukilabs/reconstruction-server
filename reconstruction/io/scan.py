@@ -24,7 +24,7 @@ def get_data_paths(group_folder, logger_name=None):
             dataset_paths.append(scan_folder)
 
     logger.info(f"Using {len(dataset_paths)} scans from folder '{group_folder.name}'")
-    
+
     if truth_portal_poses:
         logger.info(f"Found {len(truth_portal_poses.keys())} truth portal poses: ")
         logger.info("\n".join(f"{id}: {value}" for id, value in truth_portal_poses.items()))
@@ -46,11 +46,11 @@ class RefinementData(NamedTuple):
 def load_scan_summary(scan_folder_path, logger):
     """
     Load scan summary data from json file.
-    
+
     Args:
         job_root_path: Path to job root directory
         logger: Logger instance
-        
+
     Returns:
         Dictionary of portal sizes
     """
@@ -85,7 +85,7 @@ def load_scan(
 ):
     """
     Load all metadata for the dataset including timestamps, intrinsics, poses, and QR detections.
-    
+
     Returns:
         RefinementData containing all loaded metadata
     """
@@ -102,7 +102,7 @@ def load_scan(
         frame_index = 0
         for row in csv.reader(csvfile):
             timestamp = round(float(row[0]) * 1e9)  # s to ns
-            filename = (f"{paths.scan_folder.name}_{frame_index:06d}.jpg" if use_frames_from_video 
+            filename = (f"{paths.scan_folder.name}_{frame_index:06d}.jpg" if use_frames_from_video
                        else row[1])
             frame_index += 1
             timestamps_per_image[filename] = timestamp
@@ -113,7 +113,7 @@ def load_scan(
     intrinsics_per_timestamp = {}
     cam_intrinsics_path = paths.scan_folder / "CameraIntrinsics.csv"
     logger.info(f'Loading camera intrinsics from {cam_intrinsics_path}')
-    
+
     with open(cam_intrinsics_path, newline='') as csvfile:
         for row in csv.reader(csvfile):
             timestamp = round(float(row[0]) * 1e9)  # s to ns
@@ -129,7 +129,7 @@ def load_scan(
     ar_poses_per_timestamp = {}
     ar_poses_path = paths.scan_folder / "ARposes.csv"
     logger.info(f'Loading AR poses from {ar_poses_path}')
-    
+
     with open(ar_poses_path, newline='') as csvfile:
         for row in csv.reader(csvfile):
             timestamp = round(float(row[0]) * 1e9)  # s to ns
@@ -138,11 +138,11 @@ def load_scan(
 
 
     # Load QR detections
-    qr_detections_path = (paths.scan_folder / "PortalDetections.csv" 
-                         if (paths.scan_folder / "PortalDetections.csv").exists() 
+    qr_detections_path = (paths.scan_folder / "PortalDetections.csv"
+                         if (paths.scan_folder / "PortalDetections.csv").exists()
                          else paths.scan_folder / "Observations.csv")
     logger.info(f'Loading QR detections from {qr_detections_path}')
-    
+
     qr_detections_per_timestamp = load_qr_detections_csv(str(qr_detections_path))
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
 
@@ -155,12 +155,12 @@ def load_scan(
         if len(data_dict) != original_image_count:
             raise ValueError(f"Mismatching number of Frames and {name}. "
                            f"Expected {original_image_count}, got {len(data_dict)}")
-        
+
 
     return RefinementData(
         timestamps_per_image=timestamps_per_image,
         intrinsics_per_timestamp=intrinsics_per_timestamp,
         ar_poses_per_timestamp=ar_poses_per_timestamp,
         qr_detections_per_timestamp=qr_detections_per_timestamp,
-        portal_sizes=portal_sizes 
+        portal_sizes=portal_sizes
     )

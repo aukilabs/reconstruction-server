@@ -7,7 +7,7 @@ from numpy import arccos, rad2deg
 
 
 def convert_pose_opengl_to_colmap(position, quaternion):
-    
+
     position = np.array([
         position[1],
         position[0],
@@ -89,7 +89,7 @@ def rectify_portal_pose(qr_pose, angle_threshold=20, height_threshold=0.5):
 
     if is_portal_almost_flat(rot3d.matrix(), angle_threshold):
         rot3d = pycolmap.Rotation3d(flatten_portal_rotation(rot3d.matrix(), angle_threshold))
-        
+
         # If flat and also near floor, snap height too. But NOT snapping desk portals to floor!
         if is_portal_near_floor_height(pos, height_threshold):
             pos = pos.copy() # avoid modifying input pose

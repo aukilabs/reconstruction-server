@@ -27,7 +27,7 @@ def precompute_arkit_offsets(image_ids, arkit_cam_from_world_transforms, arkit_p
 
 
 def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr):
-    
+
     qr_world_detections = {}
 
     print("Getting world space qr codes...")

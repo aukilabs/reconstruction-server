@@ -9,10 +9,10 @@ from reconstruction.io.colmap import BaseImage, Camera, Image, Point3D, qvec2rot
 def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'BaseImage'], pts: Dict[int, 'Point3D'],
                                   T_a: np.ndarray) -> Tuple[Dict[int, 'Camera'], Dict[int, 'BaseImage'], Dict[int, 'Point3D']]:
     """
-    Transform the entire new model (cameras & points) into the reference frame 
+    Transform the entire new model (cameras & points) into the reference frame
     using a 4x4 similarity transformation matrix.
     """
-    
+
     # Extract scale and pure rotation from the 4x4 matrix
     # T_a[:3, :3] contains s * R_a. We can find 's' by taking the norm of the first column.
     s = np.linalg.norm(T_a[:3, 0])
@@ -24,11 +24,11 @@ def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'Ba
         Rn = qvec2rotmat(im.qvec)
         tn = im.tvec
         Cn = cam_center_from_extrinsics(Rn, tn)
-        
+
         # Apply 4x4 transformation to the camera center using homogeneous coordinates
         Cn_hom = np.append(Cn, 1.0)
         C_ref = (T_a @ Cn_hom)[:3]
-        
+
         R_ref = Rn @ R_a.T
         t_ref = -R_ref @ C_ref
 
@@ -37,7 +37,7 @@ def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'Ba
         # SciPy returns [x, y, z, w], but COLMAP uses [w, x, y, z]
         q_ref2 = np.array([q_ref2[3], q_ref2[0], q_ref2[1], q_ref2[2]])
         new_imgs[iid] = BaseImage(iid, q_ref2, t_ref, im.camera_id, im.name, im.xys, im.point3D_ids)
-        
+
     # transform points
     new_pts = {}
     for pid, p in pts.items():
@@ -45,7 +45,7 @@ def apply_similarity_to_new_model(cams: Dict[int, 'Camera'], imgs: Dict[int, 'Ba
         p_hom = np.append(p.xyz, 1.0)
         X_ref = (T_a @ p_hom)[:3]
         new_pts[pid] = Point3D(pid, X_ref, p.rgb, p.error, p.image_ids, p.point2D_idxs)
-        
+
     # cameras unchanged (intrinsics)
     return cams, new_imgs, new_pts
 
@@ -123,5 +123,5 @@ def merge_models(reference_model: Tuple[Dict[int,Camera], Dict[int,Image], Dict[
             mapped[mask] = np.array(mapped_ids, dtype=np.int64)
         # namedtuple-based Image is immutable; replace with updated copy
         imgs_r[new_iid] = im_r._replace(point3D_ids=mapped)
-    
+
     return cams_r, imgs_r, pts_r, oldpid_to_newpid

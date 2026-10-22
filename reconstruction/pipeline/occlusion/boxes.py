@@ -283,7 +283,7 @@ def save_meshes_obj(meshes, filename):
         mesh_obj = trimesh.exchange.obj.export_obj(trimesh_obj)
             # Split lines and add a group name at the top
         mesh_lines = mesh_obj.splitlines()
-        
+
         lines.append(f'o {str(uuid.uuid4())}:0')
         # Update vertex indices to account for previous vertices
         for i, line in enumerate(mesh_lines):
@@ -294,7 +294,7 @@ def save_meshes_obj(meshes, filename):
                 parts[1:] = [str(int(index) + vertex_offset) for index in parts[1:]]
                 mesh_lines[i] = ' '.join(parts)
                 lines.append(mesh_lines[i])
-        
+
         # Append updated lines to main list and update vertex offset
         # lines.extend(mesh_lines)
         vertex_offset += len([line for line in mesh_lines if line.startswith('v ')])
