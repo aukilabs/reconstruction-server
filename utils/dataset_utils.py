@@ -3,7 +3,6 @@ import pycolmap
 import os 
 from pathlib import Path
 import zipfile
-import csv
 import numpy as np 
 import logging
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from utils.data_utils import (
     export_rec_as_ply,
     parse_info_from_manifest
 )
-from utils.io import Model, read_portal_csv, read_model, write_model, write_model_with_rigs
+from utils.io import read_portal_csv, read_model, write_model, write_model_with_rigs
 
 # These are Sam's additions to io.py that will be merged there separately.
 # Import them so update_helper can use them.
@@ -44,42 +43,6 @@ class Paths:
     dataset_dir: Path
     refined_group_dir: Path
     reference_path: Optional[Path] = None  # Path for reference reconstruction (global refinement set as canonical); only used in update_helper
-
-
-def _load_refined_reconstruction(partial_rec_dir: Path, logger=None) -> Optional[Model]:
-    if logger is None:
-        logger = logging.getLogger()
-
-    if not (partial_rec_dir and partial_rec_dir.exists()):
-        logger.error(f"No refined data found at: {partial_rec_dir}")
-        return None
-        
-    loaded_rec = Model()
-    loaded_rec.read_model(partial_rec_dir, logger=logger)
-    logger.info(f"Loaded refined reconstruction from {partial_rec_dir}")
-    return loaded_rec
-
-def _load_frame_timestamps(dataset: Path, logger) -> Dict[str, int]:
-    frames_csv = dataset / "Frames.csv"
-    if not frames_csv.exists():
-        logger.info("No Frames.csv found. Skipping!")
-        return {}
-
-    use_frames_from_video = (dataset / 'Frames.mp4').exists()
-    experiment_name = dataset.name
-    
-    timestamps = {}
-    with open(frames_csv, newline='') as csvfile:
-        for i, row in enumerate(csv.reader(csvfile)):
-            timestamp = round(float(row[0]) * 1e9)
-            if use_frames_from_video:
-                filename = f"{experiment_name}_{i:06d}.jpg"
-            else:
-                filename = row[1]
-            timestamps[filename] = timestamp
-            
-    logger.info(f"Loaded {len(timestamps)} frame timestamps")
-    return timestamps
 
 
 def _group_detections_by_qr(qr_detections: List[Dict]) -> Dict[str, List[pycolmap.Rigid3d]]:

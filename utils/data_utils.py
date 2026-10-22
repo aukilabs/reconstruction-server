@@ -11,7 +11,6 @@ import torch
 import logging
 import cv2
 import time
-from src.ply_export import export_ply_text
 import datetime
 import platform
 import psutil
@@ -206,72 +205,6 @@ def load_qr_detections_csv(csv_path):
 
     return detections_per_timestamp
 
-def is_rotation_parallel_to_yz_plane(quaternion, tolerance=1e-6):
-    """
-    Checks if a quaternion rotation is parallel to the YZ plane.
-    
-    Parameters:
-        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
-        tolerance (float): Numerical tolerance for the check (default 1e-6).
-        
-    Returns:
-        bool: True if the rotation axis is parallel to the YZ plane, False otherwise.
-    """
-    if len(quaternion) != 4:
-        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
-    
-    # Normalize the quaternion
-    x, y, z, w = quaternion
-    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
-    x, y, z, w = x / norm, y / norm, z / norm, w / norm
-    
-    # Rotation matrix from quaternion
-    rotation_matrix = np.array([
-        [1 - 2*(y**2 + z**2), 2*(x*y - z*w), 2*(x*z + y*w)],
-        [2*(x*y + z*w), 1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
-        [2*(x*z - y*w), 2*(y*z + x*w), 1 - 2*(x**2 + y**2)]
-    ])
-    
-    # The normal vector to the object's XY plane is the Z-axis of its local frame
-    object_z_axis = rotation_matrix[:, 2]
-    
-    # Check if the Z-axis aligns with the world's X-axis (parallel to YZ plane)
-    is_parallel = np.abs(object_z_axis[1]) < tolerance and np.abs(object_z_axis[2]) < tolerance
-    
-    return is_parallel
-
-def snap_to_yz_plane(quaternion):
-    """
-    Snaps the object's rotation so that its XY plane is parallel to the world's YZ plane,
-    while preserving its rotation about the X-axis.
-
-    Parameters:
-        quaternion (list or tuple): A quaternion represented as [x, y, z, w].
-
-    Returns:
-        list: A new quaternion [x, y, z, w] with the snapped rotation.
-    """
-    if len(quaternion) != 4:
-        raise ValueError("Quaternion must have 4 components: [x, y, z, w].")
-
-    # Normalize the quaternion
-    x, y, z, w = quaternion
-    norm = np.sqrt(w**2 + x**2 + y**2 + z**2)
-    x, y, z, w = x / norm, y / norm, z / norm, w / norm
-
-    # Convert quaternion to a rotation object
-    rotation = scipy_Rotation.from_quat([x, y, z, w])
-
-    # Decompose into Euler angles to extract X-axis rotation
-    euler_angles = rotation.as_euler('xyz', degrees=False)
-    y_rotation = euler_angles[1]  # Rotation about X-axis
-
-    # Reconstruct a quaternion with only X-axis rotation
-    snapped_rotation = scipy_Rotation.from_euler('y', y_rotation, degrees=False)
-
-    return snapped_rotation.as_quat()
-
-
 def quaternion_to_rotation_matrix(q):
     x, y, z, w = q
     return np.array([
@@ -318,14 +251,6 @@ def mean_pose(poses):
     return pycolmap.Rigid3d(pycolmap.Rotation3d(quat), pos)
 
 
-def flatten_quaternion(quat):
-    flat = quat.copy()
-    flat[1] = 0.0
-    flat[2] = 0.0
-    flat /= norm(flat)
-    return flat
-
-
 def precompute_arkit_offsets(image_ids, arkit_cam_from_world_transforms, arkit_precomputed={}):
     for image_id in image_ids:
         arkit_cam_from_world = arkit_cam_from_world_transforms[image_id]
@@ -368,25 +293,6 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
 
     return qr_world_detections
 
-
-def save_qr_poses_csv(poses_per_qr, csv_path):
-    with open(csv_path, mode='w', newline='') as csvfile:
-        csv_writer = csv.writer(csvfile)
-
-        for short_id, qr_poses in poses_per_qr.items():
-            for qr_pose in qr_poses:
-
-                pos, quat = convert_pose_colmap_to_opengl(qr_pose.translation, qr_pose.rotation.quat)
-
-                # Create a row for the CSV
-                row = [
-                    short_id,
-                    pos[0], pos[1], pos[2],
-                    quat[0], quat[1], quat[2], quat[3]
-                ]
-
-                # Write the row to the CSV file
-                csv_writer.writerow(row)
 
 def save_portal_csv(poses_per_qr, csv_path, image_ids_per_qr, portal_sizes, corners_per_qr):
     with open(csv_path, mode='w', newline='') as csvfile:
@@ -787,104 +693,6 @@ def export_rec_as_ply(rec, path, convert_to_opengl=False, logger=None):
 
     rec.export_PLY(str(path))
     logger.info(f"PLY export done")
-
-
-def evaluate_scanned_qr_codes(qr_world_detections, measure_pairs=None, truth_pairs=None):
-    
-    print()
-    for short_id, poses in qr_world_detections.items():
-        #print("poses", poses)
-        positions = [pose.translation for pose in poses]
-        up_vecs = [pose.rotation * np.array([1.0, 0.0, 0.0]) for pose in poses]
-        right_vecs = [pose.rotation * np.array([0.0, 1.0, 0.0]) for pose in poses]
-
-        pos_deviation = np.mean(np.std(np.array(positions), axis=0))
-        up_deviation = np.mean(np.std(np.array(up_vecs), axis=0))
-        right_deviation = np.mean(np.std(np.array(right_vecs), axis=0))
-        #print(up_vecs)
-        print(f"{short_id}: pos_deviation {pos_deviation}, up_deviation {up_deviation}, right_deviation {right_deviation}")
-        #print(positions)
-        #print("STD DEV:", std_deviation)
-
-    all_heights = []
-    for qr_id, poses in qr_world_detections.items():
-        for pose in poses:
-            all_heights.append(pose.translation[0])
-    print(all_heights)
-    print("Average height:", np.mean(all_heights))
-    print("Height deviation:", np.std(all_heights))
-
-    if measure_pairs is not None:
-
-        for i, pair in enumerate(measure_pairs):
-            a, b = measure_pairs[i]
-            pos1 = qr_world_detections[a][0].translation
-            pos2 = qr_world_detections[b][0].translation
-            offset = pos1 - pos2
-            offset[0] = 0 # Snap floor height
-            distances = []
-            for pose_a in qr_world_detections[a]:
-                for pose_b in qr_world_detections[b]:
-                    distances.append(norm(pose_a.translation - pose_b.translation))
-            percent_vs_truth = (norm(offset) / truth_pairs[i] - 1) * 100
-            print(f"{a} - {b}: {norm(offset):.4f},"
-                  f"{'+' if percent_vs_truth > 0 else ''}{percent_vs_truth:.2f}%,",
-                  f"{'+' if percent_vs_truth > 0 else ''}{(norm(offset) - truth_pairs[i]) * 100.0:.2f} cm,",
-                  f"(truth:{truth_pairs[i]:.5f}). (spread {np.std(distances):.4f})")
-            
-
-def pycolmap_to_batch_matrix(
-    reconstruction, device="cuda", camera_type="SIMPLE_PINHOLE"
-):
-    """
-    Convert a PyCOLMAP Reconstruction Object to batched PyTorch tensors.
-
-    Args:
-        reconstruction (pycolmap.Reconstruction): The reconstruction object from PyCOLMAP.
-        device (str): The device to place the tensors on (default: "cuda").
-        camera_type (str): The type of camera model used (default: "SIMPLE_PINHOLE").
-
-    Returns:
-        tuple: A tuple containing points3D, extrinsics, intrinsics, and optionally extra_params.
-    """
-
-    num_images = len(reconstruction.images)
-    max_points3D_id = max(reconstruction.point3D_ids())
-    points3D = np.zeros((max_points3D_id, 3))
-
-    for point3D_id in reconstruction.points3D:
-        points3D[point3D_id - 1] = reconstruction.points3D[point3D_id].xyz
-    points3D = torch.from_numpy(points3D).to(device)
-
-    extrinsics = []
-    intrinsics = []
-
-    extra_params = [] if camera_type == "SIMPLE_RADIAL" else None
-
-    for i in range(num_images):
-        # Extract and append extrinsics
-        pyimg = reconstruction.images[i]
-        pycam = reconstruction.cameras[pyimg.camera_id]
-        matrix = pyimg.cam_from_world.matrix()
-        extrinsics.append(matrix)
-
-        # Extract and append intrinsics
-        calibration_matrix = pycam.calibration_matrix()
-        intrinsics.append(calibration_matrix)
-
-        if camera_type == "SIMPLE_RADIAL":
-            extra_params.append(pycam.params[-1])
-
-    # Convert lists to torch tensors
-    extrinsics = torch.from_numpy(np.stack(extrinsics)).to(device)
-
-    intrinsics = torch.from_numpy(np.stack(intrinsics)).to(device)
-
-    if camera_type == "SIMPLE_RADIAL":
-        extra_params = torch.from_numpy(np.stack(extra_params)).to(device)
-        extra_params = extra_params[:, None]
-
-    return points3D, extrinsics, intrinsics, extra_params
 
 
 class JsonFormatter(logging.Formatter):
