@@ -150,7 +150,8 @@ def _get_refined_rec_dir(
     
     if refined_scan_path.exists():
         logger.info(f"Found refined reconstruction: {refined_scan_path}")
-        partial_rec_dir = Path(f"/content/partial_rec/{scan_name}")
+        # Under the job root, which the runner deletes with the workspace.
+        partial_rec_dir = refined_group_dir.parent / "partial_rec" / scan_name
         with zipfile.ZipFile(refined_scan_path, 'r') as zip_ref:
             zip_ref.extractall(partial_rec_dir)
         return partial_rec_dir
