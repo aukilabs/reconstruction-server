@@ -20,9 +20,10 @@ from dateutil import parser
 from pathlib import Path
 from typing import List, NamedTuple, Dict, Tuple
 
+from reconstruction.version import VERSION
+
 floor_rotation = pycolmap.Rotation3d(np.array([0, 0.7071068, 0, 0.7071068]))
 floor_rotation_inv = pycolmap.Rotation3d(np.array([0, -0.7071068, 0, 0.7071068]))
-VERSION = "develop"
 
 
 def convert_pose_opengl_to_colmap(position, quaternion):
