@@ -1,4 +1,6 @@
 import numpy as np
+import trimesh
+import uuid
 
 import open3d as o3d
 from sklearn.linear_model import LinearRegression
@@ -268,3 +270,36 @@ def draw_box_from_poly(quad_points, min_z, max_z, alpha=0.5):
     mesh.compute_vertex_normals()  # Optionally compute normals for shading
 
     return point_cloud, line_set, mesh
+
+
+def save_meshes_obj(meshes, filename):
+    # Initialize lists to accumulate lines and vertex offset for OBJ indexing
+    lines = []
+    vertex_offset = 0
+    lines.append(f'g ParentGroup')
+
+    for mesh in meshes:
+        trimesh_obj = trimesh.Trimesh(np.asarray(mesh.vertices), np.asarray(mesh.triangles))
+        mesh_obj = trimesh.exchange.obj.export_obj(trimesh_obj)
+            # Split lines and add a group name at the top
+        mesh_lines = mesh_obj.splitlines()
+        
+        lines.append(f'o {str(uuid.uuid4())}:0')
+        # Update vertex indices to account for previous vertices
+        for i, line in enumerate(mesh_lines):
+            if line.startswith('v '):
+                lines.append(line)
+            elif line.startswith('f '):  # Face definitions need updated indices
+                parts = line.split()
+                parts[1:] = [str(int(index) + vertex_offset) for index in parts[1:]]
+                mesh_lines[i] = ' '.join(parts)
+                lines.append(mesh_lines[i])
+        
+        # Append updated lines to main list and update vertex offset
+        # lines.extend(mesh_lines)
+        vertex_offset += len([line for line in mesh_lines if line.startswith('v ')])
+
+    # Save the combined lines to an OBJ file
+    with open(filename, 'w') as f:
+        f.write('\n'.join(lines))
+    return

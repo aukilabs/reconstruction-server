@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
-from reconstruction._legacy.data_utils import save_portal_csv
-from reconstruction._legacy.io import Portal, read_portal_csv, write_portal_csv
+from reconstruction.io.portals import save_portal_csv
+from reconstruction.io.portals import Portal, read_portal_csv, write_portal_csv
 
 # portals.csv has no header. Each row: image_id, short_id, size, px, py, pz, qx, qy, qz, qw, then corner x, y pairs.
 CORNERS = [(982.905, 624.91), (1076.52, 725.505), (982.816, 819.901), (894.465, 719.901)]

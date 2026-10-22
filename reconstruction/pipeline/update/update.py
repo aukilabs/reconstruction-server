@@ -7,19 +7,17 @@ import numpy as np
 import logging
 from dataclasses import dataclass
 
-from reconstruction._legacy.data_utils import (
-    mean_pose,
-    convert_pose_opengl_to_colmap,
-    convert_pose_colmap_to_opengl,
-    save_manifest_json,
-    export_rec_as_ply,
-    parse_info_from_manifest
-)
-from reconstruction._legacy.io import read_portal_csv, read_model, write_model, write_model_with_rigs
+from reconstruction.geometry.pose import mean_pose, convert_pose_opengl_to_colmap, convert_pose_colmap_to_opengl
+from reconstruction.output.manifest import save_manifest_json
+from reconstruction.output.pointcloud import export_rec_as_ply
+from reconstruction.io.manifest import parse_info_from_manifest
+from reconstruction.io.portals import read_portal_csv
+from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 
 # These are Sam's additions to io.py that will be merged there separately.
 # Import them so update_helper can use them.
-from reconstruction._legacy.io import merge_models, apply_similarity_to_new_model, validate_model_consistency
+from reconstruction.pipeline.update.merge import merge_models, apply_similarity_to_new_model
+from reconstruction.io.colmap import validate_model_consistency
 from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
 
 

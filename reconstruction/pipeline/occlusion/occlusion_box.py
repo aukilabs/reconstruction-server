@@ -8,7 +8,9 @@ import yaml
 import logging
 import sys
 
-from reconstruction._legacy.io import Model, load_yaml, save_to_yaml, save_meshes_obj
+from reconstruction.io.model import Model
+from reconstruction.io.config import load_yaml, save_to_yaml
+from reconstruction.pipeline.occlusion.boxes import save_meshes_obj
 from reconstruction.pipeline.occlusion.boxes import (
     voxelise, 
     floor_removal, 

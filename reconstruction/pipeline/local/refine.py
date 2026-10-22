@@ -6,17 +6,12 @@ from datetime import datetime
 from typing import NamedTuple
 
 from reconstruction.pipeline.local.triangulation import process_features_and_matching, triangulate_model
-from reconstruction._legacy.data_utils import (
-    convert_pose_opengl_to_colmap,
-    load_scan, 
-    precompute_arkit_offsets,
-    get_world_space_qr_codes,
-    mean_pose,
-    setup_logger,
-    save_portal_csv, 
-    process_frames,
-    rectify_portal_pose
-)
+from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, mean_pose, rectify_portal_pose
+from reconstruction.io.scan import load_scan
+from reconstruction.pipeline.local.qr import precompute_arkit_offsets, get_world_space_qr_codes
+from reconstruction.log import setup_logger
+from reconstruction.io.portals import save_portal_csv
+from reconstruction.preprocess.frames import process_frames
 
 class RefinementPaths(NamedTuple):
     """Container for all paths used in refinement."""

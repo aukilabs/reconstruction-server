@@ -4,15 +4,7 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-from reconstruction._legacy.data_utils import (
-    average_quaternions_svd,
-    convert_pose_colmap_to_opengl,
-    convert_pose_opengl_to_colmap,
-    is_floor_portal,
-    mean_pose,
-    quaternion_to_rotation_matrix,
-    vec3_angle,
-)
+from reconstruction.geometry.pose import average_quaternions_svd, convert_pose_colmap_to_opengl, convert_pose_opengl_to_colmap, is_floor_portal, mean_pose, quaternion_to_rotation_matrix, vec3_angle
 
 # Quaternions are (x, y, z, w) throughout, as in pycolmap and scipy.
 RANDOM_QUATS = Rotation.random(20, random_state=7).as_quat()

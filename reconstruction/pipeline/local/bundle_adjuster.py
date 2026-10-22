@@ -4,7 +4,7 @@ import pyceres
 import numpy as np
 from numpy.linalg import norm
 
-from reconstruction._legacy.data_utils import vec3_angle, is_floor_portal
+from reconstruction.geometry.pose import vec3_angle, is_floor_portal
 from reconstruction.native.cost_functions import (
     RelativeTransformationSE3CostFunction,
     RelativeTransformationSE3ViaObservationsCostFunction,

@@ -2,7 +2,9 @@
 from pathlib import Path
 import argparse
 import os
-from reconstruction._legacy.data_utils import add_file_handler, get_data_paths, setup_logger, write_fail_reason
+from reconstruction.log import add_file_handler, setup_logger
+from reconstruction.io.scan import get_data_paths
+from reconstruction.output.failure import write_fail_reason
 from reconstruction.pipeline.update.update import update_helper
 from reconstruction.output.pointcloud import post_process_ply
 

@@ -3,17 +3,17 @@ from pathlib import Path
 import argparse
 import os
 from reconstruction.entrypoints import _refinement
-from reconstruction._legacy.data_utils import get_data_paths, mean_pose, save_manifest_json, setup_logger
+from reconstruction.io.scan import get_data_paths
+from reconstruction.geometry.pose import mean_pose
+from reconstruction.output.manifest import save_manifest_json
+from reconstruction.log import setup_logger
 from reconstruction.output.pointcloud import post_process_ply
-from reconstruction._legacy.scan_alignment import (
-    align_scans,
-    merge_aligned_scans,
-    refine_alignment,
-    print_alignment_comparison,
-    AlignedScans,
-    portal_alignment_metrics_to_dict,
-)
-from reconstruction._legacy.io import load_yaml, read_portal_csv, save_to_yaml
+from reconstruction.pipeline.global_.alignment import align_scans, AlignedScans
+from reconstruction.pipeline.global_.merge import merge_aligned_scans
+from reconstruction.pipeline.global_.refine import refine_alignment, print_alignment_comparison
+from reconstruction.pipeline.global_.portal_metrics import portal_alignment_metrics_to_dict
+from reconstruction.io.config import load_yaml, save_to_yaml
+from reconstruction.io.portals import read_portal_csv
 from reconstruction.pipeline.topology.mesh import main as topology_main
 import logging
 from typing import Dict

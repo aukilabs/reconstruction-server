@@ -3,7 +3,9 @@ from pathlib import Path
 import argparse
 import re
 
-from reconstruction._legacy.data_utils import save_failed_manifest_json, setup_logger, write_fail_reason
+from reconstruction.output.manifest import save_failed_manifest_json
+from reconstruction.log import setup_logger
+from reconstruction.output.failure import write_fail_reason
 
 def infer_domain_and_job_from_job_root(job_root_path: Path) -> tuple[str, str] | None:
     """If job_root_path ends with <domain_uuid>/job_<uuid>, return (domain_id, job_id)."""

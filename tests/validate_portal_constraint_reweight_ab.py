@@ -32,15 +32,9 @@ import numpy as np
 import pycolmap
 
 from reconstruction.pipeline.update.update import transform_with_scale
-from reconstruction._legacy.scan_alignment import (
-    AlignedScans,
-    PortalAlignmentMetrics,
-    PortalSpreadRmse,
-    align_scans,
-    compute_portal_spread_metrics,
-    compute_portal_spread_rmse,
-    refine_alignment,
-)
+from reconstruction.pipeline.global_.alignment import AlignedScans, align_scans
+from reconstruction.pipeline.global_.portal_metrics import PortalAlignmentMetrics, PortalSpreadRmse, compute_portal_spread_metrics, compute_portal_spread_rmse
+from reconstruction.pipeline.global_.refine import refine_alignment
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FIXTURE = (
