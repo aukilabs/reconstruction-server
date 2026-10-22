@@ -14,6 +14,7 @@ pub struct OutputSpec {
     pub mandatory: bool,
 }
 
+// Mirrored in tests/test_upload_contract.py (UPLOAD_TABLE); keep both in sync.
 const GLOBAL_OUTPUTS: &[OutputSpec] = &[
     OutputSpec {
         relative_path: "refined/global/refined_manifest.json",
