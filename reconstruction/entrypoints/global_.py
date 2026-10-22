@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import os
 from reconstruction.entrypoints import _refinement
+from reconstruction.layout import JobLayout
 from reconstruction.io.scan import get_data_paths
 from reconstruction.geometry.pose import mean_pose
 from reconstruction.output.manifest import save_manifest_json
@@ -26,7 +27,7 @@ def collect_portal_sizes(scan_ids, job_root_path, logger):
     portal_sizes = {}
 
     for scan_id in scan_ids:
-        portals_csv_path = job_root_path / "refined" / "local" / scan_id / "sfm" / "portals.csv"
+        portals_csv_path = JobLayout(job_root_path).refined_sfm(scan_id) / "portals.csv"
         if not portals_csv_path.exists():
             continue
 
@@ -188,19 +189,20 @@ def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
     logger.info("Done with occlusion box extraction!")
 
 
-def global_main_wrapper(args, logger):
+def global_main_wrapper(args, layout, logger):
     """Run global refinement process.
 
     Args:
         args: Command line arguments
+        layout: JobLayout of the job
         logger: Logger instance
     """
     logger.info("--------------------------------")
     logger.info(f"Running global refinement with {len(args.scans)} scans")
 
     global_args = argparse.Namespace(
-        data_dir=Path(args.job_root_path) / "datasets",
-        output_path=Path(args.output_path) / "global",
+        data_dir=layout.datasets,
+        output_path=layout.refined_global,
         domain_id=args.domain_id,
         job_id=args.job_id,
         log_level=args.log_level,

@@ -4,6 +4,7 @@ import csv
 import logging
 from typing import NamedTuple, Dict
 from reconstruction.io.portals import load_portals_json, load_qr_detections_csv
+from reconstruction.io.job_meta import load_scan_data_summary
 
 
 def get_data_paths(group_folder, logger_name=None):
@@ -56,9 +57,8 @@ def load_scan_summary(scan_folder_path, logger):
     portal_sizes = {}
     job_root_path = scan_folder_path.parent.parent
     try:
-        scan_data_summary_path = job_root_path / "scan_data_summary.json"
-        if scan_data_summary_path.exists():
-            scan_data_summary = json.load(open(scan_data_summary_path))
+        scan_data_summary = load_scan_data_summary(job_root_path)
+        if scan_data_summary is not None:
             for portal_id, portal_size in zip(
                 scan_data_summary["portalIDs"],
                 scan_data_summary["portalSizes"]

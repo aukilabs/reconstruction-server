@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 from reconstruction.native.reconstruction_merge import append_reconstruction
 from reconstruction.pipeline.global_.alignment import AlignedScans
+from reconstruction.layout import JobLayout
 
 
 def merge_aligned_scans(
@@ -22,7 +23,7 @@ def merge_aligned_scans(
     combined_rec = pycolmap.Reconstruction()
 
     for i, scan_id in enumerate(aligned_scans.scan_ids):
-        scan_path = job_root_path / "refined" / "local" / scan_id / "sfm"
+        scan_path = JobLayout(job_root_path).refined_sfm(scan_id)
         rec = pycolmap.Reconstruction()
         logger.info(f"Align and merge scan {i} / {len(aligned_scans.scan_ids)}: {scan_id}")
         logger.debug(f"-- Reading ...")

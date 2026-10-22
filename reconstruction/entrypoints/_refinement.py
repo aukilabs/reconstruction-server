@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import re
 
+from reconstruction.layout import JobLayout
 from reconstruction.output.manifest import save_failed_manifest_json
 from reconstruction.log import setup_logger
 from reconstruction.output.failure import write_fail_reason
@@ -50,20 +51,20 @@ def get_available_scans(datasets_path):
     ]
 
 
-def handle_refinement_error(error, args, logger):
+def handle_refinement_error(error, layout, logger):
     """Handle errors during refinement process.
 
     Args:
         error: The exception that occurred
-        args: Command line arguments
+        layout: JobLayout of the job
         logger: Logger instance
     """
     logger.error(f"Refinement failed with exception: {error}")
-    write_fail_reason(args.job_root_path, error, logger)
+    write_fail_reason(layout.job_root, error, logger)
 
-    manifest_out_path = args.job_root_path / "job_manifest.json"
+    manifest_out_path = layout.job_manifest_json
     logger.error(f"Saving 'failed' manifest to: {manifest_out_path}")
-    save_failed_manifest_json(manifest_out_path, args.job_root_path, str(error))
+    save_failed_manifest_json(manifest_out_path, layout.job_root, str(error))
 
 
 def run(args, refine):
@@ -71,11 +72,14 @@ def run(args, refine):
 
     Args:
         args: Command line arguments
-        refine: Stage function, called as refine(args, logger)
+        refine: Stage function, called as refine(args, layout, logger)
     """
+    layout = JobLayout(args.job_root_path, args.output_path)
+    args.output_path = layout.refined
+
     logger = setup_logger(
         name='main',
-        log_file=args.job_root_path / 'log.txt',
+        log_file=layout.log_txt,
         domain_id=args.domain_id,
         job_id=args.job_id,
         level=args.log_level,
@@ -86,16 +90,12 @@ def run(args, refine):
     # Get available scans from datasets directory
     if not args.scans:
         logger.warning("--scans not provided, will use all available scans from datasets directory")
-        args.scans = get_available_scans(args.job_root_path / "datasets")
-
-    # Set default output path if not specified
-    if not args.output_path:
-        args.output_path = args.job_root_path / "refined"
+        args.scans = get_available_scans(layout.datasets)
 
     try:
-        refine(args, logger)
+        refine(args, layout, logger)
     except Exception as e:
-        handle_refinement_error(e, args, logger)
+        handle_refinement_error(e, layout, logger)
         raise e
 
 

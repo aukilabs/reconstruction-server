@@ -4,6 +4,7 @@ import argparse
 import os
 from reconstruction.log import add_file_handler, setup_logger
 from reconstruction.io.scan import get_data_paths
+from reconstruction.layout import JobLayout
 from reconstruction.output.failure import write_fail_reason
 from reconstruction.pipeline.update.update import update_helper
 from reconstruction.output.pointcloud import post_process_ply
@@ -12,7 +13,7 @@ def main(args):
     # Create and configure logger
     output_path = args.output_path
     os.makedirs(output_path, exist_ok=True)
-    job_root_path = args.data_path.parent.parent
+    layout = JobLayout.from_refined_local(args.data_path)
     update_log_file = str(output_path) + "/update_logs"
     logger = setup_logger(
         name="update_refinement", 
@@ -22,17 +23,17 @@ def main(args):
         level=args.log_level
     )
     # The runner uploads job_root/log.txt as the task log.
-    add_file_handler(logger, job_root_path / "log.txt")
+    add_file_handler(logger, layout.log_txt)
 
     try:
-        update_refinement(args, job_root_path, logger)
+        update_refinement(args, layout, logger)
     except Exception as e:
         logger.error(f"Update refinement failed with exception: {e}")
-        write_fail_reason(job_root_path, e, logger)
+        write_fail_reason(layout.job_root, e, logger)
         raise e
 
 
-def update_refinement(args, job_root_path, logger):
+def update_refinement(args, layout, logger):
     output_path = args.output_path
 
     # Find all stitch paths
@@ -52,7 +53,7 @@ def update_refinement(args, job_root_path, logger):
     # Perform Update Refinement
     result = update_helper(
         dataset_paths=dataset_paths,
-        job_root_path=job_root_path,
+        layout=layout,
         logger_name="update_refinement"
     )
 

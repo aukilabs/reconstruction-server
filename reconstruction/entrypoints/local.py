@@ -1,21 +1,21 @@
 """Local refinement: refine each scan in <job root>/datasets into <output>/local/<scan>/sfm."""
-from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 
 from reconstruction.entrypoints import _refinement
 from reconstruction.pipeline.local.refine import refine_dataset
 
 
-def process_local_refinement(args, scan, worker_pool=None):
+def process_local_refinement(args, layout, scan, worker_pool=None):
     """Process local refinement for a single scan.
 
     Args:
         args: Command line arguments
+        layout: JobLayout of the job
         scan: Name of the scan to process
     """
     return refine_dataset(
-        Path(args.job_root_path) / 'datasets' / scan,
-        Path(args.output_path) / "local",
+        layout,
+        scan,
         every_nth_image=1,
         remove_outputs=False,
         domain_id=args.domain_id,
@@ -26,11 +26,12 @@ def process_local_refinement(args, scan, worker_pool=None):
     )
 
 
-def local_main_wrapper(args, logger):
+def local_main_wrapper(args, layout, logger):
     """Run local refinement on all scans.
 
     Args:
         args: Command line arguments
+        layout: JobLayout of the job
         logger: Logger instance
     """
     logger.info("--------------------------------")
@@ -44,7 +45,7 @@ def local_main_wrapper(args, logger):
         futures = []
         for scan in args.scans:
             logger.info(f"Refining scan {scan}...")
-            future = process_local_refinement(args, scan, pool_executor)
+            future = process_local_refinement(args, layout, scan, pool_executor)
             if future:
                 logger.info(f"Finished part 1 of local refinement for scan {scan}. Part 2 queued to worker pool.")
                 futures.append(future)

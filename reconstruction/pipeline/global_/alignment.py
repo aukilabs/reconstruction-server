@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from reconstruction.geometry.pose import transform_with_scale
 from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, flatten_portal_rotation, is_portal_almost_flat, mean_pose
 from reconstruction.io.portals import portalPose, read_portal_csv
+from reconstruction.layout import JobLayout
 
 
 @dataclass
@@ -108,7 +109,7 @@ def align_scans(
 
     logger.info("Basic scan alignment from overlapping portals...")
 
-    local_refined_dir = job_root_path / "refined" / "local"
+    layout = JobLayout(job_root_path)
 
     scans_already_aligned: List[str] = []
     scans_to_align: List[str] = scan_ids.copy()
@@ -122,7 +123,7 @@ def align_scans(
         try:
 
             scanID = scans_to_align.pop(0)
-            refined_scan_path = local_refined_dir / scanID / "sfm"
+            refined_scan_path = layout.refined_sfm(scanID)
             portals_csv_path = refined_scan_path / "portals.csv"
             if not portals_csv_path.exists():
                 logger.error(f"Portals CSV file not found for scan {scanID} (path: {portals_csv_path})")

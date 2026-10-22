@@ -27,29 +27,30 @@ class RefinementPaths(NamedTuple):
     log_path: Path
 
 
-def setup_refinement_paths(scan_folder_path, output_path):
+def setup_refinement_paths(layout, scan):
     """
     Setup and create necessary directories for refinement.
     
     Args:
-        scan_folder_path: Path to scan folder
-        output_path: Base output path
+        layout: JobLayout of the job
+        scan: Name of the scan folder under datasets/
         
     Returns:
         RefinementPaths object containing all necessary paths
     """
-    experiment_name = scan_folder_path.name
+    scan_folder_path = layout.dataset(scan)
+    sfm_dir = layout.refined_sfm(scan)
     paths = RefinementPaths(
         scan_folder=scan_folder_path,
-        output=output_path / experiment_name,
+        output=layout.refined_scan(scan),
         images=scan_folder_path / 'Frames/',
-        sfm_dir=output_path / experiment_name / 'sfm',
-        colmap_rec=output_path / experiment_name / 'colmap_rec',
-        features=output_path / experiment_name / 'sfm/features.h5',
-        global_features=output_path / experiment_name / 'sfm/global_features.h5',
-        matches=output_path / experiment_name / 'sfm/matches.h5',
-        sfm_pairs=output_path / experiment_name / 'sfm/pairs-sfm.txt',
-        log_path=output_path / experiment_name
+        sfm_dir=sfm_dir,
+        colmap_rec=layout.refined_scan(scan) / 'colmap_rec',
+        features=sfm_dir / 'features.h5',
+        global_features=sfm_dir / 'global_features.h5',
+        matches=sfm_dir / 'matches.h5',
+        sfm_pairs=sfm_dir / 'pairs-sfm.txt',
+        log_path=layout.refined_scan(scan)
     )
 
     # Create necessary directories
@@ -275,8 +276,8 @@ def refine_dataset_part_two(
 
 
 def refine_dataset(
-    scan_folder_path, 
-    output_path,
+    layout,
+    scan,
     every_nth_image=1,
     remove_outputs=False,
     domain_id="",
@@ -289,8 +290,9 @@ def refine_dataset(
     Refine a dataset using Structure from Motion techniques.
     
     Args:
-        scan_folder_path: Path to the scan folder
-        output_path: Path for output files
+        layout: JobLayout of the job; the scan is read from datasets/<scan> and refined
+            into refined/local/<scan>
+        scan: Name of the scan folder
         every_nth_image: Process every nth image
         remove_outputs: Whether to remove existing outputs
         domain_id: Domain identifier
@@ -304,9 +306,7 @@ def refine_dataset(
     start_time = datetime.now()
 
     # Setup paths and logging
-    paths = setup_refinement_paths(
-        scan_folder_path, output_path
-    )
+    paths = setup_refinement_paths(layout, scan)
 
     # Setup Logging
     logger = setup_logger(
@@ -314,11 +314,11 @@ def refine_dataset(
         log_file=str(paths.log_path / "local_logs"), 
         domain_id=domain_id, 
         job_id=job_id, 
-        dataset_id=scan_folder_path.name,
+        dataset_id=scan,
         level=log_level,
         log_format=log_format
     )
-    logger.info(f'Starting local refinement of {scan_folder_path.name}')
+    logger.info(f'Starting local refinement of {scan}')
 
     # Process frames and load data
     references, use_frames_from_video, original_image_count = process_frames(

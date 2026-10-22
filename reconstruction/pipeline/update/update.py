@@ -5,7 +5,6 @@ from pathlib import Path
 import zipfile
 import numpy as np 
 import logging
-from dataclasses import dataclass
 
 from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_opengl, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
@@ -13,20 +12,12 @@ from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import parse_info_from_manifest
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
+from reconstruction.layout import JobLayout
 from reconstruction.pipeline.global_.alignment import NoOverlapException, floor_origin_portal_pose
 from reconstruction.pipeline.update.merge import merge_models, apply_similarity_to_new_model
 from reconstruction.io.colmap import validate_model_consistency
 from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
 
-
-
-@dataclass
-class Paths:
-    parent_dir: Path
-    output_path: Path
-    dataset_dir: Path
-    refined_group_dir: Path
-    reference_path: Optional[Path] = None  # Path for reference reconstruction (global refinement set as canonical); only used in update_helper
 
 
 def _group_detections_by_qr(qr_detections: List[Dict]) -> Dict[str, List[pycolmap.Rigid3d]]:
@@ -87,39 +78,9 @@ def _calculate_alignment_to_reference(
 
 
 
-def _initialize_paths(job_root_path: Path, function: str = "stitching_helper") -> Paths:
-    """Initialize all required paths.
-    
-    When called as _initialize_paths(group_folder) with a single arg (legacy/develop API),
-    parent_dir is group_folder.parent and output is under refined/global.
-    
-    When called with function="update_helper", job_root_path IS the parent_dir,
-    and output goes to refined/update with a reference_path at refined/global.
-    """
-    if function == "stitching_helper":
-        # Legacy behavior: group_folder.parent is the root
-        parent_dir = job_root_path.parent
-        output_path = parent_dir / "refined" / "global"
-        reference_path = None
-    elif function == "update_helper":
-        parent_dir = job_root_path
-        output_path = parent_dir / "refined" / "update"
-        reference_path = parent_dir / "refined" / "global"
-    else:
-        raise ValueError(f"Unknown function: {function}")
-
-    dataset_dir = parent_dir / "datasets"
-    refined_group_dir = parent_dir / "refined"
-
-    os.makedirs(refined_group_dir, exist_ok=True)
-    os.makedirs(dataset_dir, exist_ok=True)
-
-    return Paths(parent_dir, output_path, dataset_dir, refined_group_dir, reference_path)
-
-
 def _get_refined_rec_dir(
     use_refined_outputs: bool,
-    refined_group_dir: Path,
+    layout: JobLayout,
     scan_name: str,
     logger
 ) -> Optional[Path]:
@@ -127,18 +88,18 @@ def _get_refined_rec_dir(
     if not use_refined_outputs:
         return None
 
-    refined_scan_dir = refined_group_dir / "local" / scan_name
+    refined_scan_dir = layout.refined_scan(scan_name)
     refined_scan_path = refined_scan_dir / "reconstruction_refined_x1.zip"
     
     if refined_scan_path.exists():
         logger.info(f"Found refined reconstruction: {refined_scan_path}")
         # Under the job root, which the runner deletes with the workspace.
-        partial_rec_dir = refined_group_dir.parent / "partial_rec" / scan_name
+        partial_rec_dir = layout.partial_rec(scan_name)
         with zipfile.ZipFile(refined_scan_path, 'r') as zip_ref:
             zip_ref.extractall(partial_rec_dir)
         return partial_rec_dir
     
-    return refined_scan_dir / 'sfm'
+    return layout.refined_sfm(scan_name)
 
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dict[str, pycolmap.Rigid3d], Dict[str, float]]:
@@ -177,7 +138,7 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
 
 def update_helper(
     dataset_paths: List[Path],
-    job_root_path: Path,
+    layout: JobLayout,
     logger_name: Optional[str] = None
 ) -> bool:
     """Main function to merge new scan reconstructions into an existing reference model.
@@ -193,7 +154,7 @@ def update_helper(
     
     Args:
         dataset_paths: List of paths to datasets (zip files or directories) to merge
-        job_root_path: Path to the root folder for the update job
+        layout: JobLayout of the update job
         logger_name: Name of logger to use
 
     Returns:
@@ -202,15 +163,15 @@ def update_helper(
 
     logger = logging.getLogger(logger_name)
 
-    # Initialize paths and data
-    paths = _initialize_paths(job_root_path, "update_helper")
+    os.makedirs(layout.refined, exist_ok=True)
+    os.makedirs(layout.datasets, exist_ok=True)
 
     pending_update_rec = []
 
     dataset_rec_paths = [
         _get_refined_rec_dir(
             True,
-            paths.refined_group_dir,
+            layout,
             scan_name,
             logger
         ) for scan_name in [path.stem for path in dataset_paths]]
@@ -228,8 +189,8 @@ def update_helper(
     
     # Loading the reference model that will be refined. This should be the model
     # set to be canonical, which is the latest colmap model of the domain.
-    cams_r, imgs_r, pts_r = read_model(paths.reference_path / "refined_sfm_combined", ".bin", logger=logger)
-    portal_r, refined_files_r = parse_info_from_manifest(paths.reference_path / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
+    cams_r, imgs_r, pts_r = read_model(layout.refined_global / "refined_sfm_combined", ".bin", logger=logger)
+    portal_r, refined_files_r = parse_info_from_manifest(layout.refined_global / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
     portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
     portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
 
@@ -262,9 +223,9 @@ def update_helper(
         logger.info(f"Pruned reference model has {len(pruned_imgs_r)} images and {len(pruned_pts_r)} points (out of original {len(imgs_r)} images and {len(pts_r)} points).")
         if logger.level <= logging.DEBUG:
             validate_model_consistency(cams_r, pruned_imgs_r, pruned_pts_r, logger=logger)
-            os.makedirs(paths.output_path / f"pruned_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
-            write_model(cams_r, pruned_imgs_r, pruned_pts_r, paths.output_path / f"pruned_update_{pending_update_rec_dir.parent.name}")
-            logger.debug(f"Exported pruned reference model to {paths.output_path / f'pruned_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(pruned_imgs_r)} images, and {len(pruned_pts_r)} points.")
+            os.makedirs(layout.refined_update / f"pruned_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
+            write_model(cams_r, pruned_imgs_r, pruned_pts_r, layout.refined_update / f"pruned_update_{pending_update_rec_dir.parent.name}")
+            logger.debug(f"Exported pruned reference model to {layout.refined_update / f'pruned_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(pruned_imgs_r)} images, and {len(pruned_pts_r)} points.")
 
         # Merge the pruned reference model with the new aligned reconstruction.
         cams_r, imgs_r, pts_r, _ = merge_models(
@@ -273,9 +234,9 @@ def update_helper(
         )
         if logger.level <= logging.DEBUG:
             validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
-            os.makedirs(paths.output_path / f"merged_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
-            write_model(cams_r, imgs_r, pts_r, paths.output_path / f"merged_update_{pending_update_rec_dir.parent.name}")
-            logger.debug(f"Exported merged model to {paths.output_path / f'merged_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
+            os.makedirs(layout.refined_update / f"merged_update_{pending_update_rec_dir.parent.name}", exist_ok=True)
+            write_model(cams_r, imgs_r, pts_r, layout.refined_update / f"merged_update_{pending_update_rec_dir.parent.name}")
+            logger.debug(f"Exported merged model to {layout.refined_update / f'merged_update_{pending_update_rec_dir.parent.name}'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
 
         # Transform and Merge Portals.
         # Only add new portals; do not modify existing portals in the reference model
@@ -290,27 +251,27 @@ def update_helper(
             portal_sizes[pid] = portal_sizes_u[pid]
 
     # Export the merged model for inspection
-    os.makedirs(paths.output_path / "refined_sfm_combined", exist_ok=True)
+    os.makedirs(layout.refined_update / "refined_sfm_combined", exist_ok=True)
     # All five files (incl. frames.bin/rigs.bin): the update runner uploads them as
     # mandatory, and splatter / a later update need them as input.
-    write_model_with_rigs(cams_r, imgs_r, pts_r, paths.output_path / "refined_sfm_combined", logger=logger)
-    logger.debug(f"Exported updated reconstruction to {paths.output_path / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
+    write_model_with_rigs(cams_r, imgs_r, pts_r, layout.refined_update / "refined_sfm_combined", logger=logger)
+    logger.debug(f"Exported updated reconstruction to {layout.refined_update / 'refined_sfm_combined'}. Model contains {len(cams_r)} cameras, {len(imgs_r)} images, and {len(pts_r)} points.")
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
-    manifest_path = paths.output_path / 'refined_manifest.json'
+    manifest_path = layout.refined_update / 'refined_manifest.json'
     portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
     portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
     save_manifest_json(
         portals,
         manifest_path,
-        paths.parent_dir,
+        layout.job_root,
         job_status="refined",
         job_progress=100,
         portal_sizes=portal_sizes,
         previous_scan_files=refined_files_r
     )
 
-    ply_path = paths.refined_group_dir / 'update' / "RefinedPointCloud.ply"
+    ply_path = layout.refined_update / "RefinedPointCloud.ply"
     rec = pycolmap.Reconstruction()
     for point in pts_r.values():
         x, y, z = point.xyz

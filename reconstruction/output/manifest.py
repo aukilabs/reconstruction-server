@@ -11,6 +11,7 @@ from dateutil import parser
 from pathlib import Path
 from reconstruction.version import VERSION
 from reconstruction.geometry.pose import convert_pose_colmap_to_opengl, mean_pose, rectify_portal_pose
+from reconstruction.io.job_meta import load_job_metadata, load_scan_data_summary
 
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
@@ -59,9 +60,8 @@ def save_manifest_json(
     #-------------------------
 
     try:
-        job_metadata_json_path = job_root_path / "job_metadata.json"
-        if job_metadata_json_path.exists():
-            job_metadata_json = json.load(open(job_metadata_json_path))
+        job_metadata_json = load_job_metadata(job_root_path)
+        if job_metadata_json is not None:
 
             created_datetime = parser.isoparse(job_metadata_json["created_at"])
             current_datetime = datetime.datetime.now(datetime.timezone.utc)
@@ -90,9 +90,8 @@ def save_manifest_json(
     if portal_sizes is None:
         portal_sizes = {}
     try:
-        scan_data_summary_path = job_root_path / "scan_data_summary.json"
-        if scan_data_summary_path.exists():
-            scan_data_summary = json.load(open(scan_data_summary_path))
+        scan_data_summary = load_scan_data_summary(job_root_path)
+        if scan_data_summary is not None:
             manifest_data["scanDataSummary"] = scan_data_summary
             for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
                 portal_sizes[portal_id] = portal_size
