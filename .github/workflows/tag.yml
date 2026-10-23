@@ -20,7 +20,7 @@ jobs:
 
       - name: Update version in file
         run: |
-          sed -i 's/VERSION = "develop"/VERSION = "${{ github.ref_name }}"/' utils/data_utils.py
+          sed -i 's/VERSION = "develop"/VERSION = "${{ github.ref_name }}"/' reconstruction/version.py
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3

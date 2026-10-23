@@ -256,8 +256,14 @@ mod tests {
             related_files: Vec::new(),
             extracted_paths: Vec::new(),
         };
-        let workspace =
-            Workspace::create(Some(&tmp.path().join("ws")), "domain", Some("job"), "task").unwrap();
+        let workspace = Workspace::create(
+            crate::workspace::Stage::Local,
+            Some(&tmp.path().join("ws")),
+            "domain",
+            Some("job"),
+            "task",
+        )
+        .unwrap();
 
         let copied = copy_materialized_to_workspace(&materialized, &workspace).unwrap();
 
