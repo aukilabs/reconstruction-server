@@ -1,4 +1,5 @@
 """Writes refined_manifest.json and the failed job_manifest.json."""
+import logging
 import pycolmap
 import json
 import torch
@@ -12,6 +13,8 @@ from pathlib import Path
 from reconstruction.version import VERSION
 from reconstruction.geometry.pose import convert_pose_colmap_to_opengl, mean_pose, rectify_portal_pose
 from reconstruction.io.job_meta import load_job_metadata, load_scan_data_summary
+
+logger = logging.getLogger(__name__)
 
 
 def save_failed_manifest_json(json_path, job_root_path, job_status_details):
@@ -79,8 +82,8 @@ def save_manifest_json(
                 manifest_data["dataIDs"].extend(previous_scan_files)
 
     except Exception as e:
-        print("No job metadata found for manifest")
-        print(e)
+        logger.info("No job metadata found for manifest")
+        logger.info(e)
         pass
 
     #-------------------------
@@ -96,8 +99,8 @@ def save_manifest_json(
             for portal_id, portal_size in zip(scan_data_summary["portalIDs"], scan_data_summary["portalSizes"]):
                 portal_sizes[portal_id] = portal_size
     except Exception as e:
-        print("No scan data summary found for manifest")
-        print(e)
+        logger.info("No scan data summary found for manifest")
+        logger.info(e)
         pass
 
     #-------------------------
@@ -109,8 +112,8 @@ def save_manifest_json(
     try:
         manifest_data["serverDetails"]["os"] = platform.platform()
     except Exception as e:
-        print("Could not get OS details for manifest")
-        print(e)
+        logger.info("Could not get OS details for manifest")
+        logger.info(e)
         pass
 
     try:
@@ -121,8 +124,8 @@ def save_manifest_json(
             "load": psutil.cpu_percent(interval=1),
         }
     except Exception as e:
-        print("Could not get CPU info for manifest")
-        print(e)
+        logger.info("Could not get CPU info for manifest")
+        logger.info(e)
         pass
 
     try:
@@ -133,8 +136,8 @@ def save_manifest_json(
             "usedPercent": psutil.virtual_memory().percent
         }
     except Exception as e:
-        print("Could not get memory info for manifest")
-        print(e)
+        logger.info("Could not get memory info for manifest")
+        logger.info(e)
         pass
 
     try:
@@ -144,8 +147,8 @@ def save_manifest_json(
         else:
             manifest_data["serverDetails"]["cudaAvailable"] = False
     except Exception as e:
-        print("Could not get CUDA info for manifest")
-        print(e)
+        logger.info("Could not get CUDA info for manifest")
+        logger.info(e)
         manifest_data["serverDetails"]["cudaAvailable"] = False
         pass
 
@@ -161,8 +164,8 @@ def save_manifest_json(
             for gpu in GPUtil.getGPUs()
         ] if len(GPUtil.getGPUs()) > 0 else [],
     except Exception as e:
-        print("Could not get GPU info for manifest")
-        print(e)
+        logger.info("Could not get GPU info for manifest")
+        logger.info(e)
         pass
 
     #-------------------------

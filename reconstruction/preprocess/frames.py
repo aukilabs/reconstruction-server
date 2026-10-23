@@ -1,12 +1,15 @@
 """Frame extraction from Frames.mp4 and frame selection."""
+import logging
 import os
 import cv2
 
 
-def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
+def mp4_to_frames(mp4_path, frames_path, filename_prefix="", logger=None):
+    if logger is None:
+        logger = logging.getLogger(__name__)
     capture = cv2.VideoCapture(mp4_path)
     frame_count = 0
-    print("Unpacking mp4 to frames:", mp4_path, "->", frames_path)
+    logger.info("Unpacking mp4 to frames: %s -> %s", mp4_path, frames_path)
     while capture.isOpened():
         ret, frame = capture.read()
         if not ret:
@@ -15,7 +18,7 @@ def mp4_to_frames(mp4_path, frames_path, filename_prefix=""):
         if not os.path.exists(img_path):
             cv2.imwrite(img_path, frame)
         frame_count += 1
-    print(f"Unpacked {frame_count} frames from mp4")
+    logger.info(f"Unpacked {frame_count} frames from mp4")
     capture.release()
 
 
@@ -38,7 +41,7 @@ def process_frames(
         logger.info(f"Frames mp4 found, unpacking into {paths.images}")
         if not paths.images.exists():
             paths.images.mkdir()
-        mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_")
+        mp4_to_frames(frames_mp4, paths.images, filename_prefix=f"{paths.scan_folder.name}_", logger=logger)
         use_frames_from_video = True
 
     references = [str(p.relative_to(paths.images)) for p in paths.images.iterdir()]

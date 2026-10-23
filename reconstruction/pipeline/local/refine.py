@@ -192,7 +192,8 @@ def process_QR(
     stitched_qr_detections = get_world_space_qr_codes(
         refined_rec, 
         detections_per_qr, 
-        image_ids_per_qr
+        image_ids_per_qr,
+        logger=logger
     )
     stitched_mean_qr_poses = {
         qr_id: mean_pose(poses) for qr_id, poses in stitched_qr_detections.items() if poses

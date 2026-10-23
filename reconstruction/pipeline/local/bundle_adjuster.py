@@ -1,3 +1,4 @@
+import logging
 import pycolmap
 import pycolmap.cost_functions
 import pyceres
@@ -12,6 +13,9 @@ from reconstruction.native.cost_functions import (
     FloorAlignmentCostFunction,
     GravityDirectionPriorCostFunction,
 )
+
+logger = logging.getLogger(__name__)
+
 
 class PyBundleAdjuster(object):
     # Python implementation of COLMAP bundle adjuster with pyceres
@@ -71,7 +75,7 @@ class PyBundleAdjuster(object):
                         """
                         if angle_from_cam_forward > 10:
                             if verbose:
-                                print(f"QR {qr_id} in image {image_id} is more than 10 deg away from cam center, SKIP loop closure.",
+                                logger.info("%s %s", f"QR {qr_id} in image {image_id} is more than 10 deg away from cam center, SKIP loop closure.",
                                     f"(angle_from_cam_forward={angle_from_cam_forward}, qr_center_camspace={qr_center_camspace})")
                         else:
                         """
@@ -104,12 +108,12 @@ class PyBundleAdjuster(object):
                                    qr_world_points_per_image_id[image_id].append(point3D)
                             
                             if debug_this_qr:
-                               print(f"QR {qr_id} in",
+                               logger.info(" ".join(str(part) for part in (f"QR {qr_id} in",
                                    f"image {image_id} ({reconstruction.images[image_id].name}): center pixel:",
                                    qr_center_imgspace, ", Cam-space center: ", qr_center_camspace,
                                    f", {len(qr_world_points_per_image_id[image_id])} 3D features with height deviation",
                                    f"{np.std([point.xyz[0] for point in qr_world_points_per_image_id[image_id]]):.6f}",
-                                   ", pose: ", detection)
+                                   ", pose: ", detection)))
 
 
                     added = self.add_qr_detections_to_problem(
@@ -119,7 +123,7 @@ class PyBundleAdjuster(object):
                         debug_this_qr
                     )
                     if verbose and not added:
-                        print("Skipped adding loop closure for QR", qr_id)
+                        logger.info("Skipped adding loop closure for QR %s", qr_id)
 
                     debug_first_qr = False
 
@@ -153,7 +157,7 @@ class PyBundleAdjuster(object):
             """
         #"""
 
-        print(f"Adding {len(self.config.variable_points)} variable points and {len(self.config.constant_points)} constant points to the problem")
+        logger.info(f"Adding {len(self.config.variable_points)} variable points and {len(self.config.constant_points)} constant points to the problem")
         for point3D_id in self.config.variable_points:
             self.add_point_to_problem(point3D_id, reconstruction, loss)
         for point3D_id in self.config.constant_points:
@@ -379,7 +383,7 @@ class PyBundleAdjuster(object):
         # However, we must never add the same cam pose multiple times to the parameter blocks, or ceres throws an error
         # So, we store detections as an array with image_id as key.
         if len(detections_per_image_id) <= 1:
-            print(f"Cannot add QR loop closure with less than two images. Skipping! (got {len(detections_per_image_id)} detections)")
+            logger.info(f"Cannot add QR loop closure with less than two images. Skipping! (got {len(detections_per_image_id)} detections)")
             return False
         
         # Bring floor portals to height 0 and flatten their rotation
@@ -408,7 +412,7 @@ class PyBundleAdjuster(object):
             self.add_residual_block("QrFloorAlignment", cost, None, params, image_id)
             
             if debugging:
-                print(f"Added floor alignment constraint for QR in image {image_id}")
+                logger.info(f"Added floor alignment constraint for QR in image {image_id}")
         
         # Loop closure for multiple detections of same QR code
         for i, image_id_i in enumerate(list(detections_per_image_id.keys())[:-1]):
@@ -517,7 +521,7 @@ class PyBundleAdjuster(object):
                 try:
                     self.problem.set_parameter_block_constant(point3D.xyz)
                 except:
-                    print("FAILURE, num_observations =", num_observations, ", track length =", point3D.track.length())
+                    logger.info("FAILURE, num_observations = %s , track length = %s", num_observations, point3D.track.length())
                     raise
         for point3D_id in self.config.constant_points:
             point3D = reconstruction.points3D[point3D_id]

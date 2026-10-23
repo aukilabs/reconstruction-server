@@ -1,4 +1,5 @@
 """World-space QR portal poses in a local reconstruction."""
+import logging
 import numpy as np
 
 
@@ -26,11 +27,13 @@ def precompute_arkit_offsets(image_ids, arkit_cam_from_world_transforms, arkit_p
     return arkit_precomputed
 
 
-def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr):
+def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr, logger=None):
+    if logger is None:
+        logger = logging.getLogger(__name__)
 
     qr_world_detections = {}
 
-    print("Getting world space qr codes...")
+    logger.info("Getting world space qr codes...")
     for qr_id, cam_space_detections in detections_per_qr.items():
         qr_world_detections[qr_id] = []
         corresponding_image_ids = image_ids_per_qr[qr_id]
@@ -40,6 +43,6 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
             qr_world_pose = cam_pose * qr_pose_in_cam
             qr_world_detections[qr_id].append(qr_world_pose)
 
-    print("DONE!")
+    logger.info("DONE!")
 
     return qr_world_detections
