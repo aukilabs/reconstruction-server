@@ -9,8 +9,8 @@ import pyceres
 from reconstruction.geometry.pose import transform_with_scale
 from reconstruction.geometry.costs import QuaternionNormalizationCostFunction, TranslationPriorCostFunction
 from reconstruction.native.cost_functions import RelativeTransformationSim3CostFunction
-from reconstruction.pipeline.global_.alignment import AlignedScans
-from reconstruction.pipeline.global_.portal_metrics import PORTAL_DOWNWEIGHT_COV_SCALE, PortalAlignmentMetrics, accept_portal_spread_rmse, build_portal_alignment_metrics, build_portal_overlap_edges, compute_overlap_rmse, compute_portal_spread_metrics, compute_portal_spread_rmse, flag_outlier_portal_edges, logical_portal_edge_key, portal_edge_cov_multiplier
+from reconstruction.pipeline.global_map.alignment import AlignedScans
+from reconstruction.pipeline.global_map.portal_metrics import PORTAL_DOWNWEIGHT_COV_SCALE, PortalAlignmentMetrics, accept_portal_spread_rmse, build_portal_alignment_metrics, build_portal_overlap_edges, compute_overlap_rmse, compute_portal_spread_metrics, compute_portal_spread_rmse, flag_outlier_portal_edges, logical_portal_edge_key, portal_edge_cov_multiplier
 
 
 # Soft gravity prior: keep each scan's local-refine up (COLMAP -X) after Sim3 delta.

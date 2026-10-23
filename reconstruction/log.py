@@ -14,7 +14,7 @@ PACKAGE = "reconstruction"
 # Stage loggers. refine.py and triangulation.py both log to LOCAL_REFINEMENT, so records of the
 # scan being refined carry its dataset_id tag.
 LOCAL_REFINEMENT = "reconstruction.pipeline.local"
-GLOBAL_REFINEMENT = "reconstruction.pipeline.global_"
+GLOBAL_REFINEMENT = "reconstruction.pipeline.global_map"
 UPDATE_REFINEMENT = "reconstruction.pipeline.update"
 
 

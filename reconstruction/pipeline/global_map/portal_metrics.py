@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple, Optional, Set
 import itertools
 from dataclasses import dataclass
 from reconstruction.geometry.pose import mean_pose
-from reconstruction.pipeline.global_.alignment import AlignedScans
+from reconstruction.pipeline.global_map.alignment import AlignedScans
 
 
 @dataclass(frozen=True)

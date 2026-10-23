@@ -9,7 +9,7 @@ import sys
 
 STAGES = {
     "local": "reconstruction.entrypoints.local",
-    "global": "reconstruction.entrypoints.global_",
+    "global": "reconstruction.entrypoints.global_map",
     "update": "reconstruction.entrypoints.update",
     "topology": "reconstruction.entrypoints.topology",
 }

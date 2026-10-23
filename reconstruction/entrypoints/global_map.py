@@ -9,10 +9,10 @@ from reconstruction.geometry.pose import mean_pose
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.log import GLOBAL_REFINEMENT, setup_logger
 from reconstruction.output.pointcloud import post_process_ply
-from reconstruction.pipeline.global_.alignment import align_scans, AlignedScans
-from reconstruction.pipeline.global_.merge import merge_aligned_scans
-from reconstruction.pipeline.global_.refine import refine_alignment, print_alignment_comparison
-from reconstruction.pipeline.global_.portal_metrics import portal_alignment_metrics_to_dict
+from reconstruction.pipeline.global_map.alignment import align_scans, AlignedScans
+from reconstruction.pipeline.global_map.merge import merge_aligned_scans
+from reconstruction.pipeline.global_map.refine import refine_alignment, print_alignment_comparison
+from reconstruction.pipeline.global_map.portal_metrics import portal_alignment_metrics_to_dict
 from reconstruction.io.config import load_yaml, save_to_yaml
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.pipeline.topology.mesh import main as topology_main

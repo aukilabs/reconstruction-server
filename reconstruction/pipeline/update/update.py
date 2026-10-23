@@ -13,7 +13,7 @@ from reconstruction.io.manifest import parse_info_from_manifest
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 from reconstruction.layout import JobLayout
-from reconstruction.pipeline.global_.alignment import NoOverlapException, floor_origin_portal_pose
+from reconstruction.pipeline.global_map.alignment import NoOverlapException, floor_origin_portal_pose
 from reconstruction.pipeline.update.merge import merge_models, apply_similarity_to_new_model
 from reconstruction.io.colmap import validate_model_consistency
 from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
@@ -43,7 +43,7 @@ def _calculate_mean_qr_poses(
             for qr_id, poses in detections_per_qr.items()}
 
 
-# TODO(owner): pipeline.global_.alignment.calculate_alignment_transform does the same, except when
+# TODO(owner): pipeline.global_map.alignment.calculate_alignment_transform does the same, except when
 # placed_portal is empty (the first chunk): global picks the first floor portal and flattens its
 # rotation, this uses the first portal as is. Update always aligns to a reference map that has
 # portals, so that branch is not reached here. Merge the two once that is confirmed.

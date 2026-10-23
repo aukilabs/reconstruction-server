@@ -43,7 +43,7 @@ class EntryPointTests(unittest.TestCase):
         # occlusion_box_wrapper is disabled; its dependencies should not load on every run.
         # (shapely is not listed: trimesh imports it, and the io module uses trimesh.)
         heavy = ["reconstruction.pipeline.occlusion.occlusion_box", "sklearn", "alphashape", "matplotlib"]
-        proc = _run("-c", "import sys, reconstruction.entrypoints.global_, reconstruction.entrypoints.local; "
+        proc = _run("-c", "import sys, reconstruction.entrypoints.global_map, reconstruction.entrypoints.local; "
                           f"print([m for m in {heavy!r} if m in sys.modules])")
         self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
         self.assertEqual(proc.stdout.strip().splitlines()[-1], "[]")

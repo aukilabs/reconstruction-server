@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from reconstruction.native.reconstruction_merge import append_reconstruction
-from reconstruction.pipeline.global_.alignment import AlignedScans
+from reconstruction.pipeline.global_map.alignment import AlignedScans
 from reconstruction.layout import JobLayout
 
 
