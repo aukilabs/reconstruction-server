@@ -18,7 +18,7 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
 
 - `server/rust/` is the Rust compute-node workspace.
   - `bin/` builds the executable that loads configuration, registers runners, and drives the host loop.
-  - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities.
+  - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities; `runner-reconstruction-common/` holds what they share (starting Python, the job workspace, the global/update upload tables).
   - `node-host/` runs the node on the Auki SDK task runtime (`auki-sdk`, pinned git revision), which owns DDS registration, DMS leasing/heartbeats and auth; `node-host` provides config, the claim loop, Domain IO and DMS receipts with the wire behaviour of the former `posemesh-compute-node` 0.3.2 host (pinned by `node-host/tests`).
 - `reconstruction/` is the Python pipeline package. The runners start it as `python3 -m reconstruction {local,global,update} <args>` (`reconstruction/__main__.py`); the stage entry points are in `reconstruction/entrypoints/`. Never run a file from inside the package directory or put `reconstruction/` itself on `sys.path`.
 - `cpp/` and `CMakeLists.txt` hold C++/pybind components used by the Python pipeline; CMake builds them into `reconstruction/native/`.

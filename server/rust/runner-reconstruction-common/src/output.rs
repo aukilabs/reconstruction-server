@@ -14,9 +14,10 @@ pub struct OutputSpec {
     pub mandatory: bool,
 }
 
-// Mirrored in reconstruction/output/uploads.py (UPLOAD_TABLE), checked by
+// The outputs of the global and update runners. They differ only in their folder (refined/global,
+// refined/update). Mirrored in reconstruction/output/uploads.py (UPLOAD_TABLE), checked by
 // tests/test_upload_contract.py; keep both in sync.
-const GLOBAL_OUTPUTS: &[OutputSpec] = &[
+pub const GLOBAL_OUTPUTS: &[OutputSpec] = &[
     OutputSpec {
         relative_path: "refined/global/refined_manifest.json",
         display_name: "refined_manifest",
@@ -89,9 +90,83 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
     },
 ];
 
-/// Upload the final global outputs expected by downstream systems.
+pub const UPDATE_OUTPUTS: &[OutputSpec] = &[
+    OutputSpec {
+        relative_path: "refined/update/refined_manifest.json",
+        display_name: "refined_manifest",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/RefinedPointCloudReduced.ply",
+        display_name: "refined_pointcloud",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/RefinedPointCloud.ply.drc",
+        display_name: "refined_pointcloud_full_draco",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology_downsampled_0.111.obj",
+        display_name: "topologymesh_v1_lowpoly_obj",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology_downsampled_0.111.glb",
+        display_name: "topologymesh_v1_lowpoly_glb",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology_downsampled_0.333.obj",
+        display_name: "topologymesh_v1_midpoly_obj",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology_downsampled_0.333.glb",
+        display_name: "topologymesh_v1_midpoly_glb",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology.obj",
+        display_name: "topologymesh_v1_highpoly_obj",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/topology/topology.glb",
+        display_name: "topologymesh_v1_highpoly_glb",
+        mandatory: false,
+    },
+    OutputSpec {
+        relative_path: "refined/update/refined_sfm_combined/cameras.bin",
+        display_name: "colmap_cameras_bin",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/refined_sfm_combined/frames.bin",
+        display_name: "colmap_frames_bin",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/refined_sfm_combined/images.bin",
+        display_name: "colmap_images_bin",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/refined_sfm_combined/points3D.bin",
+        display_name: "colmap_points3d_bin",
+        mandatory: true,
+    },
+    OutputSpec {
+        relative_path: "refined/update/refined_sfm_combined/rigs.bin",
+        display_name: "colmap_rigs_bin",
+        mandatory: true,
+    },
+];
+
+/// Upload the final outputs expected by downstream systems: `GLOBAL_OUTPUTS` or `UPDATE_OUTPUTS`.
 /// Returns a map from display name to the artifact path used for upload.
 pub async fn upload_final_outputs(
+    outputs: &[OutputSpec],
     workspace: &Workspace,
     sink: &TaskIo,
     name_suffix: &str,
@@ -99,7 +174,7 @@ pub async fn upload_final_outputs(
 ) -> Result<HashMap<String, String>> {
     let mut uploaded = HashMap::new();
 
-    for spec in GLOBAL_OUTPUTS {
+    for spec in outputs {
         let path = workspace.root().join(spec.relative_path);
         if !path.exists() {
             if spec.mandatory {
@@ -250,39 +325,41 @@ mod tests {
     /// Downstream consumers (DMT, peyote, splatter, update) look these up by name and type.
     #[test]
     fn output_names_and_data_types_are_stable() {
-        let table: Vec<(&str, &str, bool)> = GLOBAL_OUTPUTS
-            .iter()
-            .map(|s| {
-                (
-                    s.display_name,
-                    data_type_for_display(s.display_name),
-                    s.mandatory,
-                )
-            })
-            .collect();
-        assert_eq!(
-            table,
-            vec![
-                ("refined_manifest", "refined_manifest_json", true),
-                ("refined_pointcloud", "refined_pointcloud_ply", true),
-                (
-                    "refined_pointcloud_full_draco",
-                    "refined_pointcloud_ply_draco",
-                    false
-                ),
-                ("topologymesh_v1_lowpoly_obj", "obj", false),
-                ("topologymesh_v1_lowpoly_glb", "glb", false),
-                ("topologymesh_v1_midpoly_obj", "obj", false),
-                ("topologymesh_v1_midpoly_glb", "glb", false),
-                ("topologymesh_v1_highpoly_obj", "obj", false),
-                ("topologymesh_v1_highpoly_glb", "glb", false),
-                ("colmap_cameras_bin", "colmap_cameras_bin", true),
-                ("colmap_frames_bin", "colmap_frames_bin", true),
-                ("colmap_images_bin", "colmap_images_bin", true),
-                ("colmap_points3d_bin", "colmap_points3d_bin", true),
-                ("colmap_rigs_bin", "colmap_rigs_bin", true),
-            ]
-        );
+        for outputs in [GLOBAL_OUTPUTS, UPDATE_OUTPUTS] {
+            let table: Vec<(&str, &str, bool)> = outputs
+                .iter()
+                .map(|s| {
+                    (
+                        s.display_name,
+                        data_type_for_display(s.display_name),
+                        s.mandatory,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                table,
+                vec![
+                    ("refined_manifest", "refined_manifest_json", true),
+                    ("refined_pointcloud", "refined_pointcloud_ply", true),
+                    (
+                        "refined_pointcloud_full_draco",
+                        "refined_pointcloud_ply_draco",
+                        false
+                    ),
+                    ("topologymesh_v1_lowpoly_obj", "obj", false),
+                    ("topologymesh_v1_lowpoly_glb", "glb", false),
+                    ("topologymesh_v1_midpoly_obj", "obj", false),
+                    ("topologymesh_v1_midpoly_glb", "glb", false),
+                    ("topologymesh_v1_highpoly_obj", "obj", false),
+                    ("topologymesh_v1_highpoly_glb", "glb", false),
+                    ("colmap_cameras_bin", "colmap_cameras_bin", true),
+                    ("colmap_frames_bin", "colmap_frames_bin", true),
+                    ("colmap_images_bin", "colmap_images_bin", true),
+                    ("colmap_points3d_bin", "colmap_points3d_bin", true),
+                    ("colmap_rigs_bin", "colmap_rigs_bin", true),
+                ]
+            );
+        }
         for (file, base) in [
             ("outputs_index.json", "outputs_index"),
             ("result.json", "result"),
@@ -292,6 +369,22 @@ mod tests {
                 crate::strategy::describe_known_output(file, "2024-01-02_03-04-05"),
                 Some((format!("{base}_2024-01-02_03-04-05"), "json".to_string()))
             );
+        }
+    }
+
+    /// Global and update upload the same files, each from its own folder.
+    #[test]
+    fn update_outputs_mirror_global_outputs() {
+        assert_eq!(GLOBAL_OUTPUTS.len(), UPDATE_OUTPUTS.len());
+        for (global, update) in GLOBAL_OUTPUTS.iter().zip(UPDATE_OUTPUTS) {
+            assert_eq!(
+                update.relative_path,
+                global
+                    .relative_path
+                    .replacen("refined/global/", "refined/update/", 1)
+            );
+            assert_eq!(update.display_name, global.display_name);
+            assert_eq!(update.mandatory, global.mandatory);
         }
     }
 }

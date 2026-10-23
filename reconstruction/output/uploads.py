@@ -1,7 +1,7 @@
 """What the Rust runners upload from the job folder after Python exits.
 
 The upload tables live in Rust (runner-reconstruction-local/src/refined.rs,
-runner-reconstruction-{global,update}/src/output.rs and strategy.rs, and the task log in each
+runner-reconstruction-common/src/output.rs and strategy.rs, and the task log in each
 runner's lib.rs). This is the Python-side copy: tests/test_upload_contract.py checks it against
 the Rust sources, so a change on either side fails there first.
 """

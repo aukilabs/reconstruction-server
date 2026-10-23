@@ -6,6 +6,17 @@ use std::{
 use anyhow::{Context, Result};
 use tempfile::TempDir;
 
+/// Which runner a workspace is for; it decides which `refined/` folders exist up front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// `datasets/` and `refined/local/`.
+    Local,
+    /// Also `refined/global/`.
+    Global,
+    /// Also `refined/global/` (the reference map) and `refined/update/`.
+    Update,
+}
+
 /// Represents the on-disk layout for a reconstruction job.
 pub struct Workspace {
     root: PathBuf,
@@ -21,6 +32,7 @@ pub struct Workspace {
 impl Workspace {
     /// Create a workspace using the optional base directory.
     pub fn create(
+        stage: Stage,
         base_root: Option<&Path>,
         domain_id: &str,
         job_id: Option<&str>,
@@ -52,8 +64,12 @@ impl Workspace {
 
         create_dir(&datasets)?;
         create_dir(&refined_local)?;
-        create_dir(&refined_global)?;
-        create_dir(&refined_update)?;
+        if matches!(stage, Stage::Global | Stage::Update) {
+            create_dir(&refined_global)?;
+        }
+        if stage == Stage::Update {
+            create_dir(&refined_update)?;
+        }
 
         Ok(Self {
             root,
@@ -65,6 +81,14 @@ impl Workspace {
             metadata,
             _temp_guard: temp_guard,
         })
+    }
+
+    /// When the workspace used a [`TempDir`] base, dropping `Self` would delete the entire tree.
+    /// Call this when retaining files on disk (e.g. `DISABLE_TASKS_CLEANUP`) so the base directory is not removed on drop.
+    pub fn persist_temp_base(&mut self) {
+        if let Some(dir) = self._temp_guard.take() {
+            let _ = dir.keep();
+        }
     }
 
     /// Root directory for the job workspace.

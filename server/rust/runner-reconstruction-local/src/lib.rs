@@ -14,9 +14,9 @@ use tokio::fs;
 use tracing::{info, warn};
 
 mod input;
-mod python;
 mod refined;
-mod workspace;
+
+use runner_reconstruction_common::{python, workspace};
 
 /// Public crate identifier used by workspace smoke tests.
 pub const CRATE_NAME: &str = "runner-reconstruction-local";
@@ -64,6 +64,7 @@ impl RunnerReconstructionLocal {
         task_id: &str,
     ) -> Result<workspace::Workspace> {
         workspace::Workspace::create(
+            workspace::Stage::Local,
             self.config.workspace_root.as_deref(),
             domain_id,
             job_id,

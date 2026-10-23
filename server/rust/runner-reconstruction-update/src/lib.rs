@@ -14,10 +14,8 @@ use tokio::fs;
 use tracing::{info, warn};
 
 mod input;
-mod output;
-mod python;
-mod strategy;
-mod workspace;
+
+use runner_reconstruction_common::{output, python, strategy, workspace};
 
 /// Public crate identifier used by workspace smoke tests.
 pub const CRATE_NAME: &str = "runner-reconstruction-update";
@@ -65,6 +63,7 @@ impl RunnerReconstructionUpdate {
         task_id: &str,
     ) -> Result<workspace::Workspace> {
         workspace::Workspace::create(
+            workspace::Stage::Update,
             self.config.workspace_root.as_deref(),
             domain_id,
             job_id,
@@ -237,7 +236,8 @@ impl NodeRunner for RunnerReconstructionUpdate {
         }
 
         let name_suffix = job_ctx.domain_data_name_suffix();
-        output::upload_final_outputs(&workspace, io, &name_suffix, None).await?;
+        output::upload_final_outputs(output::UPDATE_OUTPUTS, &workspace, io, &name_suffix, None)
+            .await?;
         let _ = task.progress(json!({"pct": 95, "stage": "upload"}));
         let _ = task.log_event(json!({
             "level": "info",

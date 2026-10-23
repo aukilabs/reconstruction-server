@@ -2,7 +2,7 @@
 
 After Python exits, the Rust runners upload a fixed set of files from the job root:
 - server/rust/runner-reconstruction-local/src/refined.rs: one RefinedScan.zip per scan
-- server/rust/runner-reconstruction-{global,update}/src/output.rs: the final outputs
+- server/rust/runner-reconstruction-common/src/output.rs: the final global and update outputs
 - server/rust/runner-reconstruction-*/src/lib.rs: the task log
 
 reconstruction/output/uploads.py holds the Python-side copy of those tables (UPLOAD_TABLE).
@@ -36,13 +36,16 @@ def _rust_str_array(source, const_name):
 
 
 def _rust_final_outputs(runner):
-    """Rebuild this runner's part of UPLOAD_TABLE from output.rs and strategy.rs."""
-    output_rs = _read(f"runner-reconstruction-{runner}/src/output.rs")
-    strategy_rs = _read(f"runner-reconstruction-{runner}/src/strategy.rs")
+    """Rebuild this runner's part of UPLOAD_TABLE from the common crate's output.rs and strategy.rs."""
+    output_rs = _read("runner-reconstruction-common/src/output.rs")
+    strategy_rs = _read("runner-reconstruction-common/src/strategy.rs")
 
+    table_rs = re.search(rf"const {runner.upper()}_OUTPUTS: &\[OutputSpec\] = &\[(.*?)\n\];", output_rs, re.S)
+    if table_rs is None:
+        raise AssertionError(f"{runner.upper()}_OUTPUTS not found")
     specs = re.findall(
         r'OutputSpec \{\s*relative_path: "([^"]+)",\s*display_name: "([^"]+)",\s*mandatory: (true|false),\s*\}',
-        output_rs,
+        table_rs.group(1),
     )
     type_fn = re.search(r"fn data_type_for_display\(.*?\n\}", output_rs, re.S).group(0)
     data_types = dict(re.findall(r'"([^"]+)" => "([^"]+)"', type_fn))

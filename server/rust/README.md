@@ -20,6 +20,10 @@ stateless, fail-fast, and observable.
   global refinement runner.
 - [`runner-reconstruction-update`](runner-reconstruction-update/) —
   update refinement runner.
+- [`runner-reconstruction-common`](runner-reconstruction-common/) — code the
+  three runners share: starting Python (`python.rs`), the job workspace
+  (`workspace.rs`), and the global and update upload tables and upload logic
+  (`output.rs`, `strategy.rs`).
 - [`bin`](bin/README.md) — binary that loads configuration, registers the
   runners and drives the host loop.
 
@@ -46,7 +50,7 @@ Each runner starts `python3 -m reconstruction <stage> <args>` (`local`,
 directory (`/app` in the image, which also sets `PYTHONPATH=/app`). Each
 stdout/stderr line is parsed as a JSON `{level, message}` log line, and on a
 non-zero exit `<job root>/fail_reason.txt` becomes the failure reason
-(`runner-*/src/python.rs`). Per runner (`LOCAL_`, `GLOBAL_` or `UPDATE_`
+(`runner-reconstruction-common/src/python.rs`). Per runner (`LOCAL_`, `GLOBAL_` or `UPDATE_`
 prefix), all optional:
 
 - `<PREFIX>_RUNNER_PYTHON_BIN`: interpreter (default `python3`).
