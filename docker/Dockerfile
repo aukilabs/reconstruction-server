@@ -13,7 +13,8 @@ RUN cargo build --release -p bin
 ##
 ## Runtime
 ##
-FROM ghcr.io/aukilabs/reconstruction-server-base:latest AS final
+# Pinned: base:latest tracks develop, which moved to COLMAP 4.2.1 (#91) and breaks v0.4.x.
+FROM ghcr.io/aukilabs/reconstruction-server-base:37fa2e117e1f37997b50f2109395b238af38266a@sha256:091bfed5e34ac045d80f0a024db89b12777067e24958376cc3b0d256a3320848 AS final
 
 ARG RECONSTRUCTION_VERSION
 ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
