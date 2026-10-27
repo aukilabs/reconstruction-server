@@ -6,6 +6,7 @@ Developer tools. None of them run in production.
 - `display_result.py`: shows a refined `sfm` folder and its portals in Open3D.
 - `plot_portals_points.py`: plots portal detections in image frames of a dataset.
 - `mp4debug.py`: counts the frames OpenCV reads from `.mp4` files.
+- `auki_session/`: for long Auki sessions, refined in segments: split a session into overlapping sub-sessions (`segment`), put the refined segments into one frame through shared QR markers (`stitch_qr`) or the session's own trajectory (`stitch_trajectory`, which also writes global outputs), and merge reconstructions without dissolving their rigs (`rig_merge`). Imported from notebooks or scripts as `tools.auki_session.*`; no runner uses them.
 
 Run them from the repository root. `display_result.py` imports the `reconstruction` package, and running a file under `tools/` puts `tools/`, not the root, on `sys.path`, so set `PYTHONPATH=.` (the image sets `PYTHONPATH=/app`).
 
