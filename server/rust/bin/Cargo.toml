@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 node-host = { path = "../node-host" }
 runner-reconstruction-local = { path = "../runner-reconstruction-local" }
+runner-reconstruction-local-auki-session = { path = "../runner-reconstruction-local-auki-session" }
 runner-reconstruction-global = { path = "../runner-reconstruction-global" }
 runner-reconstruction-update = { path = "../runner-reconstruction-update" }
 anyhow = "1"

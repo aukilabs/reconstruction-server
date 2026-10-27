@@ -5,6 +5,10 @@ fn workspace_crates_link() {
         "runner-reconstruction-local"
     );
     assert_eq!(
+        runner_reconstruction_local_auki_session::CRATE_NAME,
+        "runner-reconstruction-local-auki-session"
+    );
+    assert_eq!(
         runner_reconstruction_global::CRATE_NAME,
         "runner-reconstruction-global"
     );

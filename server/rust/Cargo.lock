@@ -481,6 +481,7 @@ dependencies = [
  "node-host",
  "runner-reconstruction-global",
  "runner-reconstruction-local",
+ "runner-reconstruction-local-auki-session",
  "runner-reconstruction-update",
  "semver",
  "tokio",
@@ -3361,6 +3362,22 @@ dependencies = [
  "tokio-util",
  "tracing",
  "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "runner-reconstruction-local-auki-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "node-host",
+ "runner-reconstruction-common",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
  "zip",
 ]
 

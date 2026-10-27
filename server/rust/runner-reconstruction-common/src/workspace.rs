@@ -139,7 +139,8 @@ fn create_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sanitize_segment(input: &str) -> String {
+/// Replace every character but ASCII letters, digits, `-` and `_` with `_` (empty becomes "unnamed").
+pub fn sanitize_segment(input: &str) -> String {
     if input.is_empty() {
         return "unnamed".into();
     }

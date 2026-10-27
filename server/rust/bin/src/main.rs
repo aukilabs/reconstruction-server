@@ -6,6 +6,11 @@ fn router() -> node_host::Router {
     for runner in runner_reconstruction_local::RunnerReconstructionLocal::for_all_capabilities() {
         router = router.register(runner);
     }
+    for runner in
+        runner_reconstruction_local_auki_session::RunnerReconstructionLocalAukiSession::for_all_capabilities()
+    {
+        router = router.register(runner);
+    }
     for runner in runner_reconstruction_global::RunnerReconstructionGlobal::for_all_capabilities() {
         router = router.register(runner);
     }
@@ -33,6 +38,7 @@ mod tests {
         let router = router();
         let expected: Vec<&str> = runner_reconstruction_local::CAPABILITIES
             .iter()
+            .chain(&runner_reconstruction_local_auki_session::CAPABILITIES)
             .chain(&runner_reconstruction_global::CAPABILITIES)
             .chain(&runner_reconstruction_update::CAPABILITIES)
             .copied()
