@@ -2,9 +2,9 @@ import open3d as o3d
 import os
 import subprocess
 import shutil
-import numpy as np
 import logging
-import pycolmap
+
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convention_matrix
 
 # Reduce decimals making the ply file smaller.
 # Also changes the vertex type to float instead of double, which is required by draco encoding.
@@ -62,18 +62,13 @@ def downsample_ply_to_max_size(ply_path, downsampled_ply_path, max_bytes, logger
     if logger is not None:
         logger.info(f"Point cloud downsampled to {os.path.getsize(downsampled_ply_path)} bytes: {downsampled_ply_path}")
 
-def filter_ply(ply_path, filtered_ply_path, ply_remove_outliers=True, ply_downsample=True, convert_opencv_to_opengl=False, logger=None):
+def filter_ply(ply_path, filtered_ply_path, ply_remove_outliers=True, ply_downsample=True, convert_to_opengl=False, logger=None):
 
     point_cloud = o3d.io.read_point_cloud(ply_path)
 
-    if convert_opencv_to_opengl:
-        logger.info("Converting OpenCV to OpenGL coordinate system...")
-        trans = np.zeros((4,4))
-        trans[0,1] = 1
-        trans[1,0] = 1
-        trans[2,2] = -1
-        trans[3,3] = 1
-        point_cloud = point_cloud.transform(trans)
+    if convert_to_opengl:
+        logger.info("Converting COLMAP world to OpenGL coordinate system...")
+        point_cloud = point_cloud.transform(convention_matrix(COLMAP_WORLD, OPENGL))
         logger.info("Done converting to OpenGL")
 
     old_size = ply_path.stat().st_size
@@ -119,7 +114,7 @@ def draco_compress_ply(ply_path, draco_path, logger=None):
 
 def post_process_ply(output_path, logger=None):
     ply_path = output_path / "RefinedPointCloud.ply"
-    filter_ply(ply_path, ply_path, convert_opencv_to_opengl=True, logger=logger)
+    filter_ply(ply_path, ply_path, convert_to_opengl=True, logger=logger)
 
     # Ensure ply fits in domain data
     if logger:
@@ -148,22 +143,11 @@ def post_process_ply(output_path, logger=None):
             logger.error(f"Failed to draco compress the PLY file: {str(e)}")
 
 
-def export_rec_as_ply(rec, path, convert_to_opengl=False, logger=None):
+def export_rec_as_ply(rec, path, logger=None):
     if logger is None:
         logger = logging.getLogger(__name__)
 
     logger.info(f"Converting reconstruction with {len(rec.points3D)} points to PLY: {path}")
-    logger.info(f"convert_to_opengl = {convert_to_opengl}")
-    logger.info("...")
-
-    if convert_to_opengl:
-        rec_openGL = pycolmap.Reconstruction()
-        for point in rec.points3D.values():
-            x,y,z = point.xyz
-            if convert_to_opengl:
-                x,y,z = y,x,-z
-            _ = rec_openGL.add_point3D(np.array([x,y,z]), pycolmap.Track(), point.color)
-        rec = rec_openGL
 
     rec.export_PLY(str(path))
     logger.info(f"PLY export done")

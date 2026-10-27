@@ -4,37 +4,14 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-from reconstruction.geometry.pose import average_quaternions_svd, convert_pose_colmap_to_opengl, convert_pose_opengl_to_colmap, is_floor_portal, mean_pose, quaternion_to_rotation_matrix, vec3_angle
+from reconstruction.geometry.pose import average_quaternions_svd, is_floor_portal, mean_pose, quaternion_to_rotation_matrix, vec3_angle
 
 # Quaternions are (x, y, z, w) throughout, as in pycolmap and scipy.
 RANDOM_QUATS = Rotation.random(20, random_state=7).as_quat()
-# OpenGL <-> COLMAP swaps x and y and flips z. That is a proper rotation, applied by conjugation.
-AXIS_SWAP = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
 
 
 def _same_rotation(q1, q2):
     np.testing.assert_allclose(Rotation.from_quat(q1).as_matrix(), Rotation.from_quat(q2).as_matrix(), atol=1e-9)
-
-
-class OpenGlColmapConversionTests(unittest.TestCase):
-    def test_axis_mapping(self):
-        position, quat = convert_pose_opengl_to_colmap([1.0, 2.0, 3.0], [0.1, 0.2, 0.3, 0.9])
-        np.testing.assert_array_equal(position, [2.0, 1.0, -3.0])
-        np.testing.assert_array_equal(quat, [0.2, 0.1, -0.3, 0.9])
-
-    def test_conversion_conjugates_the_rotation(self):
-        for q in RANDOM_QUATS:
-            _, converted = convert_pose_opengl_to_colmap(np.zeros(3), q)
-            expected = AXIS_SWAP @ Rotation.from_quat(q).as_matrix() @ AXIS_SWAP.T
-            np.testing.assert_allclose(Rotation.from_quat(converted).as_matrix(), expected, atol=1e-9)
-
-    def test_round_trip(self):
-        position = np.array([0.5, -1.5, 2.5])
-        for q in RANDOM_QUATS:
-            p1, q1 = convert_pose_opengl_to_colmap(position, q)
-            p2, q2 = convert_pose_colmap_to_opengl(p1, q1)
-            np.testing.assert_allclose(p2, position)
-            np.testing.assert_allclose(q2, q)
 
 
 class QuaternionHelperTests(unittest.TestCase):

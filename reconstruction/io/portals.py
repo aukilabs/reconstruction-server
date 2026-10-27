@@ -6,7 +6,7 @@ import csv
 import os
 from typing import List
 import collections
-from reconstruction.geometry.pose import convert_pose_opengl_to_colmap
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
 
 
 def load_portals_json(file_path):
@@ -26,7 +26,7 @@ def load_portals_json(file_path):
 
             # quat = (pycolmap.Rotation3d(quat) * rot90).quat # TODO: remove later (see above)
 
-            pos, quat = convert_pose_opengl_to_colmap(pos, quat)
+            pos, quat = convert_pose_convention(pos, quat, OPENGL, COLMAP_WORLD)
 
             portal_poses[entry["short_id"]] = pycolmap.Rigid3d(pycolmap.Rotation3d(quat), pos)
 
@@ -43,7 +43,7 @@ def load_qr_detections_csv(csv_path):
             pos = pose_values[:3]
             quat = pose_values[3:]
 
-            pos, quat = convert_pose_opengl_to_colmap(pos, quat)
+            pos, quat = convert_pose_convention(pos, quat, OPENGL, COLMAP_WORLD)
 
             rot3d = pycolmap.Rotation3d(np.array(quat))
 

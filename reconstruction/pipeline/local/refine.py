@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import NamedTuple
 
 from reconstruction.pipeline.local.triangulation import process_features_and_matching, triangulate_model
-from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, mean_pose, rectify_portal_pose
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
+from reconstruction.geometry.pose import mean_pose, rectify_portal_pose
 from reconstruction.io.scan import load_scan
 from reconstruction.pipeline.local.qr import precompute_arkit_offsets, get_world_space_qr_codes
 from reconstruction.log import LOCAL_REFINEMENT, setup_logger
@@ -98,7 +99,7 @@ def initialize_reconstruction(image_references, scan_data):
         
         # Add image
         ar_pose = scan_data.ar_poses_per_timestamp[timestampNs]
-        position, rotation = convert_pose_opengl_to_colmap(ar_pose[0:3], ar_pose[3:7])
+        position, rotation = convert_pose_convention(ar_pose[0:3], ar_pose[3:7], OPENGL, COLMAP_WORLD)
         cam_to_world = pycolmap.Rigid3d(pycolmap.Rotation3d(rotation), position)
         cam_from_world = cam_to_world.inverse()
         cam_from_world_transforms[id] = cam_from_world

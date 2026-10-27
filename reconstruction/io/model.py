@@ -3,7 +3,7 @@ import numpy as np
 import os
 from typing import List
 import open3d
-from reconstruction.geometry.pose import convert_pose_colmap_to_opengl
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convention_matrix, convert_pose_convention
 from reconstruction.io.colmap import qvec2rotmat, read_model, write_model
 from reconstruction.io.portals import Portal, read_portal_csv, write_portal_csv
 
@@ -126,13 +126,7 @@ class Model:
 
         # convert to opengl coordinate
         if in_opengl:
-            transformation_matrix = np.array([
-                [0, 1, 0, 0],
-                [1, 0, 0, 0],
-                [0, 0, -1, 0],
-                [0, 0, 0, 1]
-            ])
-            return pcd.transform(transformation_matrix)
+            return pcd.transform(convention_matrix(COLMAP_WORLD, OPENGL))
 
         return pcd
 
@@ -141,7 +135,7 @@ class Model:
         for portal in self.portals:
             tvec, qvec = portal.tvec, portal.qvec
             if in_opengl:
-                tvec, qvec = convert_pose_colmap_to_opengl(tvec, qvec)
+                tvec, qvec = convert_pose_convention(tvec, qvec, COLMAP_WORLD, OPENGL)
 
             portal = Portal(
                 id=portal.id,

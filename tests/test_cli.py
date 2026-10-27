@@ -10,7 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _run(*args, cwd=REPO_ROOT):
     # Like the image: the package is found through PYTHONPATH, whatever the cwd.
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    pythonpath = os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))
+    env = {**os.environ, "PYTHONPATH": pythonpath}
     return subprocess.run([sys.executable, *args], cwd=cwd, env=env, capture_output=True, text=True)
 
 

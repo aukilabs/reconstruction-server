@@ -6,7 +6,8 @@ import zipfile
 import numpy as np 
 import logging
 
-from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_opengl, transform_with_scale
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
+from reconstruction.geometry.pose import mean_pose, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import parse_info_from_manifest
@@ -122,7 +123,7 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
     portal_sizes = {}
     for portal in portals_list:
         portal_sizes[portal.short_id] = portal.size
-        gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
+        gl_tvec, gl_qvec = convert_pose_convention(portal.tvec, portal.qvec, COLMAP_WORLD, OPENGL)
         portals_u_list.append({
             "short_id": portal.short_id, 
             "tvec": gl_tvec,
@@ -259,7 +260,7 @@ def update_helper(
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = layout.refined_update / 'refined_manifest.json'
-    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
+    portals_opengl = {pid: convert_pose_convention(portal.translation, portal.rotation.quat, COLMAP_WORLD, OPENGL) for pid, portal in portal_r.items()}
     portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
     save_manifest_json(
         portals,
@@ -276,6 +277,6 @@ def update_helper(
     for point in pts_r.values():
         x, y, z = point.xyz
         _ = rec.add_point3D(np.array([x, y, z]), pycolmap.Track(), point.rgb)
-    export_rec_as_ply(rec, ply_path)  # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
+    export_rec_as_ply(rec, ply_path)  # Outputs binary PLY in COLMAP world coords. We convert it to OpenGL in the post_process_ply
 
     return True

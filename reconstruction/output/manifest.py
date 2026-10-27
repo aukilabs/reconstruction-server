@@ -11,7 +11,8 @@ import subprocess
 from dateutil import parser
 from pathlib import Path
 from reconstruction.version import VERSION
-from reconstruction.geometry.pose import convert_pose_colmap_to_opengl, mean_pose, rectify_portal_pose
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
+from reconstruction.geometry.pose import mean_pose, rectify_portal_pose
 from reconstruction.io.job_meta import load_job_metadata, load_scan_data_summary
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ def save_manifest_json(
 
         pose = rectify_portal_pose(pose)
 
-        pos, quat = convert_pose_colmap_to_opengl(pose.translation, pose.rotation.quat)
+        pos, quat = convert_pose_convention(pose.translation, pose.rotation.quat, COLMAP_WORLD, OPENGL)
 
         manifest_data["portals"].append({
             "shortId": short_id,
@@ -232,17 +233,7 @@ def save_manifest_json(
         for scan_id, sim3 in scan_alignment_transforms.items():
             pos = sim3.translation
             quat = sim3.rotation.quat
-            #pos, quat = convert_pose_colmap_to_opengl(pos, quat)
-            #colmap_to_gl = np.array([
-            #    [0, 1, 0],
-            #    [1, 0, 0],
-            #    [0, 0, -1]
-            #])
-            #colmap_to_gl_inv = colmap_to_gl # Inverse is the same since it's symmetric
-            #pos = colmap_to_gl @ pos
-            #R = scipy_Rotation.from_quat(quat).as_matrix()
-            #R = colmap_to_gl @ R colmap_to_gl_inv
-            #quat = scipy_Rotation.from_matrix(R).as_quat()
+            #pos, quat = convert_pose_convention(pos, quat, COLMAP_WORLD, OPENGL)
             manifest_data["scanAlignmentTransforms"][scan_id] = {
                 "localToDomain": {
                     "scale": str(float(sim3.scale)),

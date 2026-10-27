@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from reconstruction.geometry.pose import transform_with_scale
-from reconstruction.geometry.pose import convert_pose_opengl_to_colmap, flatten_portal_rotation, is_portal_almost_flat, mean_pose
+from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
+from reconstruction.geometry.pose import flatten_portal_rotation, is_portal_almost_flat, mean_pose
 from reconstruction.io.portals import portalPose, read_portal_csv
 from reconstruction.layout import JobLayout
 
@@ -30,7 +31,7 @@ floor_origin_portal_pose_GL = pycolmap.Rigid3d(
     np.array([0.0, 0.0, 0.0]))
 
 
-p, q = convert_pose_opengl_to_colmap(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]))
+p, q = convert_pose_convention(np.array([0.0, 0.0, 0.0]), np.array([-0.7071068, 0.0, 0.0, 0.7071068]), OPENGL, COLMAP_WORLD)
 
 
 floor_origin_portal_pose = pycolmap.Rigid3d(pycolmap.Rotation3d(q), p)

@@ -1,26 +1,11 @@
-"""Pose and rotation math: OpenGL/COLMAP conversion, portal orientation checks, pose averaging."""
+"""Pose and rotation math: portal orientation checks, pose averaging.
+
+Frame convention conversions are in reconstruction.geometry.frames."""
 import pycolmap
 import numpy as np
 from scipy.spatial.transform import Rotation as scipy_Rotation
 from numpy.linalg import norm
 from numpy import arccos, rad2deg
-
-
-def convert_pose_opengl_to_colmap(position, quaternion):
-
-    position = np.array([
-        position[1],
-        position[0],
-        position[2] * -1
-    ])
-    quaternion = np.array([
-        quaternion[1],
-        quaternion[0],
-        quaternion[2] * -1,
-        quaternion[3]
-    ])
-
-    return position, quaternion
 
 
 def is_portal_almost_flat(rotation_matrix, angle_threshold=20):
@@ -96,12 +81,6 @@ def rectify_portal_pose(qr_pose, angle_threshold=20, height_threshold=0.5):
             pos[0] = 0.0
 
     return pycolmap.Rigid3d(rot3d, pos)
-
-
-def convert_pose_colmap_to_opengl(position, quaternion):
-    # The math is symmetric.
-    # Separate function for readability.
-    return convert_pose_opengl_to_colmap(position, quaternion)
 
 
 def quaternion_to_rotation_matrix(q):
