@@ -10,12 +10,13 @@ Frames are named the way the Auki SDK names them: each one says which way its x,
 |---|---|---|---|---|---|
 | OpenGL | right | up | backward | `frames.OPENGL` (the SDK's `opengl` preset) | ARKit world (`ARposes.csv`, `PortalDetections.csv`); Domain portal poses (`portals.json`); `refined_manifest.json`; the OpenGL point clouds and topology meshes |
 | COLMAP world | up | right | forward | `frames.COLMAP_WORLD` | The world of every COLMAP model the pipeline writes (`colmap_rec`, `sfm`, `refined_sfm_combined`) and of `portals.csv`. Gravity is -x. |
-| COLMAP camera | right | down | forward | (the SDK's `ros_optical` preset) | Every camera in a COLMAP model: x right and y down in the image, z along the optical axis |
+| COLMAP camera | right | down | forward | `frames.OPENCV_CAMERA` (the SDK's `ros_optical` preset) | Every camera in a COLMAP model: x right and y down in the image, z along the optical axis |
 | DMT camera | down | right | backward | | The camera side of `ARposes.csv`, relative to the stored landscape frame. It is not ARKit's own camera frame (right, up, backward); the recorder app rotates it before writing. |
-| QR marker | right | up | backward | | A marker's own frame as the DMT recorder and pnp-lab report it: x and y in the marker plane, z out of the printed face toward the viewer |
-| Auki robot world | forward | left | up | Read from each session's registry | `world` and `base_link` in an Auki capture (the SDK's `ros_body` preset; every session checked so far) |
-| Auki camera | right | down | forward | Read from the registry | Auki sensor optical frames. Same as the COLMAP camera. |
-| Auki anchor | forward | up | right | | `qr_anchor_poses.csv` and `point_cloud_qr_anchored.ply` (Auki-session flow) |
+| QR marker | right | up | backward | `frames.OPENGL` | A marker's own frame as the DMT recorder and pnp-lab report it: x and y in the marker plane, z out of the printed face toward the viewer |
+| Auki robot world | forward | left | up | Read from each session's registry; `frames.AUKI_ROBOT_WORLD` is what every session so far declares | `world` and `base_link` in an Auki capture (the SDK's `ros_body` preset) |
+| Auki camera | right | down | forward | Read from the registry (`frames.OPENCV_CAMERA`) | Auki sensor optical frames. Same as the COLMAP camera. |
+| Auki anchor | forward | up | right | `frames.AUKI_ANCHOR` | `qr_anchor_poses.csv` and `point_cloud_qr_anchored.ply` (Auki-session flow) |
+| Auki anchor marker | forward | left | up | `frames.AUKI_ANCHOR_MARKER` | The marker frame `convert_qr0_to_auki` relabels from (see finding 5) |
 
 The DMT camera row was measured, not read from code. On the golden scan `2026-03-18_17-51-58`, the `ARposes.csv` camera poses, converted as the local stage converts them, agree with the refined COLMAP cameras to 0.59° median and 3.2° max over 601 frames. That agreement holds only if the camera axes in the file are (down, right, backward).
 
@@ -75,16 +76,16 @@ Every alignment in global is computed and applied in COLMAP world.
 
 ## Local refinement (Auki session)
 
-This is the flow from `experiment/auki-session-input` (66a5279). It moves into this package in a later change; until then the references are to that commit.
+`python3 -m reconstruction local-auki-session`.
 
-| Step | In | Code (66a5279) | Out |
+| Step | In | Code | Out |
 |---|---|---|---|
-| Robot world convention | The session's registry (`world` → `base_link` pose log) | `auki_data_utils.py` `_read_from_frame_registry_entry` | Auki robot world |
-| Camera poses | `world_from_camera`: Auki robot world and Auki camera | `convert_to_colmap_world`: `convert_transform_target_convention(…, robot world, COLMAP_WORLD)` | COLMAP world, camera axes unchanged (already the COLMAP camera) |
-| QR poses from pnp-lab | `camera_from_marker` with the camera in OpenGL axes | `detect_qr_codes`: `convert_transform_target_convention(…, OpenGL camera, COLMAP camera)` | COLMAP camera, marker axes unchanged (QR marker) |
-| Snap near-floor portals flat | Marker z within 20° of `[1, 0, 0]` (`_QR_UP_AXIS`): pnp-lab's marker z points out of the face, so up for a floor marker | `auki_refinement_util.py` `process_auki_qr` | COLMAP world, QR marker |
-| `portals.csv` | Right-multiplied by `_DOMAIN_PORTAL_FRAME_RELABEL`, so the marker axes match the DMT `portals.csv` | `auki_refinement_util.py` | COLMAP world, relabelled marker, as in the DMT flow |
-| QR-anchored outputs | Re-origined at one marker | `convert_colmap_pose_to_qr_origin_auki` → `convert_qr0_to_auki` | Auki anchor (`qr_anchor_poses.csv`, `point_cloud_qr_anchored.ply`) |
+| Robot world convention | The session's registry (`world` → `base_link` pose log) | `io/auki_session.py` `_read_from_frame` | The session's declared world (Auki robot world so far) |
+| Camera poses | `world_from_camera`: the session's world and the Auki camera | `geometry/auki_conventions.py` `convert_to_colmap_world`: `convert_transform_target_convention(…, session world, COLMAP_WORLD)` | COLMAP world, camera axes unchanged (already the COLMAP camera) |
+| QR poses from pnp-lab | `camera_from_marker` with the camera in OpenGL axes | `pipeline/auki_session/qr.py` `_corners_to_camera_space_pose`: `convert_transform_target_convention(…, OPENGL, OPENCV_CAMERA)` | COLMAP camera, marker axes unchanged (QR marker) |
+| Snap near-floor portals flat | Marker z within 20° of `[1, 0, 0]` (`_QR_UP_AXIS`): pnp-lab's marker z points out of the face, so up for a floor marker | `pipeline/auki_session/qr.py` `process_auki_qr` | COLMAP world, QR marker |
+| `portals.csv` | Right-multiplied by `_DOMAIN_PORTAL_FRAME_RELABEL`, so the marker axes match the DMT `portals.csv` | `pipeline/auki_session/qr.py` `process_auki_qr` | COLMAP world, relabelled marker, as in the DMT flow |
+| QR-anchored outputs | Re-origined at one marker | `geometry/auki_conventions.py` `convert_colmap_pose_to_qr_origin_auki` → `convert_qr0_to_auki` | Auki anchor (`qr_anchor_poses.csv`, `point_cloud_qr_anchored.ply`) |
 
 ## Output files
 
@@ -119,5 +120,5 @@ These are recorded here and not yet fixed.
 2. **Update's manifest output converts twice.** `pipeline/update/update.py:263` converts the OpenGL reference portals "from COLMAP world to OpenGL", which actually puts them in COLMAP world because the swap is its own inverse. `save_manifest_json` then converts them to OpenGL. The file comes out right, but the code says the opposite of what it does. Fixing finding 1 the first way removes this.
 3. **Update's first-chunk fallback mixes frames.** `pipeline/update/update.py:78` combines `floor_origin_portal_pose` (COLMAP world) with OpenGL portal poses. The comment above it says update never reaches that branch.
 4. **The flat-portal axis differs between the two flows:** `[-1, 0, 0]` for DMT and `[1, 0, 0]` for Auki sessions. Both mean "the marker faces up", because the DMT flow has relabelled the marker axes by then and the Auki flow has not. Declaring the marker frames would make this explicit.
-5. **The Auki anchor conversion's source frame is a placeholder.** `convert_qr0_to_auki` (66a5279) declares the marker's own axes as (forward, left, up), the robot body's convention, while pnp-lab's marker axes are (right, up, backward). Both give the same result for floor markers, the only kind tested. They differ for wall and ceiling markers.
+5. **The Auki anchor conversion's source frame is a placeholder.** `convert_qr0_to_auki` relabels from `frames.AUKI_ANCHOR_MARKER`, which declares the marker's own axes as (forward, left, up), the robot body's convention, while pnp-lab's marker axes are (right, up, backward). Both give the same result for floor markers, the only kind tested. They differ for wall and ceiling markers.
 6. **The occlusion box swaps y and z** (`pipeline/occlusion/occlusion_box.py:72`). That is a reflection, not a convention change, so no right-handed frame pair expresses it. The step is disabled.

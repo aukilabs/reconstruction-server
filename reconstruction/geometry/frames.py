@@ -29,6 +29,24 @@ OPENGL = _frame("opengl", "right", "up", "backward")
 # convert into it directly.
 COLMAP_WORLD = _frame("colmap_world", "up", "right", "forward")
 
+# COLMAP's camera frame: x right and y down in the image, z along the optical axis (the
+# SDK's ros_optical preset). Auki sensor optical frames are already in it.
+OPENCV_CAMERA = _frame("opencv_camera", "right", "down", "forward")
+
+# The world frame every Auki session checked so far declares in its registry (the SDK's
+# ros_body preset). Sessions are converted from the frame their own registry declares;
+# this is only what a new session is compared against.
+AUKI_ROBOT_WORLD = _frame("auki_robot_world", "forward", "left", "up")
+
+# qr_anchor_poses.csv and point_cloud_qr_anchored.ply (Auki sessions).
+AUKI_ANCHOR = _frame("auki_anchor", "forward", "up", "right")
+
+# The marker frame convert_qr0_to_auki relabels from. It is declared with the robot
+# body's axes, while pnp-lab's marker axes are OPENGL's (right, up, out of the face);
+# the two give the same anchor for floor markers only (docs/coordinate-conventions.md,
+# finding 5).
+AUKI_ANCHOR_MARKER = _frame("auki_anchor_marker", "forward", "left", "up")
+
 
 def convert_pose_convention(position, quaternion, from_frame, to_frame):
     """Re-express a pose in another frame convention: both the frame it is expressed in
@@ -39,6 +57,15 @@ def convert_pose_convention(position, quaternion, from_frame, to_frame):
     """
     flat = np.concatenate([np.asarray(position, dtype=float), np.asarray(quaternion, dtype=float)])
     converted = auki_geometry.convert_pose_convention(flat.tolist(), from_frame, to_frame)
+    return np.array(converted[:3]), np.array(converted[3:])
+
+
+def convert_transform_target_convention(position, quaternion, from_frame, to_frame):
+    """Re-express only the target side of an A_from_B pose (A) in another frame convention;
+    B keeps its own axes. For example a world_from_camera whose world changes convention.
+    """
+    flat = np.concatenate([np.asarray(position, dtype=float), np.asarray(quaternion, dtype=float)])
+    converted = auki_geometry.convert_transform_target_convention(flat.tolist(), from_frame, to_frame)
     return np.array(converted[:3]), np.array(converted[3:])
 
 

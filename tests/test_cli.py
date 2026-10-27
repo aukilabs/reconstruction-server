@@ -19,7 +19,7 @@ class EntryPointTests(unittest.TestCase):
     def test_stages(self):
         proc = _run("-m", "reconstruction", "--help")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        for stage in ("local", "global", "update", "topology"):
+        for stage in ("local", "local-auki-session", "global", "update", "topology"):
             self.assertIn(stage, proc.stdout)
 
     def test_unknown_stage(self):
@@ -48,6 +48,18 @@ class EntryPointTests(unittest.TestCase):
                           f"print([m for m in {heavy!r} if m in sys.modules])")
         self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
         self.assertEqual(proc.stdout.strip().splitlines()[-1], "[]")
+
+
+class AukiSessionEntryPointTests(unittest.TestCase):
+    def test_failure_writes_reason_and_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_root = Path(tmp)
+            (job_root / "capture").mkdir()
+            proc = _run("-m", "reconstruction", "local-auki-session", "--job_root_path", str(job_root),
+                        "--dataset_path", str(job_root / "capture"), "--domain_id", "d1", "--job_id", "job_1")
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("Could not auto-resolve a single Auki session", (job_root / "fail_reason.txt").read_text())
+            self.assertIn("Refinement failed", (job_root / "log.txt").read_text())
 
 
 class GlobalEntryPointTests(unittest.TestCase):

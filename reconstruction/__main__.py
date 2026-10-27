@@ -1,4 +1,4 @@
-"""Run one pipeline stage: python3 -m reconstruction {local,global,update,topology} [arguments].
+"""Run one pipeline stage: python3 -m reconstruction {local,local-auki-session,global,update,topology} [arguments].
 
 The Rust runners start this as `python3 -m reconstruction <stage> <args>`, with the same
 arguments they passed to main.py and update_main.py before. Only the chosen stage is imported.
@@ -9,6 +9,7 @@ import sys
 
 STAGES = {
     "local": "reconstruction.entrypoints.local",
+    "local-auki-session": "reconstruction.entrypoints.local_auki_session",
     "global": "reconstruction.entrypoints.global_map",
     "update": "reconstruction.entrypoints.update",
     "topology": "reconstruction.entrypoints.topology",

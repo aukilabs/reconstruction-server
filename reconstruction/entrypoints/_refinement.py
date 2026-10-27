@@ -85,7 +85,7 @@ def run(args, refine):
 
     # The runner currently derives scans from datasets to avoid stale client-provided scan lists.
     # Get available scans from datasets directory
-    if not args.scans:
+    if hasattr(args, "scans") and not args.scans:
         logger.warning("--scans not provided, will use all available scans from datasets directory")
         args.scans = get_available_scans(layout.datasets)
 
