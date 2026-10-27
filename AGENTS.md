@@ -18,12 +18,13 @@ This repo contains the Auki Network Reconstruction Node. The node processes DMT 
 
 - `server/rust/` is the Rust compute-node workspace.
   - `bin/` builds the executable that loads configuration, registers runners, and drives the host loop.
-  - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities; `runner-reconstruction-common/` holds what they share (starting Python, the job workspace, the global/update upload tables).
+  - `runner-reconstruction-local/`, `runner-reconstruction-global/` and `runner-reconstruction-update/` adapt local/global/update reconstruction capabilities, and `runner-reconstruction-local-auki-session/` local refinement of Auki SDK capture sessions (`docs/compute-capability.md`); `runner-reconstruction-common/` holds what they share (starting Python, the job workspace and metadata, the task log and refined-scan uploads, the global/update upload tables).
   - `node-host/` runs the node on the Auki SDK task runtime (`auki-sdk`, pinned git revision), which owns DDS registration, DMS leasing/heartbeats and auth; `node-host` provides config, the claim loop, Domain IO and DMS receipts with the wire behaviour of the former `posemesh-compute-node` 0.3.2 host (pinned by `node-host/tests`).
-- `reconstruction/` is the Python pipeline package. The runners start it as `python3 -m reconstruction {local,global,update} <args>` (`reconstruction/__main__.py`); the stage entry points are in `reconstruction/entrypoints/`. Never run a file from inside the package directory or put `reconstruction/` itself on `sys.path`.
+- `reconstruction/` is the Python pipeline package. The runners start it as `python3 -m reconstruction {local,local-auki-session,global,update} <args>` (`reconstruction/__main__.py`); the stage entry points are in `reconstruction/entrypoints/`. Never run a file from inside the package directory or put `reconstruction/` itself on `sys.path`.
 - `cpp/` and `CMakeLists.txt` hold C++/pybind components used by the Python pipeline; CMake builds them into `reconstruction/native/`.
+- Coordinate frames are declared once in `reconstruction/geometry/frames.py` and converted with `auki_geometry` (the Auki SDK); `docs/coordinate-conventions.md` gives the frame of every step and output. Don't hand-write axis swaps.
 - `tests/` holds the Python unit tests (unittest; run inside the image with `PYTHONPATH=/app python3 -m unittest discover -s tests -p "test_*.py"`). `tools/` holds developer tools, including the golden run (`tools/README.md`).
-- `docker/Dockerfile` builds the Rust release binary, copies Python/C++ assets into `/app` (with `PYTHONPATH=/app`), builds the C++ bindings, and runs `/app/compute-node` as a non-root user.
+- `docker/Dockerfile` builds the Rust release binary and the Auki Python packages (`docker/build_auki_python.sh`: the SDK bindings at the `auki-sdk` rev `server/rust/Cargo.toml` pins, qr-lab and pnp-lab), copies Python/C++ assets into `/app` (with `PYTHONPATH=/app`), builds the C++ bindings, and runs `/app/compute-node` as a non-root user.
 - `charts/reconstruction-server/` contains the Helm chart wrapper and environment values for deployed reconstruction-server instances.
 - `.devcontainer/` provides the GPU-capable development container and build helpers.
 

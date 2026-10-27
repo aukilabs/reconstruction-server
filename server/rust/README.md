@@ -16,14 +16,19 @@ stateless, fail-fast, and observable.
   the former `posemesh-compute-node` 0.3.2 host; `node-host/tests` pins it.
 - [`runner-reconstruction-local`](./runner-reconstruction-local/) —
   local refinement runner.
+- [`runner-reconstruction-local-auki-session`](runner-reconstruction-local-auki-session/) —
+  local refinement of an Auki SDK capture session: the capture zip from the
+  Domain, or (`-p2p`) from the robot's peer over Blob v1
+  ([docs/compute-capability.md](../../docs/compute-capability.md)).
 - [`runner-reconstruction-global`](runner-reconstruction-global/) —
   global refinement runner.
 - [`runner-reconstruction-update`](runner-reconstruction-update/) —
   update refinement runner.
 - [`runner-reconstruction-common`](runner-reconstruction-common/) — code the
-  three runners share: starting Python (`python.rs`), the job workspace
-  (`workspace.rs`), and the global and update upload tables and upload logic
-  (`output.rs`, `strategy.rs`).
+  runners share: starting Python (`python.rs`), the job workspace
+  (`workspace.rs`), job metadata and the task log upload (`job.rs`), the
+  refined-scan upload (`refined.rs`), and the global and update upload tables
+  and upload logic (`output.rs`, `strategy.rs`).
 - [`bin`](bin/README.md) — binary that loads configuration, registers the
   runners and drives the host loop.
 
@@ -46,18 +51,27 @@ Supporting directories:
 
 ## How runners start Python
 Each runner starts `python3 -m reconstruction <stage> <args>` (`local`,
-`global` or `update`) in its own process group, from the node's working
+`local-auki-session`, `global` or `update`) in its own process group, from the node's working
 directory (`/app` in the image, which also sets `PYTHONPATH=/app`). Each
 stdout/stderr line is parsed as a JSON `{level, message}` log line, and on a
 non-zero exit `<job root>/fail_reason.txt` becomes the failure reason
-(`runner-reconstruction-common/src/python.rs`). Per runner (`LOCAL_`, `GLOBAL_` or `UPDATE_`
-prefix), all optional:
+(`runner-reconstruction-common/src/python.rs`). Per runner (`LOCAL_`,
+`LOCAL_AUKI_SESSION_`, `GLOBAL_` or `UPDATE_` prefix), all optional:
 
 - `<PREFIX>_RUNNER_PYTHON_BIN`: interpreter (default `python3`).
 - `<PREFIX>_RUNNER_PYTHON_MODULE`: package run with `-m` (default `reconstruction`).
 - `<PREFIX>_RUNNER_PYTHON_SCRIPT`: run this script instead of the module
   (`python3 <script> <args>`).
 - `<PREFIX>_RUNNER_PYTHON_ARGS`: extra arguments, placed before the runner's own.
+
+## P2P
+
+Setting `AUKI_PEER_IDENTITY_FILE` (the node's P2P identity; created if
+missing) gives the node a P2P peer: it registers the identity with DDS, and a
+lease that carries a P2P grant starts a per-task peer that runners reach
+through `task.peer()`. The node then also advertises the capabilities that
+need it (`/reconstruction/local-refinement-auki-session-p2p/v1`). Leases
+without a grant still run HTTP-only. Unset, the node has no peer, as before.
 
 ## Getting started
 1. Install the pinned toolchain (`rustup toolchain install stable` if missing; the
