@@ -13,6 +13,11 @@ sudo rm -f /app/compute-node
 
 bash .devcontainer/build_server.sh 0.0.0
 
+# Auki SDK Python bindings, at the auki-sdk rev server/rust/Cargo.toml pins
+rm -rf /tmp/auki-wheels
+bash docker/build_auki_python.sh . /tmp/auki-wheels
+pip install --user --no-deps --force-reinstall /tmp/auki-wheels/*.whl
+
 if [ -f /app/.env ]; then
     echo ".env file found, configuring .bashrc to apply it on new shells..."
     echo 'source .devcontainer/apply_env_file.sh' >> ~/.bashrc

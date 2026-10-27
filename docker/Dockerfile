@@ -19,6 +19,18 @@ RUN --mount=type=secret,id=github_token \
     && rm -f /root/.gitconfig
 
 ##
+## Auki SDK Python bindings, at the auki-sdk rev server/rust/Cargo.toml pins
+##
+FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS auki-python
+WORKDIR /src
+COPY server/rust/Cargo.toml server/rust/Cargo.toml
+COPY docker/build_auki_python.sh docker/build_auki_python.sh
+RUN --mount=type=secret,id=github_token \
+    git config --global url."https://x-access-token:$(cat /run/secrets/github_token)@github.com/".insteadOf "https://github.com/" \
+    && docker/build_auki_python.sh . /wheels \
+    && rm -f /root/.gitconfig
+
+##
 ## Runtime
 ##
 FROM ${BASE_IMAGE} AS final
@@ -29,6 +41,10 @@ ENV RECONSTRUCTION_SERVER_VERSION="${RECONSTRUCTION_VERSION}"
 ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
+
+# Auki SDK Python bindings (auki_geometry: frame convention conversions)
+COPY --from=auki-python /wheels /tmp/auki-wheels
+RUN python3 -m pip install --no-cache-dir --no-deps /tmp/auki-wheels/*.whl && rm -rf /tmp/auki-wheels
 
 # Application code
 WORKDIR /app
