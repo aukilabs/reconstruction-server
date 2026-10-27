@@ -1,0 +1,236 @@
+"""Global refinement: align the refined scans into one map, then extract the topology mesh."""
+from pathlib import Path
+import argparse
+import os
+from reconstruction.entrypoints import _refinement
+from reconstruction.layout import JobLayout
+from reconstruction.io.scan import get_data_paths
+from reconstruction.geometry.pose import mean_pose
+from reconstruction.output.manifest import save_manifest_json
+from reconstruction.log import GLOBAL_REFINEMENT, setup_logger
+from reconstruction.output.pointcloud import post_process_ply
+from reconstruction.pipeline.global_map.alignment import align_scans, AlignedScans
+from reconstruction.pipeline.global_map.merge import merge_aligned_scans
+from reconstruction.pipeline.global_map.refine import refine_alignment, print_alignment_comparison
+from reconstruction.pipeline.global_map.portal_metrics import portal_alignment_metrics_to_dict
+from reconstruction.io.config import load_yaml, save_to_yaml
+from reconstruction.io.portals import read_portal_csv
+from reconstruction.pipeline.topology.mesh import main as topology_main
+import logging
+from typing import Dict
+import pycolmap
+
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+
+
+def collect_portal_sizes(scan_ids, job_root_path, logger):
+    portal_sizes = {}
+
+    for scan_id in scan_ids:
+        portals_csv_path = JobLayout(job_root_path).refined_sfm(scan_id) / "portals.csv"
+        if not portals_csv_path.exists():
+            continue
+
+        try:
+            for portal in read_portal_csv(portals_csv_path):
+                if portal.short_id not in portal_sizes:
+                    portal_sizes[portal.short_id] = portal.size
+        except Exception as e:
+            logger.warning(f"Failed to read portal sizes from {portals_csv_path}: {e}")
+
+    return portal_sizes
+
+
+def get_mean_portal_poses(aligned_scans: AlignedScans, logger: logging.Logger) -> Dict[str, pycolmap.Rigid3d]:
+    """
+    Combines all portal detections across all aligned scans into one pose per portal.
+
+    Args:
+        portal_detections_per_scan: scan_id -> (qr_id -> poses[])
+    Returns:
+        Dict[str, pycolmap.Rigid3d]: qr_id -> mean pose
+    """
+    poses_by_qr = {}
+
+    if not aligned_scans.aligned_portal_detections:
+        logger.warning("[get_mean_portal_poses] WARNING: No portal detections in aligned_scans. Returning empty dict.")
+        return {}
+
+    for scan_portals in aligned_scans.aligned_portal_detections.values():
+        for qr_id, poses in scan_portals.items():
+            if qr_id not in poses_by_qr:
+                poses_by_qr[qr_id] = []
+            poses_by_qr[qr_id].extend(poses)
+
+    return {
+        qr_id: mean_pose(poses)
+        for qr_id, poses in poses_by_qr.items()
+        if poses
+    }
+
+
+def refine_global(args):
+    # Create and configure logger
+    output_path = args.output_path
+    os.makedirs(output_path, exist_ok=True)
+    global_log_file = str(output_path) + "/global_logs"
+    logger = setup_logger(
+        name=GLOBAL_REFINEMENT,
+        log_file=global_log_file,
+        domain_id=args.domain_id, 
+        job_id=args.job_id, 
+        level=args.log_level,
+        log_format=args.log_format
+    )
+
+    # Find all stitch paths
+    truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, GLOBAL_REFINEMENT)
+
+    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
+    # Starting with oldest scan keeps the origin portal consistent.
+    dataset_paths.sort()
+    
+    # Perform stitching
+    
+    scan_ids = [dataset_path.name for dataset_path in dataset_paths]
+    job_root_path = args.data_dir.parent
+    aligned_scans = align_scans(
+        scan_ids,
+        job_root_path,
+        logger=logger
+    )
+    refined_aligned_scans, portal_alignment_metrics = refine_alignment(
+        aligned_scans,
+        job_root_path,
+        logger=logger,
+    )
+
+    print_alignment_comparison(
+        aligned_scans,
+        refined_aligned_scans,
+        logger=logger
+    )
+    
+    combined_rec = merge_aligned_scans(
+        refined_aligned_scans,
+        job_root_path,
+        logger=logger
+    )
+
+    refined_portal_poses = get_mean_portal_poses(refined_aligned_scans, logger)
+
+    logger.debug("Aligned portal poses: ")
+    aligned_portal_poses = get_mean_portal_poses(aligned_scans, logger)
+    for qr_id in aligned_portal_poses.keys():
+        basic_pose = aligned_portal_poses[qr_id]
+        refined_pose = refined_portal_poses[qr_id]
+        logger.debug(f"Basic pose for QR {qr_id}: R={basic_pose.rotation.matrix()}, t={basic_pose.translation}")
+        logger.debug(f"Refined pose for QR {qr_id}: R={refined_pose.rotation.matrix()}, t={refined_pose.translation}")
+    
+    portal_sizes = collect_portal_sizes(refined_aligned_scans.scan_ids, job_root_path, logger)
+
+    manifest_path = output_path / "refined_manifest.json"
+    save_manifest_json(
+        refined_portal_poses,
+        manifest_path,
+        job_root_path,
+        job_status="refined",
+        job_progress=100,
+        portal_sizes=portal_sizes,
+        portal_alignment_metrics=portal_alignment_metrics_to_dict(portal_alignment_metrics),
+    )
+
+    sfm_dir = output_path / "refined_sfm_combined"
+    os.makedirs(sfm_dir, exist_ok=True)
+    combined_rec.write(sfm_dir)
+    
+    logger.info(f"Exporting colmap points to PLY")
+    obs = pycolmap.ObservationManager(combined_rec)
+    filtered_count = obs.filter_all_points3D(max_reproj_error=4.0, min_tri_angle=2.0)
+    logger.info(f"Filtered {filtered_count} points with large reprojection error or low triangulation angle.")
+    logger.info(f"Filtered reconstruction for PLY export: {combined_rec}")
+    ply_path = output_path / "RefinedPointCloud.ply"
+    combined_rec.export_PLY(ply_path) # Outputs binary PLY in openCV coords. We convert it to OpenGL in the post_process_ply
+    logger.info(f"PLY exported -> {ply_path}")
+
+    post_process_ply(output_path, logger=logger)
+
+    logger.info("Global refinement completed successfully")
+    return
+
+
+
+def occlusion_box_wrapper(pointcloud_path, output_dir, logger):
+    """Run occlusion box extraction on the given point cloud.
+
+    Args:
+        path: Path to the point cloud file
+        output_dir: Output directory for results
+        logger: Logger instance
+    """
+    # Imported here: occlusion_box pulls in sklearn, shapely, alphashape and matplotlib.
+    from reconstruction.pipeline.occlusion.occlusion_box import main as occlusion_main
+
+    config = load_yaml(CONFIG_DIR / 'occlusion_box' / 'default.yaml')
+    config.update({
+        'path': str(pointcloud_path),
+        'output_dir': str(output_dir),
+        'opengl': True,  # Point cloud already in OpenGL coordinates
+        'display': False
+    })
+
+    logger.info(f"Running occlusion box with config contents:")
+    for key, value in config.items():
+        logger.info(f"{key}: {value}")
+
+    save_to_yaml(config)
+    logger.info("Starting occlusion box extraction...")
+    occlusion_main(config, logger)
+    logger.info("Done with occlusion box extraction!")
+
+
+def global_main_wrapper(args, layout, logger):
+    """Run global refinement process.
+
+    Args:
+        args: Command line arguments
+        layout: JobLayout of the job
+        logger: Logger instance
+    """
+    logger.info("--------------------------------")
+    logger.info(f"Running global refinement with {len(args.scans)} scans")
+
+    global_args = argparse.Namespace(
+        data_dir=layout.datasets,
+        output_path=layout.refined_global,
+        domain_id=args.domain_id,
+        job_id=args.job_id,
+        log_level=args.log_level,
+        log_format=args.log_format
+    )
+    refine_global(global_args)
+    logger.info("Done with global refinement")
+    logger.info("--------------------------------")
+
+    logger.info("Start extracting topology...")
+
+    # TODO: needs some fixing and testing before re-enabling
+    #occlusion_box_wrapper(ply_output_path, global_out_folder / "occlusion", logger)
+
+    topology_args = argparse.Namespace(
+        input_path=global_args.output_path / "RefinedPointCloud.ply",
+        output_dir=global_args.output_path / "topology",
+        floor_height=0.0,
+        floor_height_threshold=0.3,
+        voxel_size=0.05
+    )
+
+    topology_main(topology_args, logger)
+
+
+def parse_args(argv, prog=None):
+    return _refinement.parse_args("global", argv, prog)
+
+
+def main(args):
+    _refinement.run(args, global_main_wrapper)
