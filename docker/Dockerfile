@@ -19,9 +19,13 @@ RUN --mount=type=secret,id=github_token \
     && rm -f /root/.gitconfig
 
 ##
-## Auki SDK Python bindings, at the auki-sdk rev server/rust/Cargo.toml pins
+## Auki Python packages (docker/build_auki_python.sh). qr-lab and pnp-lab build for one Python
+## version, so they are built on the runtime image, with the same Rust as the server.
 ##
-FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS auki-python
+FROM ${BASE_IMAGE} AS auki-python
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH RUSTUP_TOOLCHAIN=1.89.0
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.89.0 --no-modify-path \
+    && python3 -m pip install --no-cache-dir maturin==1.15.0
 WORKDIR /src
 COPY server/rust/Cargo.toml server/rust/Cargo.toml
 COPY docker/build_auki_python.sh docker/build_auki_python.sh
@@ -42,9 +46,10 @@ ARG USERNAME=reconstruction-server
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
-# Auki SDK Python bindings (auki_geometry: frame convention conversions)
+# Auki Python packages: the SDK bindings (frame conventions everywhere; sessions, logs and
+# registries for local-auki-session), qr-lab and pnp-lab. pip adds auki-datatypes' betterproto.
 COPY --from=auki-python /wheels /tmp/auki-wheels
-RUN python3 -m pip install --no-cache-dir --no-deps /tmp/auki-wheels/*.whl && rm -rf /tmp/auki-wheels
+RUN python3 -m pip install --no-cache-dir /tmp/auki-wheels/*.whl && rm -rf /tmp/auki-wheels
 
 # Application code
 WORKDIR /app

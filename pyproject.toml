@@ -9,8 +9,8 @@ description = "Auki reconstruction node: the Python/C++ pipeline the Rust comput
 readme = { file = "README.MD", content-type = "text/markdown" }
 requires-python = ">=3.10"
 # Names only, as documentation. docker/Dockerfile.base pins the versions (pybind11, pyceres, COLMAP,
-# torch, opencv and open3d must match each other), except the Auki SDK bindings, which
-# docker/build_auki_python.sh builds at the auki-sdk rev server/rust/Cargo.toml pins. The image never
+# torch, opencv and open3d must match each other), except the Auki packages, which
+# docker/build_auki_python.sh builds (the SDK at the auki-sdk rev server/rust/Cargo.toml pins). The image never
 # resolves dependencies from this file. Install into an environment that already has them:
 #   pip install -e . --no-deps
 dependencies = [
@@ -27,7 +27,15 @@ dependencies = [
     "python-dateutil",
     "psutil",
     "gputil",
-    "auki-geometry-py",  # built from auki-sdk by docker/build_auki_python.sh; not on PyPI
+    # Built by docker/build_auki_python.sh: the Auki SDK bindings (auki-sdk is private) and
+    # qr-lab / pnp-lab (not on PyPI).
+    "auki-geometry-py",
+    "auki-registry-py",
+    "auki-layout-py",
+    "auki-logs-py",
+    "auki-datatypes-py",
+    "qr-lab",
+    "aukilabs-pnplab",
 ]
 
 [project.optional-dependencies]
