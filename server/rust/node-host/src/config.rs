@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 use url::Url;
 use uuid::Uuid;
@@ -25,6 +26,10 @@ pub struct HostConfig {
     pub register_interval: Duration,
     pub poll_backoff_ms_min: u64,
     pub poll_backoff_ms_max: u64,
+    /// `AUKI_PEER_IDENTITY_FILE`: the node's P2P identity (created if missing). When set, the
+    /// node registers a peer with DDS and leases that carry a P2P grant get one; unset, the
+    /// node is HTTP-only as before.
+    pub peer_identity_file: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for HostConfig {
@@ -38,6 +43,7 @@ impl std::fmt::Debug for HostConfig {
             .field("register_interval", &self.register_interval)
             .field("poll_backoff_ms_min", &self.poll_backoff_ms_min)
             .field("poll_backoff_ms_max", &self.poll_backoff_ms_max)
+            .field("peer_identity_file", &self.peer_identity_file)
             .finish_non_exhaustive()
     }
 }
@@ -89,6 +95,7 @@ impl HostConfig {
             register_interval: Duration::from_secs(number("REGISTER_INTERVAL_SECS", 120)?),
             poll_backoff_ms_min: number("POLL_BACKOFF_MS_MIN", 1_000)?,
             poll_backoff_ms_max: number("POLL_BACKOFF_MS_MAX", 30_000)?,
+            peer_identity_file: value("AUKI_PEER_IDENTITY_FILE").map(PathBuf::from),
         })
     }
 }
@@ -124,6 +131,25 @@ mod tests {
         );
         assert!(cfg.client_id.starts_with("node/"));
         assert_eq!(cfg.node_version, "1.2.3");
+        assert_eq!(cfg.peer_identity_file, None);
+    }
+
+    #[test]
+    fn peer_identity_file_enables_p2p() {
+        let cfg = HostConfig::from_lookup(
+            "1",
+            "n",
+            lookup(&[
+                ("REG_SECRET", "s"),
+                ("SECP256K1_PRIVHEX", "ab"),
+                ("AUKI_PEER_IDENTITY_FILE", "/secrets/peer.key"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.peer_identity_file,
+            Some(PathBuf::from("/secrets/peer.key"))
+        );
     }
 
     #[test]

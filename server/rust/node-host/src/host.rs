@@ -2,8 +2,10 @@ use crate::config::HostConfig;
 use crate::router::Router;
 use anyhow::{Context, Result};
 use auki_sdk::{
-    AukiComputeCredential, AukiDmsTasks, ComputeConfig, SecretString, TaskError, TasksConfig,
+    AukiComputeCredential, AukiDmsTasks, AukiPeerConfig, AukiTaskPeerConfig, ComputeConfig,
+    Identity, SecretString, TaskError, TasksConfig,
 };
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -41,14 +43,41 @@ pub async fn run_with_shutdown(
     .context("invalid compute node configuration")?;
     machine.request_timeout = cfg.request_timeout;
     machine.registration_interval = cfg.register_interval;
+    let peer = task_peer(&cfg)?;
+    machine.peer_identity = peer.as_ref().map(AukiTaskPeerConfig::identity_proof);
     let credential = AukiComputeCredential::new(machine)?;
-    let tasks = AukiDmsTasks::new(credential.clone(), capabilities.clone(), task_config(&cfg))?;
+    let tasks = match peer {
+        Some(peer) => AukiDmsTasks::new_with_peer(
+            credential.clone(),
+            capabilities.clone(),
+            task_config(&cfg),
+            Arc::new(peer),
+        )?,
+        None => AukiDmsTasks::new(credential.clone(), capabilities.clone(), task_config(&cfg))?,
+    };
     info!(?capabilities, version = %cfg.node_version, "compute node starting");
     let result = claim_loop(&tasks, &cfg, &router, &graceful, &forced).await;
     let cleanup = tasks.close().await;
     credential.close().await;
     cleanup?;
     result
+}
+
+/// The node's P2P peer, when `AUKI_PEER_IDENTITY_FILE` is set. Each lease that carries a P2P
+/// grant then starts a peer for that task, which runners reach through `task.peer()`.
+fn task_peer(cfg: &HostConfig) -> Result<Option<AukiTaskPeerConfig>> {
+    let Some(file) = &cfg.peer_identity_file else {
+        return Ok(None);
+    };
+    let identity = Identity::load_or_create(file)
+        .map_err(|error| anyhow::anyhow!("load P2P identity {}: {error}", file.display()))?;
+    let peer_id = identity.peer_id();
+    let config = AukiPeerConfig::new(cfg.dms_base_url.as_str())
+        .map_err(|error| anyhow::anyhow!("invalid P2P peer configuration: {error}"))?;
+    let peer = AukiTaskPeerConfig::new(identity, cfg.dds_base_url.as_str(), config)
+        .context("invalid task peer configuration")?;
+    info!(%peer_id, "P2P enabled");
+    Ok(Some(peer))
 }
 
 fn task_config(cfg: &HostConfig) -> TasksConfig {
@@ -79,7 +108,7 @@ pub async fn claim_loop(
             result = tasks.claim_any(graceful) => result,
         };
         match lease {
-            Ok(Some(lease)) => match lease.execute(router, forced).await {
+            Ok(Some(lease)) => match execute(lease, cfg, router, forced).await {
                 // Failed and DMS-cancelled tasks already have their outcome; keep claiming.
                 Ok(()) | Err(TaskError::Handler | TaskError::LeaseLost) => continue,
                 Err(TaskError::Cancelled) if !forced.is_cancelled() => continue,
@@ -108,6 +137,21 @@ pub async fn claim_loop(
         }
     }
     Ok(())
+}
+
+/// With P2P configured, leases without a grant still run, HTTP-only; runners that need a peer
+/// check `task.peer()` themselves.
+async fn execute(
+    lease: auki_sdk::TaskLease,
+    cfg: &HostConfig,
+    router: &Router,
+    forced: &CancellationToken,
+) -> std::result::Result<(), TaskError> {
+    if cfg.peer_identity_file.is_some() {
+        lease.execute_with_optional_peer(router, forced).await
+    } else {
+        lease.execute(router, forced).await
+    }
 }
 
 /// Uniform delay in `[min, max]` from the clock's sub-second millis.

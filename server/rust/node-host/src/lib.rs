@@ -13,7 +13,7 @@ pub mod router;
 pub mod telemetry;
 
 pub use auki_sdk;
-pub use auki_sdk::{TaskContext, TaskSpec};
+pub use auki_sdk::{AukiTaskPeer, TaskContext, TaskPeerContext, TaskSpec};
 pub use config::HostConfig;
 pub use host::{run, run_with_shutdown};
 pub use io::{ArtifactContent, ArtifactRequest, Materialized, StorageError, TaskIo};
