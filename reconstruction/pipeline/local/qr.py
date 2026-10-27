@@ -39,7 +39,11 @@ def get_world_space_qr_codes(reconstruction, detections_per_qr, image_ids_per_qr
         corresponding_image_ids = image_ids_per_qr[qr_id]
 
         for image_id, qr_pose_in_cam in zip(corresponding_image_ids, cam_space_detections):
-            cam_pose = reconstruction.images[image_id].frame.rig_from_world.inverse()
+            # The image's own camera pose, not its frame's rig pose: they differ by the camera's
+            # sensor_from_rig, which is identity only for the rig's reference camera (DMT rigs
+            # have one camera, so they are equal there). On a 4-camera Auki rig the rig pose put
+            # a marker's detections up to 2.70 m apart; the camera pose, 0.47 m.
+            cam_pose = reconstruction.images[image_id].cam_from_world().inverse()
             qr_world_pose = cam_pose * qr_pose_in_cam
             qr_world_detections[qr_id].append(qr_world_pose)
 

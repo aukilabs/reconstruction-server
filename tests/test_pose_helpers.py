@@ -61,6 +61,14 @@ class FloorPortalTests(unittest.TestCase):
     def test_wall_portal_at_floor_height(self):
         self.assertFalse(is_floor_portal(self._pose([0.0, 0.0, 0.0, 1.0], [0.1, 3.0, -2.0])))
 
+    def test_reference_axis_for_markers_facing_up(self):
+        # pnp-lab's marker z points out of the face: up (+x) for a floor marker.
+        facing_up = Rotation.from_euler("y", 90.0, degrees=True).as_quat()
+        up = np.array([1.0, 0.0, 0.0])
+        self.assertTrue(is_floor_portal(self._pose(facing_up, [0.1, 3.0, -2.0]), reference_axis=up))
+        self.assertFalse(is_floor_portal(self._pose(self.FACING_DOWN, [0.1, 3.0, -2.0]), reference_axis=up))
+        self.assertFalse(is_floor_portal(self._pose(facing_up, [0.1, 3.0, -2.0])))
+
 
 class Vec3AngleTests(unittest.TestCase):
     def test_angles(self):
