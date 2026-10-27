@@ -3315,12 +3315,15 @@ name = "runner-reconstruction-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "node-host",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
+ "walkdir",
  "zip",
 ]
 

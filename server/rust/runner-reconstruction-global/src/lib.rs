@@ -1,20 +1,18 @@
 //! runner-reconstruction-global: runner for global refinement.
 
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use node_host::{ArtifactContent, ArtifactRequest, NodeRunner, TaskContext, TaskIo};
-use serde::Serialize;
+use node_host::{NodeRunner, TaskContext, TaskIo};
 use serde_json::json;
-use tokio::fs;
 use tracing::{info, warn};
 
 mod input;
 
+use runner_reconstruction_common::job::{
+    tasks_cleanup_disabled, upload_task_log, JobContext, WorkspaceCleanup,
+};
 use runner_reconstruction_common::{output, python, strategy, workspace};
 
 /// Public crate identifier used by workspace smoke tests.
@@ -78,14 +76,6 @@ impl Default for RunnerReconstructionGlobal {
     }
 }
 
-/// When true, the job workspace directory is left on disk after the task finishes (same env semantics as splatter-server).
-fn tasks_cleanup_disabled() -> bool {
-    match env::var("DISABLE_TASKS_CLEANUP") {
-        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
-        Err(_) => false,
-    }
-}
-
 #[async_trait::async_trait]
 impl NodeRunner for RunnerReconstructionGlobal {
     fn capability(&self) -> &'static str {
@@ -107,19 +97,13 @@ impl NodeRunner for RunnerReconstructionGlobal {
             workspace.persist_temp_base();
         }
         // By default remove the workspace on exit; set DISABLE_TASKS_CLEANUP to retain it for debugging.
-        struct WorkspaceCleanup(std::path::PathBuf);
-        impl Drop for WorkspaceCleanup {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
         let _workspace_cleanup = if retain_workspace_after_run {
             None
         } else {
             Some(WorkspaceCleanup(workspace.root().to_path_buf()))
         };
 
-        let job_ctx = JobContext::from_task(task)?;
+        let job_ctx = JobContext::from_task(task, "global_refinement")?;
         job_ctx
             .persist_metadata(workspace.job_metadata_path())
             .await?;
@@ -224,7 +208,7 @@ impl NodeRunner for RunnerReconstructionGlobal {
             anyhow::bail!("task cancelled before upload");
         }
 
-        let name_suffix = job_ctx.domain_data_name_suffix();
+        let name_suffix = job_ctx.domain_data_name_suffix("global_job");
         output::upload_final_outputs(output::GLOBAL_OUTPUTS, &workspace, io, &name_suffix, None)
             .await?;
         let _ = task.progress(json!({"pct": 95, "stage": "upload"}));
@@ -239,111 +223,6 @@ impl NodeRunner for RunnerReconstructionGlobal {
 
         task.progress(json!({"progress": 100, "status": "succeeded"}))?;
 
-        Ok(())
-    }
-}
-
-async fn upload_task_log(
-    sink: &TaskIo,
-    workspace: &workspace::Workspace,
-    task_id: &str,
-) -> Result<()> {
-    let log_path = workspace.root().join("log.txt");
-    if !log_path.exists() {
-        warn!(task_id = %task_id, path = %log_path.display(), "task log missing");
-        return Ok(());
-    }
-
-    let rel_path = format!("logs/{task_id}.txt");
-    let name = format!("task_log_{task_id}");
-    sink.put_domain_artifact(ArtifactRequest {
-        rel_path: &rel_path,
-        name: &name,
-        data_type: "task_log_txt",
-        existing_id: None,
-        content: ArtifactContent::File(&log_path),
-    })
-    .await
-    .with_context(|| format!("upload task log {}", log_path.display()))?;
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct JobMetadataRecord {
-    id: String,
-    name: String,
-    domain_id: String,
-    processing_type: String,
-    created_at: String,
-    domain_server_url: String,
-    reconstruction_server_url: Option<String>,
-    data_ids: Vec<String>,
-}
-
-struct JobContext {
-    metadata: JobMetadataRecord,
-}
-
-impl JobContext {
-    fn from_task(task: &TaskContext) -> Result<Self> {
-        let lease = task.credential.lease_snapshot()?;
-        let job_id = lease
-            .task
-            .job_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| lease.task.id.to_string());
-        let job_name = format!("job_{}", job_id);
-
-        let domain_server_url = lease
-            .domain_server_url
-            .as_ref()
-            .map(|url| url.to_string())
-            .unwrap_or_default();
-        let domain_server_url = domain_server_url.trim_end_matches('/').to_string();
-
-        let reconstruction_server_url = None;
-
-        let data_ids: Vec<String> = lease
-            .task
-            .inputs_cids
-            .iter()
-            .map(|cid| extract_last_segment(cid))
-            .collect();
-
-        let metadata = JobMetadataRecord {
-            id: job_id.clone(),
-            name: job_name,
-            domain_id: lease.domain_id.map(|id| id.to_string()).unwrap_or_default(),
-            processing_type: "global_refinement".to_string(),
-            created_at: Utc::now().to_rfc3339(),
-            domain_server_url,
-            reconstruction_server_url,
-            data_ids,
-        };
-
-        Ok(Self { metadata })
-    }
-
-    fn domain_data_name_suffix(&self) -> String {
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&self.metadata.created_at) {
-            return parsed.format("%Y-%m-%d_%H-%M-%S").to_string();
-        }
-        if !self.metadata.name.trim().is_empty() {
-            return self.metadata.name.clone();
-        }
-        "global_job".to_string()
-    }
-
-    async fn persist_metadata(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("create metadata directory {}", parent.display()))?;
-        }
-        let bytes = serde_json::to_vec_pretty(&self.metadata)?;
-        fs::write(path, bytes)
-            .await
-            .with_context(|| format!("write job metadata to {}", path.display()))?;
         Ok(())
     }
 }
@@ -483,15 +362,6 @@ fn build_python_args(
     }
 
     args
-}
-
-/// Extract the last non-empty segment from a CID/URL-like string.
-fn extract_last_segment(input: &str) -> String {
-    let trimmed = input.trim_end_matches('/');
-    match trimmed.rsplit('/').next() {
-        Some(seg) if !seg.is_empty() => seg.to_string(),
-        _ => input.to_string(),
-    }
 }
 
 #[cfg(test)]

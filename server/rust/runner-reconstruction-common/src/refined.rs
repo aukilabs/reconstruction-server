@@ -1,3 +1,5 @@
+//! Local refinement's upload: one RefinedScan.zip per refined scan.
+
 use std::collections::HashSet;
 use std::io::{Cursor, Write};
 use std::path::Path;

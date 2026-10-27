@@ -1,9 +1,10 @@
 """Upload contract between the Python pipeline and the Rust runners.
 
 After Python exits, the Rust runners upload a fixed set of files from the job root:
-- server/rust/runner-reconstruction-local/src/refined.rs: one RefinedScan.zip per scan
+- server/rust/runner-reconstruction-common/src/refined.rs: one RefinedScan.zip per scan
 - server/rust/runner-reconstruction-common/src/output.rs: the final global and update outputs
-- server/rust/runner-reconstruction-*/src/lib.rs: the task log
+- server/rust/runner-reconstruction-common/src/job.rs: the task log, uploaded by every runner
+  (runner-reconstruction-*/src/lib.rs)
 
 reconstruction/output/uploads.py holds the Python-side copy of those tables (UPLOAD_TABLE).
 These tests parse the Rust sources, so changing the paths, names, data types or required flags
@@ -78,7 +79,7 @@ class UploadContractTests(unittest.TestCase):
                 self.assertEqual(_rust_final_outputs(runner), self._table(runner, exclude_paths=("log.txt",)))
 
     def test_refined_scan_zip_matches_rust(self):
-        refined_rs = _read("runner-reconstruction-local/src/refined.rs")
+        refined_rs = _read("runner-reconstruction-common/src/refined.rs")
         self.assertEqual(_rust_str_array(refined_rs, "REQUIRED_SFM_FILES"), REFINED_SCAN_REQUIRED_FILES)
         self.assertEqual(_rust_str_array(refined_rs, "ZIP_ALLOWED_EXTENSIONS"), REFINED_SCAN_ZIP_EXTENSIONS)
 
@@ -92,14 +93,16 @@ class UploadContractTests(unittest.TestCase):
         self.assertIn("if !upload_local_zips || !has_required_sfm_files(&sfm_path) {\n                continue;", refined_rs)
 
     def test_task_log_matches_rust(self):
+        job_rs = _read("runner-reconstruction-common/src/job.rs")
         for runner in ("local", "global", "update"):
             with self.subTest(runner=runner):
                 (spec,) = [s for s in self._table(runner) if s.path == "log.txt"]
+                self.assertIn(f'workspace.root().join("{spec.path}")', job_rs)
+                self.assertIn('format!("logs/{task_id}.txt")', job_rs)
+                self.assertIn(f'format!("{spec.name}")', job_rs)
+                self.assertIn(f'data_type: "{spec.data_type}"', job_rs)
                 lib_rs = _read(f"runner-reconstruction-{runner}/src/lib.rs")
-                self.assertIn(f'workspace.root().join("{spec.path}")', lib_rs)
-                self.assertIn('format!("logs/{task_id}.txt")', lib_rs)
-                self.assertIn(f'format!("{spec.name}")', lib_rs)
-                self.assertIn(f'data_type: "{spec.data_type}"', lib_rs)
+                self.assertIn("upload_task_log(io, &workspace, &task_id)", lib_rs)
                 # A missing log is a warning, not a task failure.
                 self.assertIn('warn!(error = %err, task_id = %task_id, "failed to upload task log");', lib_rs)
 
