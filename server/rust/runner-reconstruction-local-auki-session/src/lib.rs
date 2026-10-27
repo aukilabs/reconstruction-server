@@ -1,9 +1,10 @@
 //! runner-reconstruction-local-auki-session: local refinement of an Auki SDK capture session.
 //!
 //! The input is one zip of a whole capture folder (registries plus one session's sensor and
-//! pose logs). The runner expands it, starts `python3 -m reconstruction local-auki-session`,
-//! and uploads the refined scan the way local refinement does (`refined_scan_<scan>`), plus the
-//! task log.
+//! pose logs): stored in the Domain (`CAPABILITY`), or on the robot's peer, named by a recording
+//! manifest in the Domain and fetched over P2P (`P2P_CAPABILITY`). The runner expands it, starts
+//! `python3 -m reconstruction local-auki-session`, and uploads the refined scan the way local
+//! refinement does (`refined_scan_<scan>`), plus the task log.
 
 use std::{env, path::PathBuf};
 
@@ -14,6 +15,7 @@ use serde_json::json;
 use tracing::{info, warn};
 
 mod input;
+mod manifest;
 
 use runner_reconstruction_common::job::{
     tasks_cleanup_disabled, upload_task_log, JobContext, WorkspaceCleanup,
@@ -28,6 +30,14 @@ pub const CAPABILITY: &str = "/reconstruction/local-refinement-auki-session/v1";
 
 /// Convenience slice for wiring all supported capabilities.
 pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
+
+/// The same refinement, with the capture zip fetched from the robot's peer over Blob v1. Only a
+/// node with a P2P identity (`AUKI_PEER_IDENTITY_FILE`) can serve it, so only such a node
+/// advertises it.
+pub const P2P_CAPABILITY: &str = "/reconstruction/local-refinement-auki-session-p2p/v1";
+
+/// Capabilities that need the node's P2P peer.
+pub const P2P_CAPABILITIES: [&str; 1] = [P2P_CAPABILITY];
 
 pub struct RunnerReconstructionLocalAukiSession {
     config: RunnerConfig,
@@ -46,6 +56,15 @@ impl RunnerReconstructionLocalAukiSession {
     pub fn for_all_capabilities() -> Vec<Self> {
         let config = load_config();
         CAPABILITIES
+            .iter()
+            .map(|cap| Self::with_capability(cap, config.clone()))
+            .collect()
+    }
+
+    /// Runners for `P2P_CAPABILITIES`; register them only on a node with a P2P peer.
+    pub fn for_p2p_capabilities() -> Vec<Self> {
+        let config = load_config();
+        P2P_CAPABILITIES
             .iter()
             .map(|cap| Self::with_capability(cap, config.clone()))
             .collect()
@@ -127,7 +146,11 @@ impl NodeRunner for RunnerReconstructionLocalAukiSession {
         );
         let _ = task.progress(json!({"pct": 5, "stage": "workspace", "status": "prepared"}));
 
-        let session = input::materialize_session_zip(task, io, &workspace).await?;
+        let session = if self.capability == P2P_CAPABILITY {
+            input::materialize_session_blob(task, io, &workspace).await?
+        } else {
+            input::materialize_session_zip(task, io, &workspace).await?
+        };
         if task.is_cancelled() {
             anyhow::bail!("task cancelled during input materialization");
         }

@@ -10,9 +10,12 @@ path = "src/lib.rs"
 [dependencies]
 node-host = { path = "../node-host" }
 runner-reconstruction-common = { path = "../runner-reconstruction-common" }
+auki-p2p = { workspace = true }
+auki-protocols = { workspace = true }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 tracing = "0.1"
@@ -20,6 +23,14 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"
+# The two-peer Blob round trip in manifest.rs.
+auki-protocols = { workspace = true, features = ["blob-fs-provider"] }
+auki-registry = { workspace = true }
+auki-sdk = { workspace = true }
+jsonwebtoken = { version = "10.4", default-features = false, features = ["rust_crypto", "use_pem"] }
+p256 = { version = "0.13", features = ["arithmetic", "pem", "pkcs8"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+uuid = { version = "1", features = ["v4"] }
 
 [package.metadata]
 description = "Runner for local refinement of an Auki SDK capture session."

@@ -15,6 +15,10 @@ resolver = "2"
 auki-sdk = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420" }
 auki-auth = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420" }
 auki-dms = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420", default-features = false, features = ["client"] }
+# Auki-session P2P input: route validation, and Blob v1 from the SDK's labs (experimental) crates.
+auki-p2p = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420" }
+auki-protocols = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420", features = ["blob-endpoint"] }
+auki-registry = { git = "https://github.com/aukilabs/auki-sdk", rev = "a497e41cd0a72a99f397ef2cc6be2d31d3504420" }
 
 [workspace.package]
 edition = "2021"

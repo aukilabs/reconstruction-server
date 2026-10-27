@@ -11,11 +11,15 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use node_host::{Materialized, TaskContext, TaskIo};
+use auki_protocols::blob::BlobClient;
+use chrono::Utc;
+use node_host::{Materialized, TaskContext, TaskIo, TaskPeerContext};
 use runner_reconstruction_common::workspace::{sanitize_segment, Workspace};
 use tokio::task;
 use tracing::{info, warn};
 use zip::ZipArchive;
+
+use crate::manifest;
 
 /// Marks a session folder; `registries/` and `scan_report.json` sit next to sessions, never in
 /// them. reconstruction/io/auki_session.py's resolve_auki_session_id uses the same rule.
@@ -42,25 +46,26 @@ pub struct MaterializedSession {
     pub extracted_files: usize,
 }
 
+/// The task's one input CID.
+fn single_input<'a>(task: &'a TaskContext, what: &str) -> Result<&'a str> {
+    match task.task.inputs_cids.as_slice() {
+        [cid] => Ok(cid),
+        [] => Err(anyhow!("expected one {what} input, got none")),
+        many => Err(anyhow!(
+            "expected one {what} input, got {} ({})",
+            many.len(),
+            many.join(", ")
+        )),
+    }
+}
+
 /// Download the task's single input, the capture zip, from the Domain and expand it.
 pub async fn materialize_session_zip(
     task: &TaskContext,
     io: &TaskIo,
     workspace: &Workspace,
 ) -> Result<MaterializedSession> {
-    let cids = &task.task.inputs_cids;
-    let cid = match cids.as_slice() {
-        [cid] => cid,
-        [] => return Err(anyhow!("expected one capture zip input, got none")),
-        many => {
-            return Err(anyhow!(
-                "expected one capture zip input, got {} ({})",
-                many.len(),
-                many.join(", ")
-            ))
-        }
-    };
-
+    let cid = single_input(task, "capture zip")?;
     let materialized = io
         .materialize(cid)
         .await
@@ -78,6 +83,86 @@ pub async fn materialize_session_zip(
     }
     let scan_name = derive_scan_name(&materialized);
     expand_session_zip(&materialized.path, scan_name, workspace).await
+}
+
+/// Read the task's single input, a recording manifest, from the Domain; fetch the capture zip
+/// it names from the robot's peer over Blob v1; expand it.
+pub async fn materialize_session_blob(
+    task: &TaskContext,
+    io: &TaskIo,
+    workspace: &Workspace,
+) -> Result<MaterializedSession> {
+    // Per task, never cached: on a compute node the peer belongs to this lease.
+    let peer = task
+        .peer()
+        .context("this lease carries no P2P grant, which fetching from the robot needs")?;
+    let cid = single_input(task, "recording manifest")?;
+    let materialized = io
+        .materialize(cid)
+        .await
+        .with_context(|| format!("materialize input CID {}", cid))?;
+    let _input_cleanup = TempInputCleanup::for_materialized(&materialized, workspace);
+
+    if materialized.data_type.as_deref() != Some(manifest::RECORDING_REFERENCE_DATA_TYPE) {
+        anyhow::bail!(
+            "input {cid} has data type {}; this capability takes {}",
+            materialized.data_type.as_deref().unwrap_or("<missing>"),
+            manifest::RECORDING_REFERENCE_DATA_TYPE
+        );
+    }
+    // The Domain Server's word on where the manifest lives, not the publisher's.
+    if materialized.domain_id.as_deref() != Some(io.domain_id().to_string().as_str()) {
+        anyhow::bail!("recording manifest {cid} is not in this task's Domain");
+    }
+    let size = fs::metadata(&materialized.path)
+        .with_context(|| format!("inspect {}", materialized.path.display()))?
+        .len();
+    if size > manifest::MAX_MANIFEST_BYTES {
+        anyhow::bail!(
+            "recording manifest {cid} is {size} bytes; the limit is {}",
+            manifest::MAX_MANIFEST_BYTES
+        );
+    }
+    let bytes = fs::read(&materialized.path)
+        .with_context(|| format!("read {}", materialized.path.display()))?;
+    let manifest = manifest::parse_manifest(&bytes, Utc::now())
+        .with_context(|| format!("validate the recording manifest {cid}"))?;
+    let scan_name = derive_scan_name(&materialized);
+
+    let zip_path = workspace
+        .root()
+        .join("inputs")
+        .join(format!("{scan_name}.zip"));
+    info!(
+        cid = %cid,
+        robot = %manifest.peer_id,
+        parts = manifest.blobs.len(),
+        routes = manifest.routes.len(),
+        scan = %scan_name,
+        "fetching the capture zip over Blob v1"
+    );
+    let client = BlobClient::new(peer.protocols());
+    let bytes = manifest::fetch_blobs(&manifest, &zip_path, |peer_id, route, sha256| {
+        let client = client.clone();
+        async move {
+            let receipt = client
+                .fetch_exact(peer_id, route, sha256)
+                .await
+                .map_err(|error| anyhow!("{error}"))?;
+            Ok(receipt.into_bytes())
+        }
+    })
+    .await?;
+    info!(scan = %scan_name, bytes, "capture zip fetched");
+
+    if !has_zip_magic(&zip_path) {
+        anyhow::bail!("the blobs of {cid} do not form a zip archive");
+    }
+    let session = expand_session_zip(&zip_path, scan_name, workspace).await;
+    if let Err(err) = fs::remove_file(&zip_path) {
+        warn!(error = %err, path = %zip_path.display(), "failed to remove the fetched capture zip");
+    }
+    session
 }
 
 /// Expand a capture zip into `datasets/<scan_name>` and find the capture folder in it.
