@@ -66,6 +66,31 @@ class SeedCameraModelTests(unittest.TestCase):
         self.assertEqual(model["source"], "seeded_fov_guess")
         np.testing.assert_allclose(model["params"][:4], [640.0, 640.0, 640.0, 480.0])
 
+    PLUMB_BOB = INFO._replace(distortion_model="plumb_bob")
+    D405_DIST = [-0.050, 0.053, 0.0012, 0.0004, -0.018]
+
+    def test_recorded_plumb_bob_with_k3_keeps_it(self):
+        model = seed_camera_model(self.PLUMB_BOB, [self._record((652.0, 651.0, 636.0, 354.0, self.D405_DIST))])
+        self.assertEqual(model["model"], "FULL_OPENCV")
+        self.assertEqual(model["params"], [652.0, 651.0, 636.0, 354.0, *self.D405_DIST, 0.0, 0.0, 0.0])
+
+    def test_external_plumb_bob_with_k3_keeps_it(self):
+        external = {"fx": 652.0, "fy": 651.0, "cx": 636.0, "cy": 354.0, "dist": self.D405_DIST}
+        model = seed_camera_model(self.PLUMB_BOB, external_intrinsics=external)
+        self.assertEqual(model["model"], "FULL_OPENCV")
+        self.assertEqual(len(model["params"]), 12)
+
+    def test_plumb_bob_without_k3_stays_opencv(self):
+        for dist in ([0.1, 0.2, 0.3, 0.4], [0.1, 0.2, 0.3, 0.4, 0.0]):
+            model = seed_camera_model(self.PLUMB_BOB, [self._record((1.0, 1.0, 1.0, 1.0, dist))])
+            self.assertEqual(model["model"], "OPENCV")
+            self.assertEqual(model["params"], [1.0, 1.0, 1.0, 1.0, 0.1, 0.2, 0.3, 0.4])
+
+    def test_fov_guess_never_full_opencv(self):
+        model = seed_camera_model(self.PLUMB_BOB, [])
+        self.assertEqual(model["model"], "OPENCV")
+        self.assertEqual(len(model["params"]), 8)
+
     def test_unknown_distortion_model(self):
         with self.assertRaises(ValueError):
             seed_camera_model(self.INFO._replace(distortion_model="division"))

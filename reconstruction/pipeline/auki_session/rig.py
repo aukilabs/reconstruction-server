@@ -14,6 +14,21 @@ _DISTORTION_MODEL_TO_CAMERA_MODEL = {
     "plumb_bob": "OPENCV",
 }
 
+_NUM_DIST = {"OPENCV": 4, "OPENCV_FISHEYE": 4, "FULL_OPENCV": 8}
+
+
+def _measured_model_and_dist(model: str, dist) -> Tuple[str, List[float]]:
+    """COLMAP model and padded distortion for measured (recorded or external) intrinsics.
+    plumb_bob with a non-zero k3 goes to FULL_OPENCV (k1, k2, p1, p2, k3, k4, k5, k6, with k4..k6
+    = 0: exactly OpenCV's 5-coefficient model), since OPENCV has no k3 and dropping it moves the
+    D405 arm cameras' image corners by about 30 px.
+    """
+    dist = [float(d) for d in dist]
+    if model == "OPENCV" and len(dist) >= 5 and dist[4] != 0.0:
+        model = "FULL_OPENCV"
+    n = _NUM_DIST[model]
+    return model, (dist + [0.0] * n)[:n]
+
 
 def seed_camera_model(
     info: SensorInfo, records: Optional[List[ImageRecord]] = None, assumed_hfov_deg: float = 69.0,
@@ -28,8 +43,9 @@ def seed_camera_model(
        bundle adjustment then self-calibrates intrinsics and distortion.
 
     Recorded or external distortion: kannala_brandt maps to OPENCV_FISHEYE (k1..k4, same
-    order); plumb_bob maps to OPENCV (k1, k2, p1, p2), dropping OpenCV's k3, which COLMAP's
-    OPENCV model lacks (self-calibration absorbs the residual if enabled).
+    order); plumb_bob maps to OPENCV (k1, k2, p1, p2), or to FULL_OPENCV when k3 is non-zero
+    (see _measured_model_and_dist). The FOV guess always uses OPENCV or OPENCV_FISHEYE: it is
+    self-calibrated, and FULL_OPENCV's rational terms would be unconstrained.
 
     The result's "source" ("external_recorded", "recorded" or "seeded_fov_guess") lets callers
     decide whether to hold the intrinsics fixed in bundle adjustment.
@@ -41,14 +57,14 @@ def seed_camera_model(
     if external_intrinsics is not None:
         fx, fy, cx, cy = (external_intrinsics["fx"], external_intrinsics["fy"],
                           external_intrinsics["cx"], external_intrinsics["cy"])
-        dist = (list(external_intrinsics["dist"]) + [0.0, 0.0, 0.0, 0.0])[:4]
-        return {"model": model, "params": [fx, fy, cx, cy, *dist], "source": "external_recorded"}
+        measured_model, dist = _measured_model_and_dist(model, external_intrinsics["dist"])
+        return {"model": measured_model, "params": [fx, fy, cx, cy, *dist], "source": "external_recorded"}
 
     real = next((r.dynamic_intrinsics for r in (records or []) if r.dynamic_intrinsics is not None), None)
     if real is not None:
         fx, fy, cx, cy, dist = real
-        dist = (list(dist) + [0.0, 0.0, 0.0, 0.0])[:4]
-        return {"model": model, "params": [fx, fy, cx, cy, *dist], "source": "recorded"}
+        measured_model, dist = _measured_model_and_dist(model, dist)
+        return {"model": measured_model, "params": [fx, fy, cx, cy, *dist], "source": "recorded"}
 
     fx = fy = (info.width / 2) / math.tan(math.radians(assumed_hfov_deg / 2))
     cx, cy = info.width / 2, info.height / 2
