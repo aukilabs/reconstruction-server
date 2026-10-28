@@ -93,8 +93,8 @@ def build_auki_rig_and_frames(
       from that timestamp's pose logs and held constant.
 
     external_intrinsics_per_sensor: passed to seed_camera_model per sensor. Seeding alone does
-    not stop bundle adjustment from refining away from the seed; pair it with
-    refine_intrinsics=False to hold them fixed.
+    not stop bundle adjustment from refining away from the seed; refine_auki_session holds
+    every camera whose source is not the FOV guess fixed.
     """
     logger = logger or logging.getLogger(__name__)
     rec = pycolmap.Reconstruction()

@@ -14,7 +14,7 @@ from reconstruction.geometry.auki_conventions import (
 )
 from reconstruction.geometry.frames import AUKI_ROBOT_WORLD
 from reconstruction.io.auki_session import PoseSample, SensorInfo, analyze_sensor_motion, resolve_auki_session_id
-from reconstruction.pipeline.auki_session.refine import check_rig_offsets_unchanged
+from reconstruction.pipeline.auki_session.refine import check_rig_offsets_unchanged, fixed_intrinsics_sensor_ids
 from reconstruction.pipeline.auki_session.rig import seed_camera_model
 
 
@@ -69,6 +69,12 @@ class SeedCameraModelTests(unittest.TestCase):
     def test_unknown_distortion_model(self):
         with self.assertRaises(ValueError):
             seed_camera_model(self.INFO._replace(distortion_model="division"))
+
+
+class FixedIntrinsicsTests(unittest.TestCase):
+    def test_only_guessed_intrinsics_are_left_to_refine(self):
+        sources = {"arm": "recorded", "head": "seeded_fov_guess", "rear": "external_recorded"}
+        self.assertEqual(fixed_intrinsics_sensor_ids(sources), ["arm", "rear"])
 
 
 class SessionDiscoveryTests(unittest.TestCase):

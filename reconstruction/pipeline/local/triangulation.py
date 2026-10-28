@@ -1,6 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Iterable, Optional, List
 import logging
 import numpy as np
 from numpy.linalg import norm
@@ -24,7 +24,10 @@ def run_triangulation(
     filter_spikes: bool = True,
     ba_options_overrides: Optional[Dict] = None,
     refinement_config_overrides: Optional[Dict] = None,
+    constant_intrinsics_camera_ids: Iterable[int] = (),
 ) -> pycolmap.Reconstruction:
+    """constant_intrinsics_camera_ids: cameras whose intrinsics bundle adjustment holds fixed
+    even when ba_options refine them, e.g. measured ones next to guessed ones."""
     # Grab logger by name
     logger = logging.getLogger(LOCAL_REFINEMENT)
 
@@ -176,6 +179,8 @@ def run_triangulation(
             for image_id in sorted_image_ids:
                 #logger.info(f"Adding image {image_id} to bundle adjustment")
                 ba_config.add_image(image_id)
+            for camera_id in constant_intrinsics_camera_ids:
+                ba_config.set_constant_cam_intrinsics(camera_id)
 
             loss = ba_options.ceres.create_loss_function()
 

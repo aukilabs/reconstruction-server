@@ -7,7 +7,7 @@ that moved gets a rig of its own.
 """
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 import numpy as np
 import pycolmap
@@ -261,6 +261,17 @@ def remove_3d_outliers(triangulated, logger, mad_multiplier=5):
     )
 
 
+def fixed_intrinsics_sensor_ids(intrinsics_source_per_sensor: Dict[str, str]) -> List[str]:
+    """The sensors whose intrinsics bundle adjustment holds fixed whatever refine_intrinsics
+    says: every one not seeded from the FOV guess, i.e. recorded with the session or passed
+    in as external intrinsics. Those are measured, and self-calibrating them only made things
+    worse: on session_20261027_165831 it pulled the D405 arm cameras' fy from 652 to 589-611 px
+    (fx stayed near 652) and every QR deviation grew.
+    """
+    return sorted(sensor_id for sensor_id, source in intrinsics_source_per_sensor.items()
+                  if source != "seeded_fov_guess")
+
+
 def check_rig_offsets_unchanged(build, data, triangulated, logger):
     """Every rigid camera's sensor_from_rig must come out of bundle adjustment unchanged: it is
     never a Ceres parameter, only the frames' rig_from_world is. Raises if the bundle adjuster's
@@ -318,13 +329,15 @@ def refine_auki_session(
         qr_origin_id: The marker to re-origin qr_anchor_poses.csv and
             point_cloud_qr_anchored.ply at; defaults to the most consistent one.
         qr_ignore_distortion: See qr.reestimate_qr_camera_poses.
-        refine_intrinsics: False holds every camera's intrinsics and distortion fixed in
-            bundle adjustment instead of self-calibrating them. Self-calibration per segment
-            was unstable for this rig's wide surround cameras (one camera's fitted vertical
-            FOV varied by about 30 degrees between segments).
+        refine_intrinsics: Self-calibrate, in bundle adjustment, the intrinsics and
+            distortion of cameras seeded from the FOV guess. Recorded and external intrinsics
+            are always held fixed (see fixed_intrinsics_sensor_ids); False holds every
+            camera fixed. Self-calibration per segment was unstable for this rig's wide
+            surround cameras (one camera's fitted vertical FOV varied by about 30 degrees
+            between segments).
         external_intrinsics_per_sensor: {sensor_id: {"fx", "fy", "cx", "cy", "dist"}} to seed
             the cameras with, e.g. recorded intrinsics of the same device from another
-            capture; pair with refine_intrinsics=False to hold them.
+            capture; held fixed like recorded ones.
         regroup_static_movable, static_translation_tol_m, static_rotation_tol_deg: see
             io.auki_session.load_auki_session.
     """
@@ -378,8 +391,10 @@ def refine_auki_session(
     extract_and_match_features(build, image_ids, paths, logger)
 
     logger.info("Start triangulation")
+    fixed_sensor_ids = fixed_intrinsics_sensor_ids(build.intrinsics_source_per_sensor)
     logger.info(f"refine_intrinsics={refine_intrinsics} "
-                f"(intrinsics source per sensor: {build.intrinsics_source_per_sensor})")
+                f"(intrinsics source per sensor: {build.intrinsics_source_per_sensor}); "
+                f"held fixed: {fixed_sensor_ids if refine_intrinsics else 'all'}")
     triangulated = run_triangulation(
         paths.database,
         paths.images,
@@ -397,6 +412,7 @@ def refine_auki_session(
             "refine_principal_point": False,
             "refine_extra_params": refine_intrinsics,
         },
+        constant_intrinsics_camera_ids=[build.camera_id_per_sensor[s] for s in fixed_sensor_ids],
         refinement_config_overrides={
             "add_rel_constraints": False,
             "use_arkit_relposes": False,

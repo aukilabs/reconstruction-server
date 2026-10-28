@@ -67,7 +67,8 @@ def parse_args(argv, prog=None):
     parser.add_argument("--qr_ignore_distortion", action=argparse.BooleanOptionalAction, default=True,
         help="Drop camera distortion when re-estimating QR poses (default: on)")
     parser.add_argument("--refine_intrinsics", action=argparse.BooleanOptionalAction, default=True,
-        help="Self-calibrate camera intrinsics in bundle adjustment (default: on)")
+        help="Self-calibrate the intrinsics of cameras with none recorded or external (default: on); "
+             "recorded and external intrinsics are always held fixed")
     parser.add_argument("--external_intrinsics", type=Path, default=None,
         help='JSON {sensor_id: {"fx", "fy", "cx", "cy", "dist"}} to seed the cameras with')
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
