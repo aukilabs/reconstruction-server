@@ -7,7 +7,7 @@ import numpy as np
 import logging
 
 from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_convention
-from reconstruction.geometry.pose import mean_pose, transform_with_scale
+from reconstruction.geometry.pose import flatten_portal_rotation, is_portal_almost_flat, mean_pose, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import parse_info_from_manifest
@@ -67,10 +67,18 @@ def _calculate_alignment_to_reference(
         raise NoOverlapException()
 
     if has_overlap:
-        alignment_transforms = [
-            target_poses[qr_id] * mean_qr_poses[qr_id].inverse()
-            for qr_id in target_poses.keys()
-        ]
+        alignment_transforms = []
+        for qr_id in target_poses.keys():
+            scanned = mean_qr_poses[qr_id]
+            target = target_poses[qr_id]
+            # A floor marker only fixes yaw about up. Using a tilted detection
+            # as a full rotation rolls the whole scan onto its side.
+            if is_portal_almost_flat(target.rotation.matrix()):
+                flat_rot = flatten_portal_rotation(scanned.rotation.matrix(), angle_threshold=180)
+                if not is_portal_almost_flat(scanned.rotation.matrix()):
+                    logger.info(f"Portal {qr_id} detection is tilted; aligning with yaw about up only.")
+                scanned = pycolmap.Rigid3d(pycolmap.Rotation3d(flat_rot), scanned.translation)
+            alignment_transforms.append(target * scanned.inverse())
         return mean_pose(alignment_transforms)
 
     if is_first_chunk:
@@ -105,9 +113,10 @@ def _get_refined_rec_dir(
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dict[str, pycolmap.Rigid3d], Dict[str, float]]:
     """Load QR portal detections from a local refinement's portals.csv.
-    
-    Reads the portal CSV, converts poses to OpenGL convention, groups by QR ID,
-    and returns mean poses per QR along with portal sizes.
+
+    portals.csv is already COLMAP world. Alignment is applied to the COLMAP
+    model, so the poses stay in that frame. Groups by QR ID and returns the
+    mean pose per QR along with portal sizes.
     
     Args:
         rec_dir: Path to the local refined reconstruction directory containing portals.csv
@@ -123,15 +132,14 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
     portal_sizes = {}
     for portal in portals_list:
         portal_sizes[portal.short_id] = portal.size
-        gl_tvec, gl_qvec = convert_pose_convention(portal.tvec, portal.qvec, COLMAP_WORLD, OPENGL)
         portals_u_list.append({
-            "short_id": portal.short_id, 
-            "tvec": gl_tvec,
-            "qvec": gl_qvec,
-            "image_id": portal.image_id, 
-            "size": portal.size, 
+            "short_id": portal.short_id,
+            "tvec": portal.tvec,
+            "qvec": portal.qvec,
+            "image_id": portal.image_id,
+            "size": portal.size,
             "corners": portal.corners,
-            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
+            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(portal.qvec)), np.array(portal.tvec)),
         })
     chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
     return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
@@ -191,9 +199,16 @@ def update_helper(
     # Loading the reference model that will be refined. This should be the model
     # set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(layout.refined_global / "refined_sfm_combined", ".bin", logger=logger)
-    portal_r, refined_files_r = parse_info_from_manifest(layout.refined_global / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
-    portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
-    portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
+    portal_gl, refined_files_r = parse_info_from_manifest(layout.refined_global / "refined_manifest.json")  # portal_id -> (R, t, size) in OpenGL
+    portal_sizes = {pid: portal[2] for pid, portal in portal_gl.items()}
+    # The manifest is OpenGL. The model we align into is COLMAP world, and the
+    # two differ by an axis swap, so a yaw computed in OpenGL lands as a tilt
+    # when applied to the cloud. Convert the placed portals once, up front.
+    portal_r = {}
+    for pid, (rotation, translation, _size) in portal_gl.items():
+        quat_xyzw = pycolmap.Rotation3d(rotation).quat
+        colmap_t, colmap_q = convert_pose_convention(translation, quat_xyzw, OPENGL, COLMAP_WORLD)
+        portal_r[pid] = pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(colmap_q)), np.array(colmap_t))
 
     # Process datasets
     for pending_update_rec_dir in pending_update_rec:
@@ -208,6 +223,18 @@ def update_helper(
         # This gives a rough alignment good enough for culling outdated geometry from the reference model.
         alignment_mat = _calculate_alignment_to_reference(portals_u, portal_r, logger)
         logger.info(f"Calculated alignment transform for update refinement: \n{alignment_mat.matrix()}")
+        residuals = []
+        for qr_id, scan_pose in portals_u.items():
+            placed = portal_r.get(qr_id)
+            if placed is None:
+                continue
+            aligned = alignment_mat * scan_pose
+            residuals.append(float(np.linalg.norm(aligned.translation - placed.translation)))
+        if residuals:
+            logger.info(
+                "Portal position residual after alignment: mean %.3f m, max %.3f m over %d portals",
+                float(np.mean(residuals)), float(np.max(residuals)), len(residuals),
+            )
         cams_u_aligned, imgs_u_aligned, pts_u_aligned = apply_similarity_to_new_model(cams_u, imgs_u, pts_u, alignment_mat.matrix())
 
         # Prune the reference model by carving out points that violate new free-space constraints.
@@ -260,10 +287,9 @@ def update_helper(
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = layout.refined_update / 'refined_manifest.json'
-    portals_opengl = {pid: convert_pose_convention(portal.translation, portal.rotation.quat, COLMAP_WORLD, OPENGL) for pid, portal in portal_r.items()}
-    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
+    # portal_r is COLMAP world. save_manifest_json converts that to OpenGL.
     save_manifest_json(
-        portals,
+        portal_r,
         manifest_path,
         layout.job_root,
         job_status="refined",
