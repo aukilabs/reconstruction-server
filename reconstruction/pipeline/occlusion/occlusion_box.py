@@ -69,11 +69,11 @@ def main(config, logger=None):
 
     # Step 0: Swap Axis 
     logger.info("[Step 0] Swap Y and Z Axis ")
-    x_z_swap =  np.array([[1, 0, 0, 0],
+    y_z_swap =  np.array([[1, 0, 0, 0],
                         [0, 0, 1, 0],
                         [0, 1, 0, 0], 
                         [0, 0, 0, 1]])
-    pcd.transform(x_z_swap)  # Center of rotation at origin (0, 0, 0)
+    pcd.transform(y_z_swap)  # Center of rotation at origin (0, 0, 0)
 
     # Step 1: Voxelizing
     pcd = pcd.voxel_down_sample(voxel_size = config['voxel_size'])
@@ -233,7 +233,7 @@ def main(config, logger=None):
 
     # Save Mesh
     for mesh in meshes:
-        mesh = mesh.transform(x_z_swap)
+        mesh = mesh.transform(y_z_swap)
     save_meshes_obj(meshes, os.path.join(config['output_dir'], 'meshes.obj'))
 
     if config['debug']:

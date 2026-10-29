@@ -41,10 +41,9 @@ AUKI_ROBOT_WORLD = _frame("auki_robot_world", "forward", "left", "up")
 # qr_anchor_poses.csv and point_cloud_qr_anchored.ply (Auki sessions).
 AUKI_ANCHOR = _frame("auki_anchor", "forward", "up", "right")
 
-# The marker frame convert_qr0_to_auki relabels from. It is declared with the robot
-# body's axes, while pnp-lab's marker axes are OPENGL's (right, up, out of the face);
-# the two give the same anchor for floor markers only (docs/coordinate-conventions.md,
-# finding 5).
+# The marker frame convert_qr0_to_auki relabels from. Declared with the robot body's
+# axes. For a floor marker that matches pnp-lab, whose z points out of the face and so
+# up. The capture policy puts the anchor origin on the floor.
 AUKI_ANCHOR_MARKER = _frame("auki_anchor_marker", "forward", "left", "up")
 
 

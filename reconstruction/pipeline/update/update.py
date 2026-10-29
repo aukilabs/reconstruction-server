@@ -14,7 +14,7 @@ from reconstruction.io.manifest import parse_info_from_manifest
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 from reconstruction.layout import JobLayout
-from reconstruction.pipeline.global_map.alignment import NoOverlapException, floor_origin_portal_pose
+from reconstruction.pipeline.global_map.alignment import NoOverlapException
 from reconstruction.pipeline.update.merge import merge_models, apply_similarity_to_new_model
 from reconstruction.io.colmap import validate_model_consistency
 from reconstruction.pipeline.update.carving import carve_outdated_reference_geometry
@@ -44,10 +44,6 @@ def _calculate_mean_qr_poses(
             for qr_id, poses in detections_per_qr.items()}
 
 
-# TODO(owner): pipeline.global_map.alignment.calculate_alignment_transform does the same, except when
-# placed_portal is empty (the first chunk): global picks the first floor portal and flattens its
-# rotation, this uses the first portal as is. Update always aligns to a reference map that has
-# portals, so that branch is not reached here. Merge the two once that is confirmed.
 def _calculate_alignment_to_reference(
     mean_qr_poses: Dict[str, pycolmap.Rigid3d],
     placed_portal: Dict[str, pycolmap.Rigid3d],
@@ -60,30 +56,22 @@ def _calculate_alignment_to_reference(
         if qr_id in placed_portal.keys()
     }
     
-    has_overlap = len(target_poses) > 0
-    is_first_chunk = len(placed_portal) == 0
-
-    if not has_overlap and not is_first_chunk:
+    if len(target_poses) == 0:
         raise NoOverlapException()
 
-    if has_overlap:
-        alignment_transforms = []
-        for qr_id in target_poses.keys():
-            scanned = mean_qr_poses[qr_id]
-            target = target_poses[qr_id]
-            # A floor marker only fixes yaw about up. Using a tilted detection
-            # as a full rotation rolls the whole scan onto its side.
-            if is_portal_almost_flat(target.rotation.matrix()):
-                flat_rot = flatten_portal_rotation(scanned.rotation.matrix(), angle_threshold=180)
-                if not is_portal_almost_flat(scanned.rotation.matrix()):
-                    logger.info(f"Portal {qr_id} detection is tilted; aligning with yaw about up only.")
-                scanned = pycolmap.Rigid3d(pycolmap.Rotation3d(flat_rot), scanned.translation)
-            alignment_transforms.append(target * scanned.inverse())
-        return mean_pose(alignment_transforms)
-
-    if is_first_chunk:
-        origin_portal_id = list(mean_qr_poses.keys())[0]
-        return floor_origin_portal_pose * mean_qr_poses[origin_portal_id].inverse()
+    alignment_transforms = []
+    for qr_id in target_poses.keys():
+        scanned = mean_qr_poses[qr_id]
+        target = target_poses[qr_id]
+        # A floor marker only fixes yaw about up. Using a tilted detection
+        # as a full rotation rolls the whole scan onto its side.
+        if is_portal_almost_flat(target.rotation.matrix()):
+            flat_rot = flatten_portal_rotation(scanned.rotation.matrix(), angle_threshold=180)
+            if not is_portal_almost_flat(scanned.rotation.matrix()):
+                logger.info(f"Portal {qr_id} detection is tilted; aligning with yaw about up only.")
+            scanned = pycolmap.Rigid3d(pycolmap.Rotation3d(flat_rot), scanned.translation)
+        alignment_transforms.append(target * scanned.inverse())
+    return mean_pose(alignment_transforms)
 
 
 

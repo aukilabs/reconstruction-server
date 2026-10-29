@@ -16,7 +16,7 @@ Frames are named the way the Auki SDK names them: each one says which way its x,
 | Auki robot world | forward | left | up | Read from each session's registry; `frames.AUKI_ROBOT_WORLD` is what every session so far declares | `world` and `base_link` in an Auki capture (the SDK's `ros_body` preset) |
 | Auki camera | right | down | forward | Read from the registry (`frames.OPENCV_CAMERA`) | Auki sensor optical frames. Same as the COLMAP camera. |
 | Auki anchor | forward | up | right | `frames.AUKI_ANCHOR` | `qr_anchor_poses.csv` and `point_cloud_qr_anchored.ply` (Auki-session flow) |
-| Auki anchor marker | forward | left | up | `frames.AUKI_ANCHOR_MARKER` | The marker frame `convert_qr0_to_auki` relabels from (see finding 5) |
+| Auki anchor marker | forward | left | up | `frames.AUKI_ANCHOR_MARKER` | The marker frame `convert_qr0_to_auki` relabels from. The anchor origin is a floor marker, so this matches pnp-lab's face normal pointing up |
 
 The DMT camera row was measured, not read from code. On the golden scan `2026-03-18_17-51-58`, the `ARposes.csv` camera poses, converted as the local stage converts them, agree with the refined COLMAP cameras to 0.59° median and 3.2° max over 601 frames. That agreement holds only if the camera axes in the file are (down, right, backward).
 
@@ -64,15 +64,17 @@ Every alignment in global is computed and applied in COLMAP world.
 
 ## Update refinement
 
+Alignment stays in COLMAP world. The manifest is converted into that frame once on the way in, and `save_manifest_json` is the one conversion back to OpenGL. A reference with no shared portal raises `NoOverlapException`. Placing the first scan of a domain is global refinement's job.
+
 | Step | In | Code | Out |
 |---|---|---|---|
-| Read the reference map | `refined_sfm_combined` (COLMAP world) and `refined_manifest.json` portals (OpenGL, read as they are) | `pipeline/update/update.py:194` | Models in COLMAP world, portals in OpenGL |
-| Read each new scan's portals | `portals.csv`, COLMAP world | `pipeline/update/update.py:126` `convert_pose_convention(…, COLMAP_WORLD, OPENGL)` | OpenGL |
-| Alignment | New scan's portals and the reference portals, both OpenGL | `pipeline/update/update.py:209` | An OpenGL-frame transform |
-| Apply the alignment | The new scan's model, **COLMAP world** | `pipeline/update/update.py:211` | See finding 1 |
+| Read the reference map | `refined_sfm_combined` (COLMAP world) and `refined_manifest.json` portals (OpenGL) | `pipeline/update/update.py:190`, then `convert_pose_convention(…, OPENGL, COLMAP_WORLD)` at `:198` | Model and placed portals in COLMAP world |
+| Read each new scan's portals | `portals.csv`, COLMAP world | `pipeline/update/update.py:130`, poses kept as read | COLMAP world |
+| Alignment | Both portal sets in COLMAP world. A floor marker contributes yaw about up only | `pipeline/update/update.py:59` and `:212` | A COLMAP-world transform |
+| Apply the alignment | The new scan's model, COLMAP world | `pipeline/update/update.py:226` | COLMAP world |
 | Prune, merge | COLMAP world | `pipeline/update/carving.py`, `merge.py` | `refined_sfm_combined`, COLMAP world |
-| Manifest portals | Reference portals, OpenGL | `pipeline/update/update.py:263` converts them as if they were COLMAP world, then `save_manifest_json` converts again | `refined_manifest.json`, OpenGL (see finding 2) |
-| Point cloud | COLMAP world | `pipeline/update/update.py:280` → `output/pointcloud.py:71` | `RefinedPointCloud*.ply`, OpenGL |
+| Manifest portals | COLMAP world | `pipeline/update/update.py:279` passes them to `save_manifest_json`, which converts once at `output/manifest.py:188` | `refined_manifest.json`, OpenGL |
+| Point cloud | COLMAP world | `pipeline/update/update.py:294` → `output/pointcloud.py:71` `convention_matrix(COLMAP_WORLD, OPENGL)` | `RefinedPointCloud*.ply`, OpenGL |
 
 ## Local refinement (Auki session)
 
@@ -85,7 +87,9 @@ Every alignment in global is computed and applied in COLMAP world.
 | QR poses from pnp-lab | `camera_from_marker` with the camera in OpenGL axes | `pipeline/auki_session/qr.py` `_corners_to_camera_space_pose`: `convert_transform_target_convention(…, OPENGL, OPENCV_CAMERA)` | COLMAP camera, marker axes unchanged (QR marker) |
 | Snap near-floor portals flat | Marker z within 20° of `[1, 0, 0]` (`_QR_UP_AXIS`): pnp-lab's marker z points out of the face, so up for a floor marker | `pipeline/auki_session/qr.py` `process_auki_qr` | COLMAP world, QR marker |
 | `portals.csv` | Right-multiplied by `_DOMAIN_PORTAL_FRAME_RELABEL`, so the marker axes match the DMT `portals.csv` | `pipeline/auki_session/qr.py` `process_auki_qr` | COLMAP world, relabelled marker, as in the DMT flow |
-| QR-anchored outputs | Re-origined at one marker | `geometry/auki_conventions.py` `convert_colmap_pose_to_qr_origin_auki` → `convert_qr0_to_auki` | Auki anchor (`qr_anchor_poses.csv`, `point_cloud_qr_anchored.ply`) |
+| QR-anchored outputs | Re-origined at one marker. The caller passes `--qr_origin_id`, or the marker with the lowest cross-detection deviation is used. Capture policy puts that marker on the floor | `geometry/auki_conventions.py` `convert_colmap_pose_to_qr_origin_auki` → `convert_qr0_to_auki` | Auki anchor (`qr_anchor_poses.csv`, `point_cloud_qr_anchored.ply`) |
+
+Both flows call `rectify_portal_pose`. DMT uses the default axis `[-1, 0, 0]`, the floor normal after the marker axes have been relabelled. Auki passes `_QR_UP_AXIS` `[1, 0, 0]` before `_DOMAIN_PORTAL_FRAME_RELABEL`, while pnp-lab's z still points out of the face. A ceiling or wall marker is left as detected: its normal is outside 20° of that floor axis, so the check does not snap it. After the relabel, `portals.csv` is the shared convention, and global and update read it with the DMT axis.
 
 ## Output files
 
@@ -105,20 +109,19 @@ flowchart LR
   L --> G["global: align, refine, merge<br/>COLMAP world"]
   G -- "COLMAP_WORLD to OPENGL" --> M["refined_manifest.json<br/>OpenGL"]
   G -- "convention_matrix" --> P["point clouds, topology<br/>OpenGL"]
-  L -- "portals.csv to OpenGL" --> U["update alignment<br/>OpenGL"]
-  M --> U
-  U -. "applied without conversion" .-> UM["update model<br/>COLMAP world"]
+  L --> U["update alignment<br/>COLMAP world"]
+  M -- "OPENGL to COLMAP_WORLD once" --> U
+  U --> UM["update model<br/>COLMAP world"]
+  UM -- "save_manifest_json" --> MU["updated manifest<br/>OpenGL"]
 ```
 
 ## Findings
 
-These are recorded here and not yet fixed.
+Closed.
 
-1. **Update computes its alignment in OpenGL and applies it in COLMAP world.** `pipeline/update/update.py:209` derives the transform from OpenGL portals; `:211` applies it to COLMAP-world points and cameras. The result is right only when the transform is close to identity, which is the case when the new scan already sits in the domain frame. DMT scans usually do. Otherwise both the turn and the shift land on the wrong axes; for example, a yaw comes out as a tilt. Commit 3ae4431 measured 10.85 m of portal error on a scan that was not near the domain frame. Global does not have this problem: it aligns in COLMAP world. Either of these would fix it:
-   - Keep the portals in COLMAP world: don't convert `portals.csv` at `:126`, convert the manifest portals to COLMAP world once at `:194`, and drop the conversion at `:263`. This is what 3ae4431 does; it also logs each portal's residual after alignment and warns above 0.5 m.
-   - Or relabel the transform once before applying it: `convert_pose_convention(alignment, OPENGL, COLMAP_WORLD)`.
-2. **Update's manifest output converts twice.** `pipeline/update/update.py:263` converts the OpenGL reference portals "from COLMAP world to OpenGL", which actually puts them in COLMAP world because the swap is its own inverse. `save_manifest_json` then converts them to OpenGL. The file comes out right, but the code says the opposite of what it does. Fixing finding 1 the first way removes this.
-3. **Update's first-chunk fallback mixes frames.** `pipeline/update/update.py:78` combines `floor_origin_portal_pose` (COLMAP world) with OpenGL portal poses. The comment above it says update never reaches that branch.
-4. **The flat-portal axis differs between the two flows:** `[-1, 0, 0]` for DMT and `[1, 0, 0]` for Auki sessions. Both mean "the marker faces up", because the DMT flow has relabelled the marker axes by then and the Auki flow has not. Declaring the marker frames would make this explicit.
-5. **The Auki anchor conversion's source frame is a placeholder.** `convert_qr0_to_auki` relabels from `frames.AUKI_ANCHOR_MARKER`, which declares the marker's own axes as (forward, left, up), the robot body's convention, while pnp-lab's marker axes are (right, up, backward). Both give the same result for floor markers, the only kind tested. They differ for wall and ceiling markers.
-6. **The occlusion box swaps y and z** (`pipeline/occlusion/occlusion_box.py:72`). That is a reflection, not a convention change, so no right-handed frame pair expresses it. The step is disabled.
+1. Update alignment is computed and applied in COLMAP world (`pipeline/update/update.py`). `save_manifest_json` is the one conversion back to OpenGL.
+2. The update manifest is converted once. `portal_r` goes to `save_manifest_json`, which converts COLMAP world to OpenGL.
+3. Update has no first-chunk branch. A reference with no shared portal raises `NoOverlapException`. Global refinement still places its first scan on a floor portal.
+4. One flat-portal function, `rectify_portal_pose`. The axis is `[1, 0, 0]` before the Auki marker relabel and `[-1, 0, 0]` after it. See the Auki session section.
+5. The anchor origin is a floor marker by capture policy, so `convert_qr0_to_auki` matches pnp-lab's face normal with up.
+6. The occlusion step reorders y and z (`y_z_swap` in `pipeline/occlusion/occlusion_box.py`). The step stays disabled.
