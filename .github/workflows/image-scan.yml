@@ -1,0 +1,75 @@
+name: Image scan
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Image reference to scan. A tag this workflow just pushed, not latest.
+        required: true
+        type: string
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: [ubuntu-latest-4c16g150g]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@v0.36.0 # ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ inputs.image }}
+          version: v0.76.0
+          format: json
+          output: trivy.json
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          scanners: vuln
+          timeout: 30m
+          cache: "false"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy
+          path: trivy.json
+          retention-days: 30
+
+      - name: Write the job summary
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${IMAGE}"
+            echo
+            echo "Trivy v0.76.0. High and critical only. The JSON artifact is the full list."
+            echo
+            jq -r '
+              def vulns: [.Results[]?.Vulnerabilities[]?];
+              vulns as $v
+              | ($v | map(select(.Severity == "CRITICAL")) | length) as $crit
+              | ($v | map(select(.Severity == "HIGH")) | length) as $high
+              | ($v | group_by(.PkgName + "\u0000" + .InstalledVersion) | sort_by(-length)) as $pkgs
+              | "Critical: \($crit)",
+                "High: \($high)",
+                "",
+                (if ($crit + $high) == 0 then
+                  "No high or critical findings."
+                else
+                  "| Package | Installed | Findings | Fixed in |",
+                  "| --- | --- | ---: | --- |",
+                  ($pkgs[:25][]
+                    | .[0] as $p
+                    | ([.[].FixedVersion | select(. != null and . != "")] | unique | join(", ")) as $fix
+                    | "| \($p.PkgName) | \($p.InstalledVersion) | \(length) | \(if $fix == "" then "none" else $fix end) |"),
+                  (if ($pkgs | length) > 25 then
+                    "",
+                    "The artifact has the remaining packages."
+                  else
+                    empty
+                  end)
+                end)
+            ' trivy.json
+          } >> "$GITHUB_STEP_SUMMARY"

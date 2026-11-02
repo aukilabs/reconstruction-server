@@ -46,3 +46,11 @@ jobs:
             --push \
             -f docker/Dockerfile \
             .
+  scan:
+    name: Scan
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-scan.yml
+    with:
+      image: aukilabs/reconstruction-node:${{ github.ref_name }}
