@@ -1,4 +1,4 @@
-"""Open3D ScalableTSDFVolume integration → tsdf_mesh.ply / tsdf_points.ply."""
+"""Open3D ScalableTSDFVolume integration → raw + final mesh PLY / points PLY."""
 
 from __future__ import annotations
 
@@ -148,15 +148,24 @@ def run_tsdf(
 
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
-    post_meta: dict = {}
+
+    raw_mesh_path = output_dir / "tsdf_mesh_raw.ply"
+    o3d.io.write_triangle_mesh(str(raw_mesh_path), mesh, write_vertex_colors=True)
+
+    post_meta: dict = {
+        "raw_mesh_path": str(raw_mesh_path),
+        "raw_mesh_vertices": len(mesh.vertices),
+        "raw_mesh_triangles": len(mesh.triangles),
+    }
     if config.postprocess and len(mesh.triangles) > 0:
-        mesh, post_meta = postprocess_tsdf_mesh(mesh, config=config)
+        mesh, pp = postprocess_tsdf_mesh(mesh, config=config)
+        post_meta.update(pp)
 
     pcd = volume.extract_point_cloud()
 
     mesh_path = output_dir / "tsdf_mesh.ply"
     points_path = output_dir / "tsdf_points.ply"
-    o3d.io.write_triangle_mesh(str(mesh_path), mesh)
+    o3d.io.write_triangle_mesh(str(mesh_path), mesh, write_vertex_colors=True)
     o3d.io.write_point_cloud(str(points_path), pcd, write_ascii=False)
 
     meta = {
@@ -169,4 +178,9 @@ def run_tsdf(
         "color_type": config.color_type,
         **post_meta,
     }
-    return TsdfResult(mesh_path=mesh_path, points_path=points_path, meta=meta)
+    return TsdfResult(
+        mesh_path=mesh_path,
+        points_path=points_path,
+        meta=meta,
+        raw_mesh_path=raw_mesh_path,
+    )

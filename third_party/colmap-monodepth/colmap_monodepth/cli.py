@@ -26,13 +26,19 @@ def _add_infer_args(p: argparse.ArgumentParser) -> None:
     _add_colmap_args(p)
     p.add_argument("--output-dir", required=True, help="Directory for depth PNGs and pointcloud.ply")
     p.add_argument(
+        "--method",
+        choices=("da3", "delaunay"),
+        default="da3",
+        help="Depth producer: da3 (Depth Anything 3) or delaunay (screen COLMAP sparse)",
+    )
+    p.add_argument(
         "--model",
         default="depth-anything/DA3-BASE",
-        help="Hugging Face model id or local path (default: depth-anything/DA3-BASE)",
+        help="DA3 Hugging Face model id or local path (ignored for --method delaunay)",
     )
-    p.add_argument("--device", default="cuda", help="Torch device (default: cuda)")
+    p.add_argument("--device", default="cuda", help="Torch device for DA3 (default: cuda)")
     p.add_argument("--process-res", type=int, default=504, help="DA3 process_res")
-    p.add_argument("--max-points", type=int, default=1_000_000, help="Max points in exported PLY")
+    p.add_argument("--max-points", type=int, default=1_000_000, help="Max points in DA3 exported PLY")
     p.add_argument(
         "--max-images",
         type=int,
@@ -51,15 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="colmap-monodepth",
         description=(
-            "COLMAP sparse to Depth Anything 3 pose-conditioned depth and mesh-refine pipeline. "
-            "Stages: infer | fit | carve | tsdf | mesh (E1: infer->fit->carve(confident)->tsdf)."
+            "COLMAP sparse → depth (DA3 or Delaunay) and mesh-refine stages. "
+            "Stages: infer | fit | carve | tsdf | mesh. "
+            "mesh --method da3: infer→fit→carve→tsdf; mesh --method delaunay: infer→tsdf "
+            "(optional --fit / --carve)."
         ),
     )
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
 
     infer_p = sub.add_parser(
         "infer",
-        help="Run DA3 pose-conditioned depth inference (depth PNGs + pointcloud.ply)",
+        help="Depth inference: DA3 or screen Delaunay (depth PNGs)",
     )
     _add_infer_args(infer_p)
 
@@ -90,9 +98,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     mesh_p = sub.add_parser(
         "mesh",
-        help="E1 full pipeline: infer -> fit -> carve(confident) -> tsdf",
+        help="Full pipeline helper: da3 (fit+carve on) or delaunay (fit/carve off by default)",
     )
     _add_infer_args(mesh_p)
+    mesh_p.add_argument(
+        "--fit",
+        action="store_true",
+        help="Enable fit stage (Delaunay only; DA3 always fits)",
+    )
+    mesh_p.add_argument(
+        "--carve",
+        action="store_true",
+        help="Enable carve stage (Delaunay only; DA3 always carves)",
+    )
 
     return p
 
@@ -103,6 +121,7 @@ def _cmd_infer(args: argparse.Namespace) -> int:
     result = run_infer(
         args.colmap_dir,
         args.output_dir,
+        method=args.method,
         model=args.model,
         device=args.device,
         sparse_subdir=args.sparse_subdir,
@@ -111,8 +130,10 @@ def _cmd_infer(args: argparse.Namespace) -> int:
         max_images=args.max_images,
         stride=args.stride,
     )
+    print(f"  method={result.meta.get('method', args.method)}")
     print(f"  wrote {len(result.image_names)} depth PNGs -> {result.depth_dir}")
-    print(f"  wrote PLY ({result.num_points} points) -> {result.ply_path}")
+    if result.num_points:
+        print(f"  wrote PLY ({result.num_points} points) -> {result.ply_path}")
     return 0
 
 
@@ -175,6 +196,7 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
     result = run_mesh(
         args.colmap_dir,
         args.output_dir,
+        method=args.method,
         model=args.model,
         device=args.device,
         sparse_subdir=args.sparse_subdir,
@@ -182,11 +204,18 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         max_points=args.max_points,
         max_images=args.max_images,
         stride=args.stride,
+        do_fit=True if args.fit else None,
+        do_carve=True if args.carve else None,
     )
+    print(f"  method={args.method}")
     print(f"  infer depths -> {result.infer.depth_dir}")
-    print(f"  fit confident -> {result.fit.confident_depth_dir}")
-    print(f"  carved depths -> {result.carve.output_depth_dir}")
+    if result.fit is not None:
+        print(f"  fit confident -> {result.fit.confident_depth_dir}")
+    if result.carve is not None:
+        print(f"  carved depths -> {result.carve.output_depth_dir}")
     print(f"  mesh -> {result.tsdf.mesh_path}")
+    if result.tsdf.raw_mesh_path is not None:
+        print(f"  mesh raw -> {result.tsdf.raw_mesh_path}")
     return 0
 
 

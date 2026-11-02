@@ -957,6 +957,121 @@ class RefinementData(NamedTuple):
     ar_poses_per_timestamp: Dict
     qr_detections_per_timestamp: Dict
     portal_sizes: Dict
+    robot_gps: bool
+    camera_facing: str
+    gps_enu_per_timestamp: Dict[int, Tuple[float, float, float]]
+
+
+def is_robot_gps_scan(scan_folder: Path) -> bool:
+    """
+    True when local refine should use GPS + shared-camera init (no ARposes).
+
+    Primary: Manifest.json ``mode`` == ``robot_gps``.
+    Override: env ``ROBOT_GPS=1`` (or ``true`` / ``yes``) forces robot_gps on;
+    ``ROBOT_GPS=0`` forces off even if manifest says robot_gps.
+    """
+    env = os.environ.get("ROBOT_GPS", "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    manifest_path = scan_folder / "Manifest.json"
+    if manifest_path.exists():
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        if manifest.get("mode") == "robot_gps":
+            return True
+    return False
+
+
+def load_gps_positions_csv(gps_path: Path, logger) -> Dict[int, Tuple[float, float, float]]:
+    """Load GpsPositions.csv → timestamp_ns → (enu_e, enu_n, enu_u)."""
+    gps: Dict[int, Tuple[float, float, float]] = {}
+    with open(gps_path, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            ts = round(float(row["timestamp_sec"]) * 1e9)
+            gps[ts] = (
+                float(row["enu_e"]),
+                float(row["enu_n"]),
+                float(row["enu_u"]),
+            )
+    logger.info(f"{len(gps)} GPS ENU samples loaded from {gps_path}")
+    return gps
+
+
+def lookup_gps_enu(
+    gps_per_timestamp: Dict[int, Tuple[float, float, float]],
+    timestamp_ns: int,
+) -> Tuple[float, float, float]:
+    if timestamp_ns in gps_per_timestamp:
+        return gps_per_timestamp[timestamp_ns]
+    if not gps_per_timestamp:
+        raise ValueError("No GPS samples loaded")
+    nearest = min(gps_per_timestamp.keys(), key=lambda t: abs(t - timestamp_ns))
+    return gps_per_timestamp[nearest]
+
+
+def compute_horizontal_path_tangent(enu_positions: np.ndarray, index: int) -> np.ndarray:
+    """Unit horizontal tangent along the GPS path at frame index."""
+    n = len(enu_positions)
+    if n == 1:
+        return np.array([1.0, 0.0, 0.0])
+    if index == 0:
+        delta = enu_positions[1] - enu_positions[0]
+    elif index == n - 1:
+        delta = enu_positions[-1] - enu_positions[-2]
+    else:
+        delta = enu_positions[index + 1] - enu_positions[index - 1]
+    delta = delta.copy()
+    delta[2] = 0.0
+    norm_d = np.linalg.norm(delta)
+    if norm_d < 1e-6:
+        return np.array([1.0, 0.0, 0.0])
+    return delta / norm_d
+
+
+def side_facing_look_direction(forward: np.ndarray, facing: str) -> np.ndarray:
+    """
+    COLMAP camera +Z (look) from horizontal travel direction and left/right facing.
+    U=(0,0,1); left: normalize(U×F); right: normalize(F×U).
+    """
+    U = np.array([0.0, 0.0, 1.0])
+    F = forward.copy()
+    F[2] = 0.0
+    fn = np.linalg.norm(F)
+    if fn < 1e-6:
+        F = np.array([1.0, 0.0, 0.0])
+    else:
+        F /= fn
+    if facing == "right":
+        look = np.cross(F, U)
+    else:
+        look = np.cross(U, F)
+    ln = np.linalg.norm(look)
+    if ln < 1e-6:
+        return np.array([0.0, 1.0, 0.0])
+    return look / ln
+
+
+def gps_cam_to_world_rigid(
+    enu_position: np.ndarray,
+    forward: np.ndarray,
+    facing: str,
+) -> pycolmap.Rigid3d:
+    """GPS ENU translation + tangent side-facing rotation; sensor ≡ rig origin."""
+    z_cam = side_facing_look_direction(forward, facing)
+    U = np.array([0.0, 0.0, 1.0])
+    y_cam = -U - np.dot(-U, z_cam) * z_cam
+    yn = np.linalg.norm(y_cam)
+    if yn < 1e-6:
+        y_cam = np.array([0.0, -1.0, 0.0])
+    else:
+        y_cam /= yn
+    x_cam = np.cross(y_cam, z_cam)
+    R = np.column_stack([x_cam, y_cam, z_cam])
+    quat = rotation_matrix_to_quaternion(R)
+    return pycolmap.Rigid3d(pycolmap.Rotation3d(quat), enu_position.astype(float))
 
 
 def load_scan_summary(scan_folder_path, logger):
@@ -1009,6 +1124,19 @@ def load_scan(
     # Load portal sizes
     portal_sizes = load_scan_summary(paths.scan_folder, logger)
 
+    robot_gps = is_robot_gps_scan(paths.scan_folder)
+    camera_facing = "left"
+    gps_enu_per_timestamp: Dict[int, Tuple[float, float, float]] = {}
+    if robot_gps:
+        logger.info("robot_gps mode: ARposes optional; using GpsPositions.csv for pose init")
+        manifest_path = paths.scan_folder / "Manifest.json"
+        if manifest_path.exists():
+            with open(manifest_path, encoding="utf-8") as f:
+                camera_facing = json.load(f).get("facing", "left")
+        gps_path = paths.scan_folder / "GpsPositions.csv"
+        if not gps_path.exists():
+            raise FileNotFoundError(f"robot_gps mode requires {gps_path}")
+        gps_enu_per_timestamp = load_gps_positions_csv(gps_path, logger)
 
     # Load timestamps
     timestamps_per_image = {}
@@ -1042,16 +1170,19 @@ def load_scan(
     logger.info(f'{len(intrinsics_per_timestamp)}, camera frame intrinsics loaded')
 
 
-    # Load AR poses
+    # Load AR poses (optional in robot_gps mode)
     ar_poses_per_timestamp = {}
     ar_poses_path = paths.scan_folder / "ARposes.csv"
-    logger.info(f'Loading AR poses from {ar_poses_path}')
-    
-    with open(ar_poses_path, newline='') as csvfile:
-        for row in csv.reader(csvfile):
-            timestamp = round(float(row[0]) * 1e9)  # s to ns
-            ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]]
-    logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
+    if robot_gps:
+        if ar_poses_path.exists():
+            logger.info(f"robot_gps: ignoring optional ARposes at {ar_poses_path}")
+    else:
+        logger.info(f'Loading AR poses from {ar_poses_path}')
+        with open(ar_poses_path, newline='') as csvfile:
+            for row in csv.reader(csvfile):
+                timestamp = round(float(row[0]) * 1e9)  # s to ns
+                ar_poses_per_timestamp[timestamp] = [float(val) for val in row[1:8]]
+        logger.info(f'{len(ar_poses_per_timestamp)}, AR poses loaded')
 
 
     # Load QR detections
@@ -1064,11 +1195,16 @@ def load_scan(
     logger.info(f'{len(qr_detections_per_timestamp)}, QR detections loaded')
 
     # Validate data
-    for data_dict, name in [
+    validation_sets = [
         (timestamps_per_image, "Timestamps"),
         (intrinsics_per_timestamp, "Camera Intrinsics"),
-        (ar_poses_per_timestamp, "AR Poses")
-    ]:
+    ]
+    if not robot_gps:
+        validation_sets.append((ar_poses_per_timestamp, "AR Poses"))
+    elif len(gps_enu_per_timestamp) == 0:
+        raise ValueError("robot_gps mode requires at least one GPS sample in GpsPositions.csv")
+
+    for data_dict, name in validation_sets:
         if len(data_dict) != original_image_count:
             raise ValueError(f"Mismatching number of Frames and {name}. "
                            f"Expected {original_image_count}, got {len(data_dict)}")
@@ -1079,5 +1215,8 @@ def load_scan(
         intrinsics_per_timestamp=intrinsics_per_timestamp,
         ar_poses_per_timestamp=ar_poses_per_timestamp,
         qr_detections_per_timestamp=qr_detections_per_timestamp,
-        portal_sizes=portal_sizes 
+        portal_sizes=portal_sizes,
+        robot_gps=robot_gps,
+        camera_facing=camera_facing,
+        gps_enu_per_timestamp=gps_enu_per_timestamp,
     )

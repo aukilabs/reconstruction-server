@@ -77,6 +77,11 @@ const GLOBAL_OUTPUTS: &[OutputSpec] = &[
         mandatory: false,
     },
     OutputSpec {
+        relative_path: "refined/global/mesh/tsdf_mesh_raw.ply",
+        display_name: "tsdf_mesh_raw",
+        mandatory: false,
+    },
+    OutputSpec {
         relative_path: "refined/global/mesh/tsdf_points.ply",
         display_name: "tsdf_mesh_points",
         mandatory: false,
@@ -261,6 +266,7 @@ fn data_type_for_display(display: &str) -> &str {
         "topologymesh_alphashape_obj" => "obj",
         "topologymesh_alphashape_glb" => "glb",
         "tsdf_mesh" => "tsdf_mesh_ply",
+        "tsdf_mesh_raw" => "tsdf_mesh_raw_ply",
         "tsdf_mesh_points" => "tsdf_points_ply",
         "tsdf_mesh_meta" => "tsdf_mesh_meta_json",
         "colmap_cameras_bin" => "colmap_cameras_bin",

@@ -17,17 +17,14 @@ pytest.importorskip("cv2")
 
 
 def test_carve_config_default_voxel_size():
-    cfg = CarveConfig()
-    assert cfg.voxel_size == 0.07
-    assert cfg.subtractive_value == -0.2
-    assert cfg.min_points == 3
-    assert cfg.min_confidence == 2.0
-
-
-def test_tsdf_config_default_coarser():
-    cfg = TsdfConfig()
-    assert cfg.voxel_length == 0.04
-    assert cfg.sdf_trunc == 0.16
+    assert CarveConfig().voxel_size == 0.07
+    assert CarveConfig().subtractive_value == -0.05
+    assert CarveConfig().min_points == 2
+    assert CarveConfig().max_depth == 5.0
+    assert CarveConfig().unproject_stride == 2
+    assert CarveConfig().mask_stride == 1
+    assert CarveConfig().mask_max_depth == 5.0
+    assert TsdfConfig().sdf_trunc == 0.40
 
 
 def _synthetic_frames_and_depths(tmp_path: Path, names: list[str]):
@@ -145,3 +142,5 @@ def test_run_tsdf_postprocess_reduces_or_keeps_triangles(tmp_path: Path):
         pytest.skip("Open3D TSDF produced an empty mesh on this platform")
     assert "triangles_after" in result.meta
     assert result.meta["triangles_after"] <= result.meta.get("triangles_after_taubin", 999999)
+    assert result.raw_mesh_path is not None and result.raw_mesh_path.is_file()
+    assert result.meta.get("raw_mesh_triangles", 0) >= result.meta["triangles_after"]

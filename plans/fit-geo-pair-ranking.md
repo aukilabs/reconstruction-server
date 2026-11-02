@@ -75,5 +75,5 @@ Living document — update in place when later work changes earlier conclusions.
 
 ## Gate (stage 11)
 
-- **Decision:** integrate in progress (2026-09-25)  
-- **Notes:** Upstream `aukilabs/colmap-monodepth@9d54bc8`; pin + vendored tree updated; rebuild `rec-dev` as `0.4.3-monodepth.6` for human smoke.
+- **Decision:** integrated on `rec-dev` (2026-09-25) — awaiting human smoke  
+- **Notes:** Upstream `aukilabs/colmap-monodepth@9d54bc8`; recon `feature/mono-depth-mesh-refine@04e2607`; live **`0.4.3-monodepth.6`** with `geo_cost_mode=temporal_plus_ranked`, DDS `registration.success`.

@@ -22,8 +22,14 @@ da3 = [
 mesh = [
   "open3d>=0.17",
   "numba>=0.57",
+  "scipy>=1.10",
   # Prefer opencv-python (same as stock rec-server / DA3); avoid headless dual-install.
   "opencv-python>=4.8",
+]
+delaunay = [
+  "numba>=0.57",
+  "scipy>=1.10",
+  "open3d>=0.17",
 ]
 fit = [
   "torch>=2.0",

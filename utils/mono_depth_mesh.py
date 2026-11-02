@@ -15,6 +15,21 @@ DEFAULT_STRIDE = 3
 DEFAULT_PROCESS_RES = 504
 
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+_VALID_MESH_METHODS = frozenset({"da3", "delaunay"})
+
+
+def mono_depth_mesh_method_from_env() -> str:
+    raw = os.environ.get("MONO_DEPTH_MESH_METHOD", "").strip()
+    if not raw:
+        return "da3"
+    method = raw.lower()
+    if method in _VALID_MESH_METHODS:
+        return method
+    logger.warning(
+        "mono_depth_mesh: invalid MONO_DEPTH_MESH_METHOD=%r; using da3",
+        raw,
+    )
+    return "da3"
 
 
 def mono_depth_mesh_enabled_from_env() -> bool:
@@ -68,6 +83,49 @@ def _windows_directory_junction(link: Path, target: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+    )
+
+
+def locked_carve_config():
+    """Grocery BEST carve (2026-10-08): match monodepth CarveConfig defaults.
+
+    Offline winner carved **fitted** depths (not confident); ``run_mesh`` does too.
+    """
+    from colmap_monodepth.types import CarveConfig
+
+    return CarveConfig(
+        voxel_size=0.07,
+        subtractive_value=-0.05,
+        min_confidence=2,
+        min_points=2,
+        max_depth=5,
+        mask_max_depth=5,
+        unproject_stride=2,
+        mask_stride=1,
+    )
+
+
+def locked_local_tsdf_config():
+    """Local upload TSDF: colored, undecimated primary ``tsdf_mesh.ply`` (no postprocess)."""
+    from colmap_monodepth.types import TsdfConfig
+
+    return TsdfConfig(
+        voxel_length=0.04,
+        sdf_trunc=0.40,
+        color_type="rgb8",
+        postprocess=False,
+    )
+
+
+def locked_global_tsdf_config():
+    """Global fuse TSDF: same voxel/trunc, geometry-only nocolor with decimation postprocess."""
+    from colmap_monodepth.types import TsdfConfig
+
+    return TsdfConfig(
+        voxel_length=0.04,
+        sdf_trunc=0.40,
+        color_type="nocolor",
+        postprocess=True,
     )
 
 
@@ -255,7 +313,7 @@ def run_global_mono_depth_mesh(
     try:
         import numpy as np
         from colmap_monodepth.tsdf import run_tsdf
-        from colmap_monodepth.types import FrameSet, TsdfConfig
+        from colmap_monodepth.types import FrameSet
         from utils.topology_export import promote_tsdf_ply_to_topology
 
         all_keys: List[str] = []
@@ -315,7 +373,7 @@ def run_global_mono_depth_mesh(
             mesh_dir,
         )
         mesh_dir.mkdir(parents=True, exist_ok=True)
-        tsdf_config = TsdfConfig(color_type="nocolor")
+        tsdf_config = locked_global_tsdf_config()
         result = run_tsdf(
             staging_depth,
             mesh_dir,
@@ -373,19 +431,33 @@ def run_mono_depth_mesh(
         from colmap_monodepth.pipeline import run_mesh
 
         colmap_dir = ensure_colmap_dataset_layout(scan_output, images_dir, sparse_dir)
+        method = mono_depth_mesh_method_from_env()
         log.info(
-            "mono_depth_mesh: colmap_dir=%s stride=%s process_res=%s",
+            "mono_depth_mesh: method=%s colmap_dir=%s stride=%s process_res=%s",
+            method,
             colmap_dir,
             stride,
             process_res,
         )
-        run_mesh(
-            colmap_dir,
-            scan_output,
-            stride=stride,
-            process_res=process_res,
-            device=device,
-        )
+        if method == "delaunay":
+            run_mesh(
+                colmap_dir,
+                scan_output,
+                method="delaunay",
+                stride=stride,
+                tsdf_config=locked_local_tsdf_config(),
+            )
+        else:
+            run_mesh(
+                colmap_dir,
+                scan_output,
+                method="da3",
+                stride=stride,
+                process_res=process_res,
+                device=device,
+                carve_config=locked_carve_config(),
+                tsdf_config=locked_local_tsdf_config(),
+            )
         if mesh_ply.is_file():
             log.info("mono_depth_mesh: wrote %s", mesh_ply)
             return mesh_ply

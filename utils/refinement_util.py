@@ -16,7 +16,10 @@ from utils.data_utils import (
     setup_logger,
     save_portal_csv, 
     process_frames,
-    rectify_portal_pose
+    rectify_portal_pose,
+    lookup_gps_enu,
+    compute_horizontal_path_tangent,
+    gps_cam_to_world_rigid,
 )
 
 class RefinementPaths(NamedTuple):
@@ -65,7 +68,79 @@ def setup_refinement_paths(scan_folder_path, output_path):
     return paths
 
 
+def initialize_reconstruction_robot_gps(image_references, scan_data):
+    """One shared Camera + Rig; per-frame rig_from_world from GPS ENU + path tangent."""
+    rec = pycolmap.Reconstruction()
+    cam_from_world_transforms = {}
+
+    camera_id = 1
+    rig_id = 1
+
+    first_filename = Path(image_references[0]).name
+    first_ts = scan_data.timestamps_per_image[first_filename]
+    fx, fy, cx, cy, w, h = scan_data.intrinsics_per_timestamp[first_ts]
+    if fx == fy:
+        model, params = "SIMPLE_PINHOLE", [fx, cx, cy]
+    else:
+        model, params = "PINHOLE", [fx, fy, cx, cy]
+
+    cam = pycolmap.Camera(
+        model=model,
+        width=w,
+        height=h,
+        params=params,
+        camera_id=camera_id,
+    )
+    rec.add_camera(cam)
+
+    rig = pycolmap.Rig()
+    rig.rig_id = rig_id
+    sensor = pycolmap.sensor_t(type=pycolmap.SensorType.CAMERA, id=camera_id)
+    rig.add_ref_sensor(sensor)
+    rec.add_rig(rig)
+
+    enu_positions = []
+    for ref in image_references:
+        image_filename = Path(ref).name
+        timestamp_ns = scan_data.timestamps_per_image[image_filename]
+        e, n, u = lookup_gps_enu(scan_data.gps_enu_per_timestamp, timestamp_ns)
+        enu_positions.append(np.array([e, n, u], dtype=float))
+    enu_positions = np.array(enu_positions)
+
+    facing = scan_data.camera_facing
+
+    for i, ref in enumerate(image_references):
+        frame_id = i + 1
+        image_filename = Path(ref).name
+        forward = compute_horizontal_path_tangent(enu_positions, i)
+        cam_to_world = gps_cam_to_world_rigid(enu_positions[i], forward, facing)
+        cam_from_world = cam_to_world.inverse()
+        cam_from_world_transforms[frame_id] = cam_from_world
+
+        frame = pycolmap.Frame(
+            rig_id=rig_id,
+            rig_from_world=cam_from_world,
+            frame_id=frame_id,
+        )
+        frame.add_data_id(
+            pycolmap.data_t(sensor_id=sensor, id=frame_id)
+        )
+        rec.add_frame(frame)
+
+        img = pycolmap.Image(
+            image_filename, pycolmap.Point2DList([]), camera_id, frame_id
+        )
+        img.frame_id = frame_id
+        rec.add_image(img)
+        rec.register_frame(frame_id)
+
+    return rec, cam_from_world_transforms
+
+
 def initialize_reconstruction(image_references, scan_data):
+    if scan_data.robot_gps:
+        return initialize_reconstruction_robot_gps(image_references, scan_data)
+
     rec = pycolmap.Reconstruction()
 
     cam_from_world_transforms = {}
@@ -137,11 +212,13 @@ def prepare_data_for_loop_closure(
     sorted_image_ids = list(refined_rec.images.keys())
     sorted_image_ids.sort()
 
-    # PRE-COMPUTE some offsets & gravity from the unrefined ARKit poses, which will remain constant during refinement.
-    # These are used in the loss function to guide the refinement, not to diverge too far off from original.
-    arkit_precomputed = precompute_arkit_offsets(
-        sorted_image_ids, arkit_cam_from_world_transforms
-    ) # skip first since these are offsets to previous image
+    if scan_data.robot_gps:
+        arkit_precomputed = {}
+    else:
+        # PRE-COMPUTE some offsets & gravity from the unrefined ARKit poses, which will remain constant during refinement.
+        arkit_precomputed = precompute_arkit_offsets(
+            sorted_image_ids, arkit_cam_from_world_transforms
+        )
 
     # PRE-LOAD QR DATA FOR LOOP CLOSURE
     image_per_timestamp = {}
@@ -207,7 +284,11 @@ def process_QR(
         deviation = np.mean(deviation)
         logger.info(f'QR code id: {qr_id}, pose translation {pose.translation}, deviation: {deviation:.5f}')
 
-    stitched_qr_detections = {qr_id: [rectify_portal_pose(p) for p in poses] for qr_id, poses in stitched_qr_detections.items()}
+    if not scan_data.robot_gps:
+        stitched_qr_detections = {
+            qr_id: [rectify_portal_pose(p) for p in poses]
+            for qr_id, poses in stitched_qr_detections.items()
+        }
 
     stitched_qr_csv_path = paths.sfm_dir / "portals.csv"
     save_portal_csv(
@@ -254,7 +335,9 @@ def refine_dataset_part_two(
         timestamp_per_image=scan_data.timestamps_per_image,
         arkit_precomputed=arkit_precomputed,
         detections_per_qr=detections_per_qr,
-        image_ids_per_qr=image_ids_per_qr
+        image_ids_per_qr=image_ids_per_qr,
+        robot_gps=scan_data.robot_gps,
+        gps_enu_per_timestamp=scan_data.gps_enu_per_timestamp,
     )
     refined_rec.write(paths.sfm_dir)
     logger.info("Finished triangulation")
@@ -371,7 +454,8 @@ def refine_dataset(
         references, 
         colmap_rec_path, 
         paths,
-        logger
+        logger,
+        robot_gps=scan_data.robot_gps,
     )
     
     if pool_executor:

@@ -8,13 +8,18 @@ Default model: **`depth-anything/DA3-BASE`** (Apache 2.0, pose conditioning supp
 
 | Stage | Module | Role |
 |-------|--------|------|
-| `infer` | `pipeline.run_infer` | COLMAP → DA3 depth PNGs + `pointcloud.ply` |
+| `infer` | `pipeline.run_infer` | COLMAP → depth PNGs (`--method da3` or `delaunay`) |
 | `fit` | `pipeline.run_fit` | Joint scale + residual fit → `fitted/` + `confident/` |
 | `carve` | `pipeline.run_carve` | E1 subtractive carve → masked depths |
-| `tsdf` | `pipeline.run_tsdf` | Open3D ScalableTSDF → `tsdf_mesh.ply` |
-| `mesh` | `pipeline.run_mesh` | **E1 composition:** infer → fit → carve(**confident/**) → tsdf |
+| `tsdf` | `pipeline.run_tsdf` | Open3D ScalableTSDF → `tsdf_mesh.ply` (+ raw) |
+| `mesh` | `pipeline.run_mesh_*` | Helpers with good defaults per depth method |
 
-Supporting modules: `colmap_io`, `inference`, `export`, `depth_io`, `fit`, `carve`, `tsdf`, `types`.
+**Helpers**
+
+- `run_mesh_da3` — DA3 → fit → carve → tsdf (E1)
+- `run_mesh_delaunay` — Delaunay → tsdf (fit/carve off by default; opt-in)
+
+Supporting modules: `colmap_io`, `inference`, `delaunay_depth`, `export`, `depth_io`, `fit`, `carve`, `tsdf`, `types`.
 
 ## Install extras
 
@@ -31,10 +36,12 @@ pip install -e .
 |-------|----------|------------|
 | `[da3]` | `depth-anything-3`, torch | `infer`, `mesh` |
 | `[fit]` | torch, opencv | `fit`, `mesh` |
-| `[mesh]` | open3d, numba, opencv | `carve`, `tsdf`, `mesh` |
+| `[mesh]` | open3d, numba, scipy, opencv | `carve`, `tsdf`, `mesh` |
+| `[delaunay]` | numba, scipy, open3d | `infer --method delaunay` |
 | `[dev]` | pytest, numba, opencv | unit tests |
 
-Full mesh pipeline: `pip install -e ".[da3,fit,mesh,dev]"`
+Full mesh pipeline: `pip install -e ".[da3,fit,mesh,dev]"`  
+Delaunay-only (no torch): `pip install -e ".[delaunay,mesh]"`
 
 Use **Python 3.10–3.12** (`depth-anything-3` declares `<=3.13`).
 
@@ -43,12 +50,19 @@ Use **Python 3.10–3.12** (`depth-anything-3` declares `<=3.13`).
 Subcommands: `infer | fit | carve | tsdf | mesh`. Legacy invocations without a subcommand still run `infer` (backward compatible).
 
 ```bash
-# Depth inference only
+# Depth inference (DA3)
 colmap-monodepth infer \
   --colmap-dir /path/to/colmap_dataset \
   --output-dir /path/to/output \
+  --method da3 \
   --model depth-anything/DA3-BASE \
   --device cuda
+
+# Depth inference (screen Delaunay from COLMAP sparse; no GPU)
+colmap-monodepth infer \
+  --colmap-dir /path/to/colmap_dataset \
+  --output-dir /path/to/output \
+  --method delaunay
 
 # Legacy (same as infer)
 colmap-monodepth --colmap-dir /path/to/dataset --output-dir /path/to/output
@@ -71,10 +85,17 @@ colmap-monodepth tsdf \
   --depth-dir /path/to/carve_out \
   --output-dir /path/to/mesh_out
 
-# E1 end-to-end (infer → fit → carve(confident) → tsdf)
+# E1 end-to-end DA3 (infer → fit → carve(confident) → tsdf)
 colmap-monodepth mesh \
   --colmap-dir /path/to/dataset \
-  --output-dir /path/to/mesh_pipeline
+  --output-dir /path/to/mesh_pipeline \
+  --method da3
+
+# Delaunay → TSDF (fit/carve off; add --fit / --carve to enable)
+colmap-monodepth mesh \
+  --colmap-dir /path/to/dataset \
+  --output-dir /path/to/delaunay_mesh \
+  --method delaunay
 ```
 
 Expected COLMAP layout: `images/` + model under `sparse/`, `sparse/0/`, or directly in the dataset root.
@@ -82,8 +103,8 @@ Expected COLMAP layout: `images/` + model under `sparse/`, `sparse/0/`, or direc
 ### E1 defaults (locked experiment)
 
 - **Fit:** `mode=residual_icp`, `steps_affine=50` + `steps_res=100` (`icp_rounds=1` → residual→rematch→residual), residual grid `12×16`, geo cost = temporal neighbors only on a full-res strided UV grid (`geo_stride=8`), batched Torch geo/track losses, scale clamp `[0.85, 1.15]`, ICP rematch + temporal confident mask (`agree_max_abs_m=0.05`)
-- **Carve:** `voxel_size=0.07`, subtractive carve (`subtractive_value=-0.2`), multi-view voxel gate (`min_points=3`, `min_confidence=2.0`)
-- **TSDF:** `voxel_length=0.04`, `sdf_trunc=0.16`, `depth_trunc=10.0`
+- **Carve:** `voxel_size=0.07`, subtractive carve (`subtractive_value=-0.2`), multi-view voxel gate
+- **TSDF:** `voxel_length=0.02`, `sdf_trunc=0.08`, `depth_trunc=10.0`
 - **Mesh composition:** carve reads **`fit/confident/`**, not `fit/fitted/`
 
 ## Python API

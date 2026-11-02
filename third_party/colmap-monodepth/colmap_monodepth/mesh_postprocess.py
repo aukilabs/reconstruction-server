@@ -6,18 +6,18 @@ from typing import Any
 
 
 def postprocess_tsdf_mesh(mesh, *, config: Any | None = None) -> tuple[Any, dict[str, Any]]:
-    """Taubin smooth then mild quadric decimate (error-bounded when supported).
+    """Optional Taubin smooth, then quadric decimate (error-bounded when supported).
 
-    Uses mild defaults: 2 Taubin iterations, then iterative decimation stopping when
-    ``maximum_error`` is reached or triangle count falls to ~50% of the post-Taubin mesh.
+    Defaults: no Taubin; decimate until ``maximum_error`` (0.1 mm) or triangle count
+    reaches ~20% of the input mesh, whichever stops first.
     """
     import open3d as o3d
 
-    taubin_iterations = 2
+    taubin_iterations = 0
     taubin_lambda = 0.5
     taubin_mu = -0.52
-    max_geometric_error = 0.008
-    min_triangle_ratio = 0.5
+    max_geometric_error = 0.0001  # 0.1 mm
+    min_triangle_ratio = 0.2
 
     if config is not None:
         taubin_iterations = int(getattr(config, "postprocess_taubin_iterations", taubin_iterations))
@@ -75,6 +75,7 @@ def postprocess_tsdf_mesh(mesh, *, config: Any | None = None) -> tuple[Any, dict
     meta = {
         "postprocess_taubin_iterations": taubin_iterations,
         "postprocess_max_geometric_error": max_geometric_error,
+        "postprocess_min_triangle_ratio": min_triangle_ratio,
         "postprocess_decimate_method": decimate_method,
         "triangles_before": n_tris_before,
         "triangles_after_taubin": n_after_taubin,

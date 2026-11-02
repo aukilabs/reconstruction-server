@@ -13,6 +13,9 @@ from utils.mono_depth_mesh import (
     ensure_colmap_dataset_layout,
     global_mesh_ply_path,
     local_scan_depth_dir,
+    locked_carve_config,
+    locked_global_tsdf_config,
+    locked_local_tsdf_config,
     maybe_run_global_mono_depth_mesh,
     maybe_run_mono_depth_mesh,
     mono_depth_mesh_enabled,
@@ -37,6 +40,22 @@ class MonoDepthMeshFlagTests(unittest.TestCase):
     def test_cli_overrides_without_env(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertTrue(mono_depth_mesh_enabled(cli_flag=True))
+
+
+class LockedTsdfConfigTests(unittest.TestCase):
+    def test_local_colored_undecimated(self):
+        cfg = locked_local_tsdf_config()
+        self.assertEqual(cfg.voxel_length, 0.04)
+        self.assertEqual(cfg.sdf_trunc, 0.40)
+        self.assertEqual(cfg.color_type, "rgb8")
+        self.assertFalse(cfg.postprocess)
+
+    def test_global_nocolor_decimated(self):
+        cfg = locked_global_tsdf_config()
+        self.assertEqual(cfg.voxel_length, 0.04)
+        self.assertEqual(cfg.sdf_trunc, 0.40)
+        self.assertEqual(cfg.color_type, "nocolor")
+        self.assertTrue(cfg.postprocess)
 
 
 class MaybeRunMonoDepthMeshTests(unittest.TestCase):
@@ -72,30 +91,60 @@ class RunMonoDepthMeshSoftFailTests(unittest.TestCase):
                 )
         self.assertIsNone(result)
 
-    def test_run_mesh_called_with_defaults(self):
+    def test_run_mesh_called_with_locked_configs(self):
         out = Path("/tmp/scan_out")
         images = Path("/tmp/frames")
         sparse = Path("/tmp/sfm")
         fake_run_mesh = mock.Mock()
         pipeline_mod = mock.Mock(run_mesh=fake_run_mesh)
-        with mock.patch.dict(
-            "sys.modules",
-            {"colmap_monodepth.pipeline": pipeline_mod},
-        ):
-            with mock.patch(
-                "utils.mono_depth_mesh.ensure_colmap_dataset_layout",
-                return_value=out,
-            ) as layout_mock:
-                with mock.patch.object(Path, "is_file", return_value=True):
-                    run_mono_depth_mesh(out, images, sparse)
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.dict(
+                "sys.modules",
+                {"colmap_monodepth.pipeline": pipeline_mod},
+            ):
+                with mock.patch(
+                    "utils.mono_depth_mesh.ensure_colmap_dataset_layout",
+                    return_value=out,
+                ) as layout_mock:
+                    with mock.patch.object(Path, "is_file", return_value=True):
+                        run_mono_depth_mesh(out, images, sparse)
         layout_mock.assert_called_once_with(out, images, sparse)
         fake_run_mesh.assert_called_once_with(
             out,
             out,
+            method="da3",
             stride=DEFAULT_STRIDE,
             process_res=DEFAULT_PROCESS_RES,
             device="cuda",
+            carve_config=locked_carve_config(),
+            tsdf_config=locked_local_tsdf_config(),
         )
+
+    def test_run_mesh_delaunay_env_skips_carve(self):
+        out = Path("/tmp/scan_out")
+        images = Path("/tmp/frames")
+        sparse = Path("/tmp/sfm")
+        fake_run_mesh = mock.Mock()
+        pipeline_mod = mock.Mock(run_mesh=fake_run_mesh)
+        with mock.patch.dict(os.environ, {"MONO_DEPTH_MESH_METHOD": "delaunay"}):
+            with mock.patch.dict(
+                "sys.modules",
+                {"colmap_monodepth.pipeline": pipeline_mod},
+            ):
+                with mock.patch(
+                    "utils.mono_depth_mesh.ensure_colmap_dataset_layout",
+                    return_value=out,
+                ):
+                    with mock.patch.object(Path, "is_file", return_value=True):
+                        run_mono_depth_mesh(out, images, sparse)
+        fake_run_mesh.assert_called_once_with(
+            out,
+            out,
+            method="delaunay",
+            stride=DEFAULT_STRIDE,
+            tsdf_config=locked_local_tsdf_config(),
+        )
+        self.assertNotIn("carve_config", fake_run_mesh.call_args.kwargs)
 
 
 class EnsureColmapLayoutTests(unittest.TestCase):
@@ -239,7 +288,11 @@ class GlobalMonoDepthMeshTests(unittest.TestCase):
         self.assertEqual(call_args[0][1], out / "mesh")
         config = call_args.kwargs.get("config")
         self.assertIsNotNone(config)
-        self.assertEqual(getattr(config, "color_type", None), "nocolor")
+        expected = locked_global_tsdf_config()
+        self.assertEqual(getattr(config, "color_type", None), expected.color_type)
+        self.assertEqual(getattr(config, "voxel_length", None), expected.voxel_length)
+        self.assertEqual(getattr(config, "sdf_trunc", None), expected.sdf_trunc)
+        self.assertEqual(getattr(config, "postprocess", None), expected.postprocess)
 
     def test_global_fuse_passes_alignment_scale_to_staging(self):
         out = Path("/out/global")

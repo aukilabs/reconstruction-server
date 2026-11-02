@@ -1,4 +1,4 @@
-"""Thin stage composers: infer → fit → carve → tsdf → mesh (E1)."""
+"""Thin stage composers: infer → fit → carve → tsdf → mesh helpers."""
 
 from __future__ import annotations
 
@@ -38,9 +38,9 @@ class InferResult:
 class MeshResult:
     output_dir: Path
     infer: InferResult
-    fit: FitResult
-    carve: CarveResult
     tsdf: TsdfResult
+    fit: Optional[FitResult] = None
+    carve: Optional[CarveResult] = None
 
 
 def _select_views(
@@ -64,23 +64,18 @@ def _select_views(
     return image_paths, extrinsics, intrinsics
 
 
-def run_infer(
-    colmap_dir: str | Path,
-    output_dir: str | Path,
+def _run_infer_da3(
+    colmap_dir: Path,
+    output_dir: Path,
     *,
-    model: str = "depth-anything/DA3-BASE",
-    device: str = "cuda",
-    sparse_subdir: str = "",
-    process_res: int = 504,
-    max_points: int = 1_000_000,
-    max_images: int = 0,
-    stride: int = 1,
+    model: str,
+    device: str,
+    sparse_subdir: str,
+    process_res: int,
+    max_points: int,
+    max_images: int,
+    stride: int,
 ) -> InferResult:
-    """COLMAP sparse → DA3 pose-conditioned depth PNGs + pointcloud.ply."""
-    colmap_dir = Path(colmap_dir)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     image_paths, extrinsics, intrinsics = load_colmap_scene(
         str(colmap_dir), sparse_subdir=sparse_subdir
     )
@@ -105,6 +100,7 @@ def run_infer(
         max_points=max_points,
     )
     meta = {
+        "method": "da3",
         "n_registered": n_total,
         "n_processed": len(image_paths),
         "stride": stride,
@@ -121,6 +117,88 @@ def run_infer(
         num_points=int(export["num_points"]),
         meta=meta,
     )
+
+
+def _run_infer_delaunay(
+    colmap_dir: Path,
+    output_dir: Path,
+    *,
+    sparse_subdir: str,
+    max_images: int,
+    stride: int,
+    delaunay_config: Any,
+) -> InferResult:
+    from dataclasses import replace
+
+    from colmap_monodepth.delaunay_depth import DelaunayConfig, run_delaunay_depths
+
+    cfg = delaunay_config or DelaunayConfig()
+    cfg = replace(
+        cfg,
+        max_images=max_images if max_images else cfg.max_images,
+        stride=stride if stride != 1 else cfg.stride,
+    )
+
+    depth_dir = output_dir / "depth"
+    image_paths, image_names, meta = run_delaunay_depths(
+        colmap_dir,
+        depth_dir,
+        config=cfg,
+        sparse_subdir=sparse_subdir,
+    )
+    ply_path = output_dir / "pointcloud.ply"
+    return InferResult(
+        output_dir=output_dir,
+        depth_dir=depth_dir,
+        ply_path=ply_path,
+        image_paths=list(image_paths),
+        image_names=list(image_names),
+        num_points=0,
+        meta=meta,
+    )
+
+
+def run_infer(
+    colmap_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    method: str = "da3",
+    model: str = "depth-anything/DA3-BASE",
+    device: str = "cuda",
+    sparse_subdir: str = "",
+    process_res: int = 504,
+    max_points: int = 1_000_000,
+    max_images: int = 0,
+    stride: int = 1,
+    delaunay_config: Any = None,
+) -> InferResult:
+    """COLMAP sparse → depth PNGs (``method``: ``da3`` or ``delaunay``)."""
+    colmap_dir = Path(colmap_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    method = method.lower().strip()
+    if method == "da3":
+        return _run_infer_da3(
+            colmap_dir,
+            output_dir,
+            model=model,
+            device=device,
+            sparse_subdir=sparse_subdir,
+            process_res=process_res,
+            max_points=max_points,
+            max_images=max_images,
+            stride=stride,
+        )
+    if method == "delaunay":
+        return _run_infer_delaunay(
+            colmap_dir,
+            output_dir,
+            sparse_subdir=sparse_subdir,
+            max_images=max_images,
+            stride=stride,
+            delaunay_config=delaunay_config,
+        )
+    raise ValueError(f"Unknown infer method: {method!r} (expected 'da3' or 'delaunay')")
 
 
 def run_fit(
@@ -186,7 +264,7 @@ def run_tsdf(
     )
 
 
-def run_mesh(
+def run_mesh_da3(
     colmap_dir: str | Path,
     output_dir: str | Path,
     *,
@@ -201,15 +279,15 @@ def run_mesh(
     carve_config: Optional[CarveConfig] = None,
     tsdf_config: Optional[TsdfConfig] = None,
 ) -> MeshResult:
-    """E1 end-to-end: infer → fit → carve(confident depths) → tsdf."""
+    """DA3 full pipeline defaults: infer → fit → carve(fitted) → tsdf."""
     colmap_dir = Path(colmap_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    infer_out = output_dir / "infer"
     infer = run_infer(
         colmap_dir,
-        infer_out,
+        output_dir / "infer",
+        method="da3",
         model=model,
         device=device,
         sparse_subdir=sparse_subdir,
@@ -218,42 +296,149 @@ def run_mesh(
         max_images=max_images,
         stride=stride,
     )
-
-    fit_out = output_dir / "fit"
     fit = run_fit(
         colmap_dir,
         infer.depth_dir,
-        fit_out,
+        output_dir / "fit",
         config=fit_config,
         image_names=infer.image_names,
         sparse_subdir=sparse_subdir,
     )
-
-    carve_out = output_dir / "carve"
     carve = run_carve(
         colmap_dir,
-        fit.confident_depth_dir,
-        carve_out,
+        fit.fitted_depth_dir,
+        output_dir / "carve",
         config=carve_config,
         image_names=infer.image_names,
         sparse_subdir=sparse_subdir,
     )
-
-    tsdf_out = output_dir / "mesh"
     tsdf = run_tsdf(
         colmap_dir,
         carve.output_depth_dir,
-        tsdf_out,
+        output_dir / "mesh",
         infer.image_paths,
         config=tsdf_config,
         image_names=infer.image_names,
         sparse_subdir=sparse_subdir,
     )
+    return MeshResult(output_dir=output_dir, infer=infer, fit=fit, carve=carve, tsdf=tsdf)
 
-    return MeshResult(
-        output_dir=output_dir,
-        infer=infer,
-        fit=fit,
-        carve=carve,
-        tsdf=tsdf,
+
+def run_mesh_delaunay(
+    colmap_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    sparse_subdir: str = "",
+    max_images: int = 0,
+    stride: int = 1,
+    delaunay_config: Any = None,
+    do_fit: bool = False,
+    do_carve: bool = False,
+    fit_config: Optional[FitConfig] = None,
+    carve_config: Optional[CarveConfig] = None,
+    tsdf_config: Optional[TsdfConfig] = None,
+) -> MeshResult:
+    """Delaunay pipeline defaults: infer → tsdf (fit/carve off; opt-in)."""
+    colmap_dir = Path(colmap_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    infer = run_infer(
+        colmap_dir,
+        output_dir / "infer",
+        method="delaunay",
+        sparse_subdir=sparse_subdir,
+        max_images=max_images,
+        stride=stride,
+        delaunay_config=delaunay_config,
     )
+
+    depth_for_tsdf = infer.depth_dir
+    fit: Optional[FitResult] = None
+    carve: Optional[CarveResult] = None
+
+    if do_fit:
+        fit = run_fit(
+            colmap_dir,
+            infer.depth_dir,
+            output_dir / "fit",
+            config=fit_config,
+            image_names=infer.image_names,
+            sparse_subdir=sparse_subdir,
+        )
+        depth_for_tsdf = fit.confident_depth_dir
+
+    if do_carve:
+        carve = run_carve(
+            colmap_dir,
+            depth_for_tsdf,
+            output_dir / "carve",
+            config=carve_config,
+            image_names=infer.image_names,
+            sparse_subdir=sparse_subdir,
+        )
+        depth_for_tsdf = carve.output_depth_dir
+
+    tsdf = run_tsdf(
+        colmap_dir,
+        depth_for_tsdf,
+        output_dir / "mesh",
+        infer.image_paths,
+        config=tsdf_config,
+        image_names=infer.image_names,
+        sparse_subdir=sparse_subdir,
+    )
+    return MeshResult(output_dir=output_dir, infer=infer, fit=fit, carve=carve, tsdf=tsdf)
+
+
+def run_mesh(
+    colmap_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    method: str = "da3",
+    model: str = "depth-anything/DA3-BASE",
+    device: str = "cuda",
+    sparse_subdir: str = "",
+    process_res: int = 504,
+    max_points: int = 1_000_000,
+    max_images: int = 0,
+    stride: int = 1,
+    delaunay_config: Any = None,
+    do_fit: Optional[bool] = None,
+    do_carve: Optional[bool] = None,
+    fit_config: Optional[FitConfig] = None,
+    carve_config: Optional[CarveConfig] = None,
+    tsdf_config: Optional[TsdfConfig] = None,
+) -> MeshResult:
+    """Dispatch to ``run_mesh_da3`` or ``run_mesh_delaunay`` (good defaults each)."""
+    method = method.lower().strip()
+    if method == "da3":
+        return run_mesh_da3(
+            colmap_dir,
+            output_dir,
+            model=model,
+            device=device,
+            sparse_subdir=sparse_subdir,
+            process_res=process_res,
+            max_points=max_points,
+            max_images=max_images,
+            stride=stride,
+            fit_config=fit_config,
+            carve_config=carve_config,
+            tsdf_config=tsdf_config,
+        )
+    if method == "delaunay":
+        return run_mesh_delaunay(
+            colmap_dir,
+            output_dir,
+            sparse_subdir=sparse_subdir,
+            max_images=max_images,
+            stride=stride,
+            delaunay_config=delaunay_config,
+            do_fit=False if do_fit is None else do_fit,
+            do_carve=False if do_carve is None else do_carve,
+            fit_config=fit_config,
+            carve_config=carve_config,
+            tsdf_config=tsdf_config,
+        )
+    raise ValueError(f"Unknown mesh method: {method!r} (expected 'da3' or 'delaunay')")

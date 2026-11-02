@@ -4,7 +4,7 @@ import pyceres
 import numpy as np
 from numpy.linalg import norm
 
-from utils.data_utils import vec3_angle, is_floor_portal
+from utils.data_utils import vec3_angle, is_floor_portal, lookup_gps_enu
 from src.cost_functions import RelativeTransformationSE3CostFunction, RelativeTransformationSE3ViaObservationsCostFunction, PoseCenterConstraintCostFunction, FloorAlignmentCostFunction
 
 class PyBundleAdjuster(object):
@@ -158,6 +158,9 @@ class PyBundleAdjuster(object):
     def set_up_solver_options(
         self, problem: pyceres.Problem, solver_options: pyceres.SolverOptions
     ):
+        ceres = self.options.ceres if hasattr(self.options, "ceres") else self.options
+        if hasattr(ceres, "create_solver_options"):
+            return ceres.create_solver_options(self.config, problem)
         return self.options.create_solver_options(self.config, problem)
     #    bundle_adjuster = pycolmap.BundleAdjuster(self.options, self.config)
     #    return bundle_adjuster.set_up_solver_options(problem, solver_options)
@@ -266,7 +269,14 @@ class PyBundleAdjuster(object):
                 cost = pycolmap.cost_functions.ReprojErrorCost(
                     camera.model, point2D.xy
                 )
-                self.add_residual_block("3DPointReproj", cost, loss, [
+                if hasattr(pose, "params"):
+                    pose_params = pose.params
+                    self.add_residual_block("3DPointReproj", cost, loss, [
+                        point3D.xyz,
+                        pose_params,
+                        camera.params], image_id)
+                else:
+                    self.add_residual_block("3DPointReproj", cost, loss, [
                         pose.rotation.quat,
                         pose.translation,
                         point3D.xyz,
@@ -275,9 +285,14 @@ class PyBundleAdjuster(object):
             self.camera_ids.add(image.camera_id)
             # Set pose parameterization
             if not constant_cam_pose:
-                self.problem.set_manifold(
-                    pose.rotation.quat, pyceres.QuaternionManifold()
-                )
+                if hasattr(pose, "params"):
+                    self.problem.set_manifold(
+                        pose.params, pyceres.QuaternionManifold()
+                    )
+                else:
+                    self.problem.set_manifold(
+                        pose.rotation.quat, pyceres.QuaternionManifold()
+                    )
                 #if self.config.has_constant_cam_positions(image_id):
                 #    constant_position_idxs = self.config.constant_cam_positions(
                 #        image_id
@@ -305,10 +320,27 @@ class PyBundleAdjuster(object):
 
             self.camera_ids.add(image.camera_id)
 
+        use_gps_centerprior = self.refinement_config.get('use_gps_centerprior', False)
+        if not constant_cam_pose and use_gps_centerprior:
+            gps_per_timestamp = self.refinement_config.get('gps_enu_per_timestamp') or {}
+            timestamp_ns = timestamp_per_image[image.name]
+            e, n, u = lookup_gps_enu(gps_per_timestamp, timestamp_ns)
+            gps_center = np.array([e, n, u], dtype=float)
+            sigma_xy = self.refinement_config.get('gps_centerprior_sigma_xy', 3.0)
+            w_xy = 1.0 / sigma_xy
+            w_z = self.refinement_config.get('gps_centerprior_z_weight', 0.0)
+            cost = PoseCenterConstraintCostFunction(gps_center, (w_xy, w_xy, w_z))
+            params = [pose.rotation.quat, pose.translation]
+            self.add_residual_block("GpsCenterPrior", cost, None, params, image_id)
+            self.camera_ids.add(image.camera_id)
 
         # CUSTOM!
         use_relposes = self.refinement_config.get('add_rel_constraints', False)
-        has_spike = image_id in arkit_precomputed and arkit_precomputed[image_id].get("arkit_spike", False)
+        has_spike = (
+            arkit_precomputed
+            and image_id in arkit_precomputed
+            and arkit_precomputed[image_id].get("arkit_spike", False)
+        )
         if use_relposes and image_id > 1 and not constant_cam_pose and not has_spike \
            and image_id in reconstruction.images and (image_id - 1) in reconstruction.images:
            

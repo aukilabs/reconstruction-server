@@ -13,7 +13,8 @@ Expected Input and Output Files from each compute capability
   │   └── {dataset}
   │       ├── Frames.mp4
   │       ├── Accel.csv
-  │       ├── ARposes.csv     
+  │       ├── ARposes.csv     # omitted when Manifest mode is robot_gps
+  │       ├── GpsPositions.csv  # robot_gps only: timestamp_sec, enu_e, enu_n, enu_u
   │       ├── CameraIntrinsics.csv     
   │       ├── FeaturePoints.ply     
   │       ├── gyro_accel.csv     

@@ -12,6 +12,24 @@ from hloc import pairs_from_poses, extract_features, match_features, pairs_from_
 from utils.bundle_adjuster import PyBundleAdjuster
 
 
+def _ba_ceres_options(ba_options: pycolmap.BundleAdjustmentOptions):
+    return ba_options.ceres if hasattr(ba_options, "ceres") else ba_options
+
+
+def _ba_solver_options(ba_options: pycolmap.BundleAdjustmentOptions):
+    ceres = _ba_ceres_options(ba_options)
+    if hasattr(ceres, "solver_options"):
+        return ceres.solver_options
+    return ba_options.solver_options
+
+
+def _ba_create_loss_function(ba_options: pycolmap.BundleAdjustmentOptions):
+    ceres = _ba_ceres_options(ba_options)
+    if hasattr(ceres, "create_loss_function"):
+        return ceres.create_loss_function()
+    return ba_options.create_loss_function()
+
+
 def run_triangulation(
     database_path: Path,
     image_dir: Path,
@@ -19,7 +37,9 @@ def run_triangulation(
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
-    image_ids_per_qr=None
+    image_ids_per_qr=None,
+    robot_gps: bool = False,
+    gps_enu_per_timestamp: Optional[Dict[int, tuple]] = None,
 ) -> pycolmap.Reconstruction:
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
@@ -33,7 +53,11 @@ def run_triangulation(
         min_num_matches = 15
         ignore_watermarks = True
         image_names = set()
-        database_cache = pycolmap.DatabaseCache.create(database, min_num_matches, ignore_watermarks, image_names)
+        cache_options = pycolmap.DatabaseCacheOptions()
+        cache_options.min_num_matches = min_num_matches
+        cache_options.ignore_watermarks = ignore_watermarks
+        cache_options.image_names = image_names
+        database_cache = pycolmap.DatabaseCache.create(database, cache_options)
         reconstruction = deepcopy(reference_model)
 
         # Instead of deepcopy.
@@ -53,7 +77,7 @@ def run_triangulation(
         #    for point3D_id in reconstruction.point3D_ids():
         #        reconstruction.delete_point3D(point3D_id)
 
-        filter_spikes = True
+        filter_spikes = not robot_gps and arkit_precomputed
         if filter_spikes:
             prev_pose = None
             prev_pose_new = None
@@ -121,14 +145,22 @@ def run_triangulation(
 
         ba_options = pycolmap.BundleAdjustmentOptions()
 
-        ba_options.refine_focal_length = False
-        ba_options.refine_principal_point = False
-        ba_options.refine_extra_params = False
-        ba_options.refine_sensor_from_rig = False
-        ba_options.refine_rig_from_world = True
-        ba_options.solver_options.max_num_iterations = 100
-        ba_options.solver_options.gradient_tolerance = 1.0
-        ba_options.solver_options.logging_type = pyceres.LoggingType.SILENT
+        if robot_gps:
+            ba_options.refine_focal_length = True
+            ba_options.refine_principal_point = True
+            ba_options.refine_extra_params = False
+            ba_options.refine_sensor_from_rig = False
+            ba_options.refine_rig_from_world = True
+        else:
+            ba_options.refine_focal_length = False
+            ba_options.refine_principal_point = False
+            ba_options.refine_extra_params = False
+            ba_options.refine_sensor_from_rig = False
+            ba_options.refine_rig_from_world = True
+        solver_opts = _ba_solver_options(ba_options)
+        solver_opts.max_num_iterations = 100
+        solver_opts.gradient_tolerance = 1.0
+        solver_opts.logging_type = pyceres.LoggingType.SILENT
 
         num_ba_iterations_total = 4
 
@@ -149,7 +181,7 @@ def run_triangulation(
                 #logger.info(f"Adding image {image_id} to bundle adjustment")
                 ba_config.add_image(image_id)
 
-            loss = ba_options.create_loss_function()
+            loss = _ba_create_loss_function(ba_options)
 
             # Fix 7-DOFs of the bundle adjustment problem
             ba_config.set_constant_rig_from_world_pose(sorted_image_ids[0])
@@ -162,16 +194,30 @@ def run_triangulation(
             # and set max speed between adjacent frames (to filter out potential arkit pose jumps).
             # These values were selected experimentally, and might require some adjustment.
 
-            refinement_config = {
-                'add_rel_constraints': True,
-                'use_arkit_relposes': True,
-                'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
-                'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
-                'use_arkit_centerdist': False,
-                'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
-                'floor_height_weight': 1e4,
-                'floor_direction_weight': 1e2,
-            }
+            if robot_gps:
+                refinement_config = {
+                    'add_rel_constraints': False,
+                    'use_arkit_relposes': False,
+                    'use_arkit_centerdist': False,
+                    'use_gps_centerprior': True,
+                    'gps_enu_per_timestamp': gps_enu_per_timestamp or {},
+                    'gps_centerprior_sigma_xy': 3.0,
+                    'gps_centerprior_z_weight': 0.0,
+                    'rel_qr_pose_cov_scale': 1e4,
+                    'floor_height_weight': 0,
+                    'floor_direction_weight': 0,
+                }
+            else:
+                refinement_config = {
+                    'add_rel_constraints': True,
+                    'use_arkit_relposes': True,
+                    'rel_se3_pose_cov_scale': 1e3, # Higher to trust ARKit relative positions more
+                    'rel_se3_pose_cov_scale_rot': 1e7, # Higher to trust ARKit relative rotations more
+                    'use_arkit_centerdist': False,
+                    'rel_qr_pose_cov_scale': 1e4, # Higher means we trust the QR loop closure more
+                    'floor_height_weight': 1e4,
+                    'floor_direction_weight': 1e2,
+                }
 
             bundle_adjuster = PyBundleAdjuster(ba_options, ba_config, refinement_config=refinement_config)
             bundle_adjuster.set_up_problem(
@@ -185,7 +231,7 @@ def run_triangulation(
 
             logger.debug(f"Setting up solver options...")
             solver_options = bundle_adjuster.set_up_solver_options(
-                bundle_adjuster.problem, ba_options.solver_options
+                bundle_adjuster.problem, _ba_solver_options(ba_options)
             )
             solver_options.linear_solver_type = pyceres.LinearSolverType.SPARSE_SCHUR
             #solver_options.linear_solver_type = pyceres.LinearSolverType.DENSE_SCHUR
@@ -262,7 +308,9 @@ def triangulate_model(
     timestamp_per_image: Optional[Dict[str, int]] = None,
     arkit_precomputed=None,
     detections_per_qr=None,
-    image_ids_per_qr=None
+    image_ids_per_qr=None,
+    robot_gps: bool = False,
+    gps_enu_per_timestamp: Optional[Dict[int, tuple]] = None,
 ) -> pycolmap.Reconstruction:
     assert reference_model.exists(), reference_model
     assert features.exists(), features
@@ -288,7 +336,9 @@ def triangulate_model(
 
     reconstruction = run_triangulation(
         database_path, image_dir, reference,
-        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr
+        timestamp_per_image, arkit_precomputed, detections_per_qr, image_ids_per_qr,
+        robot_gps=robot_gps,
+        gps_enu_per_timestamp=gps_enu_per_timestamp,
     )
     # Grab logger by name
     logger = logging.getLogger('refine_dataset')
@@ -300,7 +350,8 @@ def process_features_and_matching(
     references,
     colmap_rec_path,
     paths,
-    logger
+    logger,
+    robot_gps: bool = False,
 ):
     """Process feature extraction and matching."""
     # Generate pairs from poses
@@ -325,13 +376,14 @@ def process_features_and_matching(
             image_list=references[::retrieval_interval],
         )
 
+    sequential_window_size = 5 if robot_gps else 3
     use_pairs_from_sequential = True
     if use_pairs_from_sequential:
         pairs_from_sequential.main(
             paths.sfm_pairs,
             references,
             features=None,
-            window_size=3,
+            window_size=sequential_window_size,
             quadratic_overlap=True,
             use_loop_closure=use_loop_closure,
             retrieval_path=paths.global_features if use_loop_closure else None,
@@ -349,8 +401,8 @@ def process_features_and_matching(
 
     # Feature extraction
     feature_conf = extract_features.confs["aliked-n16"]
-    feature_conf["model"]["max_num_keypoints"] = 1024
-    feature_conf["model"]["detection_threshold"] = 0.3
+    feature_conf["model"]["max_num_keypoints"] = 2048 if robot_gps else 1024
+    feature_conf["model"]["detection_threshold"] = 0.25 if robot_gps else 0.3
     feature_conf["model"]["nms_radius"] = 4
     feature_conf["preprocessing"]["resize_max"] = 1024
     feature_conf["output"] = paths.features

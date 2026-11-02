@@ -21,6 +21,7 @@ const ZIP_SCAN_SUBDIRS: &[&str] = &["sfm", "infer", "fit", "carve", "mesh"];
 /// Optional mesh outputs under `refined/local/<scan>/mesh/` (file name, artifact name suffix, data_type).
 const OPTIONAL_MESH_ARTIFACTS: &[(&str, &str, &str)] = &[
     ("tsdf_mesh.ply", "mesh", "tsdf_mesh_ply"),
+    ("tsdf_mesh_raw.ply", "mesh_raw", "tsdf_mesh_raw_ply"),
     ("tsdf_points.ply", "mesh_points", "tsdf_points_ply"),
     ("meta.json", "mesh_meta", "tsdf_mesh_meta_json"),
 ];

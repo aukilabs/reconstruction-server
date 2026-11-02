@@ -47,19 +47,19 @@ class FrameSet:
 class CarveConfig:
     """Subtractive carve + multi-view voxel gate (production defaults).
 
-    E1 kept subtractive_value=-0.2; voxel_size was loosened to 0.07 (2026-09-25).
-    Gate tightened vs E1: min_points=3, min_confidence=2.0 (prefer empty over floaters).
+    Grocery-locked 2026-10-08 (scan 11-41-36 BEST on fitted depths): milder
+    subtractive + denser unproject than the old E1 / 2026-09-25 gate.
     """
 
     voxel_size: float = 0.07
-    subtractive_value: float = -0.2
-    min_points: int = 3
+    subtractive_value: float = -0.05
+    min_points: int = 2
     min_confidence: float = 2.0
-    max_depth: float = 8.0
-    unproject_stride: int = 4
-    mask_stride: int = 2
+    max_depth: float = 5.0
+    unproject_stride: int = 2
+    mask_stride: int = 1
     min_depth: float = 0.05
-    mask_max_depth: float = 10.0
+    mask_max_depth: float = 5.0
 
 
 @dataclass
@@ -71,20 +71,24 @@ class CarveResult:
 
 @dataclass
 class TsdfConfig:
-    """Open3D ScalableTSDFVolume defaults (coarser than E1 for flatter surfaces)."""
+    """Open3D ScalableTSDFVolume defaults (coarser than E1 for flatter surfaces).
+
+    Grocery-locked 2026-10-08: trunc ~10× voxel (was 4×) to cut multi-view holes.
+    """
 
     voxel_length: float = 0.04
-    sdf_trunc: float = 0.16
+    sdf_trunc: float = 0.40
     depth_trunc: float = 10.0
     min_depth: float = 0.05
     # ``rgb8`` integrates color when image paths are provided; ``nocolor`` is geometry-only.
     color_type: str = "rgb8"
     postprocess: bool = True
-    postprocess_taubin_iterations: int = 2
+    # 0 = skip Taubin; decimate stops at max error or min triangle ratio (whichever first).
+    postprocess_taubin_iterations: int = 0
     postprocess_taubin_lambda: float = 0.5
     postprocess_taubin_mu: float = -0.52
-    postprocess_max_geometric_error: float = 0.008
-    postprocess_min_triangle_ratio: float = 0.5
+    postprocess_max_geometric_error: float = 0.0001  # 0.1 mm
+    postprocess_min_triangle_ratio: float = 0.2
 
 
 @dataclass
@@ -92,6 +96,8 @@ class TsdfResult:
     mesh_path: Path
     points_path: Path
     meta: dict[str, Any]
+    # Pre-postprocess extract; always written next to ``mesh_path``.
+    raw_mesh_path: Optional[Path] = None
 
 
 @dataclass
