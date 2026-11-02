@@ -25,7 +25,8 @@ pub const CRATE_NAME: &str = "runner-reconstruction-local";
 pub const CAPABILITY: &str = "/reconstruction/local-refinement/v1";
 
 /// Convenience slice for wiring all supported capabilities.
-pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
+pub const CAPABILITY_V2: &str = "/reconstruction/local-refinement/v2";
+pub const CAPABILITIES: [&str; 2] = [CAPABILITY, CAPABILITY_V2];
 
 /// Scaffold runner for local refinement.
 pub struct RunnerReconstructionLocal {

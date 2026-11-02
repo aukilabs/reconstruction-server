@@ -3,6 +3,7 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
+use node_host::capture_identity::{read_capture_manifest, CAPTURE_METADATA_FILE};
 use node_host::{ArtifactContent, ArtifactRequest, TaskIo};
 use tokio::task;
 use tracing::info;
@@ -63,6 +64,16 @@ impl RefinedUploader {
                 continue;
             }
 
+            let metadata = read_capture_manifest(
+                &scan_id,
+                &workspace.datasets().join(&scan_id).join("Manifest.json"),
+            )?;
+            // The uploader can run while Python is still finishing other scans.
+            // Write the metadata before this scan's ZIP is ever published.
+            std::fs::write(
+                sfm_path.join(CAPTURE_METADATA_FILE),
+                serde_json::to_vec(&metadata)?,
+            )?;
             let zip_bytes = zip_directory(&sfm_path, ZIP_ALLOWED_EXTENSIONS)
                 .await
                 .with_context(|| format!("zip scan directory {}", sfm_path.display()))?;
@@ -125,7 +136,8 @@ fn zip_directory_blocking(dir: &Path, allowed_extensions: &[String]) -> Result<V
         if entry.file_type().is_dir() {
             continue;
         }
-        if !should_include_file(path, allowed_extensions) {
+        if path != dir.join(CAPTURE_METADATA_FILE) && !should_include_file(path, allowed_extensions)
+        {
             continue;
         }
         let relative = path
@@ -179,4 +191,55 @@ fn is_conflict_err(err: &anyhow::Error) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_zip_preserves_identity_time_and_only_the_metadata_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "8c4869c0-99c5-4515-8545-e3674d383338";
+        let timestamp = "2026-10-13T12:34:56.1234567Z";
+        let manifest_path = tmp.path().join("Manifest.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "id":id,"scanStartTime":timestamp,"userId":"not-for-cache"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let metadata = read_capture_manifest(id, &manifest_path).unwrap();
+        std::fs::write(
+            tmp.path().join(CAPTURE_METADATA_FILE),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        for name in REQUIRED_SFM_FILES {
+            std::fs::write(tmp.path().join(name), name).unwrap();
+        }
+        std::fs::create_dir(tmp.path().join("nested")).unwrap();
+        std::fs::write(
+            tmp.path().join("nested").join(CAPTURE_METADATA_FILE),
+            "exclude",
+        )
+        .unwrap();
+        let allowed: Vec<String> = ZIP_ALLOWED_EXTENSIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let bytes = zip_directory_blocking(tmp.path(), &allowed).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(zip.len(), REQUIRED_SFM_FILES.len() + 1);
+        assert!(zip.by_name("Manifest.json").is_err());
+        assert!(zip.by_name("nested/capture_metadata.json").is_err());
+        let file = zip.by_name(CAPTURE_METADATA_FILE).unwrap();
+        let data: serde_json::Value = serde_json::from_reader(file).unwrap();
+        assert_eq!(
+            data,
+            serde_json::json!({"captureId":id,"scanStartTime":timestamp})
+        );
+    }
 }

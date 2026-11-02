@@ -26,7 +26,8 @@ pub const CRATE_NAME: &str = "runner-reconstruction-update";
 pub const CAPABILITY: &str = "/reconstruction/update-refinement/v1";
 
 /// Convenience slice for wiring all supported capabilities.
-pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
+pub const CAPABILITY_V2: &str = "/reconstruction/update-refinement/v2";
+pub const CAPABILITIES: [&str; 2] = [CAPABILITY, CAPABILITY_V2];
 
 /// Scaffold runner for update refinement.
 pub struct RunnerReconstructionUpdate {

@@ -489,7 +489,10 @@ struct DownloadedPart {
 
 /// `<root>/datasets/<timestamp-or-name>/<name>.<data_type>`, as in the 0.3.2 host.
 pub fn download_path(root: &Path, name: &str, data_type: &str) -> PathBuf {
-    let scan = extract_timestamp(name).unwrap_or_else(|| name.to_string());
+    let scan = crate::capture_identity::artifact_capture_id(name)
+        .map(str::to_owned)
+        .or_else(|| extract_timestamp(name))
+        .unwrap_or_else(|| name.to_string());
     root.join("datasets")
         .join(sanitize_component(&scan))
         .join(format!(

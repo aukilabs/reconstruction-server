@@ -6,6 +6,7 @@ publish = false
 description = "Compute-node host on the Auki SDK task runtime: claim loop, Domain IO and DMS receipts."
 
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0.95"
 async-trait = "0.1.88"
 auki-sdk = { workspace = true }
@@ -26,6 +27,5 @@ uuid = { version = "1.10.1", features = ["v4"] }
 auki-auth = { workspace = true }
 auki-dms = { workspace = true }
 base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
 httpmock = "0.8"
 tempfile = "3"

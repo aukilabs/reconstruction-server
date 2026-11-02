@@ -41,5 +41,12 @@ mod tests {
             assert!(router.get(cap).is_some(), "missing runner for {cap}");
         }
         assert_eq!(router.capabilities().len(), expected.len());
+        for stage in ["local", "global", "update"] {
+            for version in ["v1", "v2"] {
+                let capability = format!("/reconstruction/{stage}-refinement/{version}");
+                assert!(router.get(&capability).is_some(), "missing {capability}");
+            }
+        }
+        assert_eq!(router.capabilities().len(), 6);
     }
 }

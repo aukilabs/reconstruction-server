@@ -53,7 +53,24 @@ pub async fn materialize_datasets(
             manifest_path: copied_paths.manifest_path,
         });
     }
+    // Each input URL is materialized separately; validate only after the complete
+    // set has been copied and normalized into shared capture directories.
+    validate_capture_manifests(workspace)?;
     Ok(datasets)
+}
+
+fn validate_capture_manifests(workspace: &Workspace) -> Result<()> {
+    for entry in fs::read_dir(workspace.datasets())? {
+        let entry = entry?;
+        let id = entry.file_name().to_string_lossy().to_string();
+        if entry.file_type()?.is_dir() && node_host::capture_identity::is_uuid_capture_id(&id) {
+            node_host::capture_identity::read_capture_manifest(
+                &id,
+                &entry.path().join("Manifest.json"),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 struct CopyResult {
@@ -217,6 +234,69 @@ fn copy_dir_recursively(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interleaved_single_file_downloads_do_not_mix_same_time_captures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = Workspace::create(Some(tmp.path()), "domain", Some("job"), "task").unwrap();
+        let captures = [
+            "8c4869c0-99c5-4515-8545-e3674d383338",
+            "7d909fbe-20fa-4a13-8f88-aa5d8b91ceef",
+            "2025-03-19_10-57-00",
+        ];
+        let files = [
+            ("dmt_recording", "dmt_recording_mp4", "Frames.mp4"),
+            ("dmt_arposes", "dmt_arposes_csv", "ARposes.csv"),
+            ("dmt_manifest", "dmt_manifest_json", "Manifest.json"),
+        ];
+        for (prefix, data_type, _) in files {
+            for id in captures {
+                // The actual DMT task submits one URL per raw file. Each host
+                // download has a distinct temporary root before workspace copy.
+                let download = tempfile::tempdir().unwrap();
+                let name = format!("{prefix}_{id}");
+                let path = node_host::io::download_path(download.path(), &name, data_type);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let payload = if data_type == "dmt_manifest_json" {
+                    serde_json::json!({"id":id,"scanStartTime":"2026-10-13T12:34:56Z"}).to_string()
+                } else {
+                    format!("{id}:{data_type}")
+                };
+                fs::write(&path, payload).unwrap();
+                let materialized = Materialized {
+                    cid: name.clone(),
+                    path,
+                    data_id: None,
+                    name: Some(name),
+                    data_type: Some(data_type.into()),
+                    domain_id: None,
+                    root_dir: download.path().to_path_buf(),
+                    related_files: vec![],
+                    extracted_paths: vec![],
+                };
+                let result = copy_materialized_to_workspace(&materialized, &workspace).unwrap();
+                assert_eq!(result.dataset_root, workspace.datasets().join(id));
+            }
+        }
+        validate_capture_manifests(&workspace).unwrap();
+        assert_eq!(fs::read_dir(workspace.datasets()).unwrap().count(), 3);
+        for id in captures {
+            for (_, data_type, leaf) in files {
+                let contents =
+                    fs::read_to_string(workspace.datasets().join(id).join(leaf)).unwrap();
+                if data_type != "dmt_manifest_json" {
+                    assert_eq!(contents, format!("{id}:{data_type}"));
+                }
+            }
+        }
+        fs::write(
+            workspace.datasets().join(captures[0]).join("Manifest.json"),
+            serde_json::json!({"id":captures[1],"scanStartTime":"2026-10-13T12:34:56Z"})
+                .to_string(),
+        )
+        .unwrap();
+        assert!(validate_capture_manifests(&workspace).is_err());
+    }
 
     /// The host's download layout must feed the legacy renames the Python pipeline expects.
     #[test]

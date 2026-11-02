@@ -1,3 +1,4 @@
+from utils.capture_identity import discover_capture_paths
 import pycolmap
 import json
 import numpy as np
@@ -156,13 +157,7 @@ def get_data_paths(group_folder, logger_name=None):
     else:
         truth_portal_poses = None
 
-    dataset_paths = []
-    for scan_folder in group_folder.iterdir():
-        if scan_folder.is_dir() and (
-            scan_folder.name.startswith("dmt_scan_")
-            or scan_folder.name.startswith("20")
-        ):
-            dataset_paths.append(scan_folder)
+    dataset_paths = discover_capture_paths(group_folder)
 
     logger.info(f"Using {len(dataset_paths)} scans from folder '{group_folder.name}'")
     

@@ -92,6 +92,9 @@ You can also pin a specific release tag, for example `aukilabs/reconstruction-no
 
 ## Option 2 — Build Docker image from source
 
+For a native ARM64 build on NVIDIA DGX Spark and registration in Auki dev, follow
+[DGX Spark setup](dgx-spark.md).
+
 ### Building Docker
 
 > **NOTE:** On Mac with Apple Silicon, the --platform flag is needed. Although running the image with CUDA won't work on Mac, the image can still run on a cloud server for example, pulling from the docker hub.

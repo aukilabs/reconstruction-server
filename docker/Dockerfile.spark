@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1
+# Native ARM64 / GB10 build. Build from the repository root on DGX Spark.
+ARG RECONSTRUCTION_VERSION=0.0.0-spark
+FROM rust:1.95-bookworm AS rust-build
+ARG RECONSTRUCTION_VERSION
+ARG BUILD_JOBS=4
+ENV RECONSTRUCTION_VERSION=${RECONSTRUCTION_VERSION}
+WORKDIR /build
+COPY server/rust/ ./
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build --locked --release -p bin -j "${BUILD_JOBS}"
+
+FROM nvidia/cuda:13.0.0-devel-ubuntu24.04 AS dependencies
+ARG BUILD_JOBS=4
+ARG COLMAP_REVISION=20b2777186654f20745f6c57974924d145bbbd6f
+ARG HLOC_REVISION=87b266cdb3a894455a9c889276f4e5d5913eb0eb
+ENV DEBIAN_FRONTEND=noninteractive \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:${PATH} \
+    CMAKE_PREFIX_PATH=/opt/venv \
+    CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} \
+    PIP_NO_CACHE_DIR=1 \
+    QT_QPA_PLATFORM=offscreen
+
+# Noble's Ceres 2.2 uses ARM-compatible BLAS; the AMD64 base uses Intel MKL.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git curl build-essential cmake ninja-build pkg-config \
+    python3-dev python3-venv python3-tk \
+    libboost-program-options-dev libboost-filesystem-dev libboost-graph-dev \
+    libboost-system-dev libeigen3-dev libflann-dev libfreeimage-dev libmetis-dev \
+    libsqlite3-dev libglew-dev libcgal-dev libsuitesparse-dev libceres-dev \
+    libopenblas-dev liblapack-dev libgoogle-glog-dev libgflags-dev \
+    libgl1 libegl1 libglib2.0-0 ffmpeg draco && \
+    ln -s /usr/bin/draco_encoder /usr/local/bin/draco_encoder && \
+    rm -rf /var/lib/apt/lists/* && python3 -m venv /opt/venv
+
+RUN python3 -m pip install --upgrade pip setuptools wheel && \
+    python3 -m pip install "pybind11[global]==3.0.1" scikit-build-core ninja numpy && \
+    python3 -m pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 \
+      --index-url https://download.pytorch.org/whl/cu130 && \
+    python3 -m pip install open3d==0.20.0 psutil gputil enlighten trimesh alphashape evo
+
+# Build all Ceres bindings against the same pybind11 ABI as our extensions.
+RUN git clone --depth 1 --branch v2.5 https://github.com/cvg/pyceres.git /tmp/pyceres && \
+    python3 -m pip install --no-build-isolation /tmp/pyceres && rm -rf /tmp/pyceres
+
+# Match the production COLMAP source, but compile only for Spark's SM 12.1.
+RUN git clone https://github.com/colmap/colmap.git /tmp/colmap && \
+    git -C /tmp/colmap checkout "${COLMAP_REVISION}" && \
+    cmake -S /tmp/colmap -B /tmp/colmap/build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DCUDA_ENABLED=ON -DGUI_ENABLED=OFF \
+      -DCMAKE_CUDA_ARCHITECTURES=121 -DBLA_VENDOR=OpenBLAS \
+      -DTESTS_ENABLED=OFF && \
+    cmake --build /tmp/colmap/build && cmake --install /tmp/colmap/build && \
+    ldconfig && python3 -m pip install --no-build-isolation \
+      --config-settings=cmake.define.GENERATE_STUBS=OFF /tmp/colmap && \
+    rm -rf /tmp/colmap
+
+RUN git clone --recursive https://github.com/aukilabs/Hierarchical-Localization.git /opt/hloc && \
+    git -C /opt/hloc checkout --recurse-submodules "${HLOC_REVISION}" && \
+    python3 -m pip install /opt/hloc && \
+    python3 -c "import torch, pyceres, pycolmap, open3d, hloc; from importlib.metadata import version; print('CUDA:', torch.version.cuda, 'COLMAP:', pycolmap.__version__); assert torch.version.cuda == '13.0'; assert version('pycolmap') == '3.13.0.dev0'; assert pycolmap.has_cuda"
+
+# Required directly by the occlusion module imported by the task entrypoint.
+RUN python3 -m pip install scikit-learn
+
+FROM dependencies AS final
+ARG RECONSTRUCTION_VERSION
+ARG SOURCE_REVISION=unknown
+ENV RECONSTRUCTION_SERVER_VERSION=${RECONSTRUCTION_VERSION}
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION}
+WORKDIR /app
+COPY scripts /app/scripts
+COPY src /app/src
+COPY config /app/config
+COPY utils /app/utils
+COPY tests /app/tests
+COPY update_main.py local_main.py global_main.py occlusion_box.py topology_main.py main.py CMakeLists.txt /app/
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON \
+      -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" && \
+    cmake --build build && \
+    python3 -c "import src.cost_functions, src.ply_export, src.reconstruction_merge" && \
+    python3 main.py --help >/dev/null && \
+    python3 update_main.py --help >/dev/null && \
+    groupadd --gid 10001 reconstruction-server && \
+    useradd --uid 10001 --gid 10001 -m reconstruction-server && \
+    mkdir -p /app/jobs /home/reconstruction-server/.cache && \
+    chown -R 10001:10001 /app/jobs /home/reconstruction-server/.cache && \
+    chmod -R a+rX /app
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
+COPY --from=rust-build /build/target/release/compute-node /app/compute-node
+USER reconstruction-server
+ENTRYPOINT ["/app/entrypoint.sh"]
