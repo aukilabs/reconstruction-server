@@ -27,6 +27,9 @@ ENV PATH="${CARGO_HOME}/bin:${PATH}"
 # More convenient compute node default for local development:
 ENV GLOBAL_RUNNER_WORKSPACE_ROOT=/app
 ENV LOCAL_RUNNER_WORKSPACE_ROOT=/app
+ENV UPDATE_RUNNER_WORKSPACE_ROOT=/app
+# The runners start `python3 -m reconstruction <stage>`; the repository is mounted at /app.
+ENV PYTHONPATH=/app
 ENV DISABLE_TASKS_CLEANUP=true
 ENV LOG_FORMAT=text
 

@@ -3311,6 +3311,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "runner-reconstruction-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "node-host",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "zip",
+]
+
+[[package]]
 name = "runner-reconstruction-global"
 version = "0.1.0"
 dependencies = [
@@ -3318,6 +3332,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "node-host",
+ "runner-reconstruction-common",
  "serde",
  "serde_json",
  "tempfile",
@@ -3335,6 +3350,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "node-host",
+ "runner-reconstruction-common",
  "serde",
  "serde_json",
  "tempfile",
@@ -3353,6 +3369,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "node-host",
+ "runner-reconstruction-common",
  "serde",
  "serde_json",
  "tempfile",

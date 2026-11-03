@@ -4,7 +4,8 @@ import unittest
 import numpy as np
 import pycolmap
 
-from utils.scan_alignment import AlignedScans, compute_portal_spread_metrics
+from reconstruction.pipeline.global_map.alignment import AlignedScans
+from reconstruction.pipeline.global_map.portal_metrics import compute_portal_spread_metrics
 
 
 def _pose(x: float, y: float, z: float, quat=None) -> pycolmap.Rigid3d:

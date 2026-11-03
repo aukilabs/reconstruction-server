@@ -11,6 +11,8 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::workspace::Workspace;
 
+// Mirrored in reconstruction/output/uploads.py (UPLOAD_TABLE), checked by
+// tests/test_upload_contract.py; keep both in sync.
 const REQUIRED_SFM_FILES: &[&str] = &["images.bin", "cameras.bin", "points3D.bin", "portals.csv"];
 const ZIP_ALLOWED_EXTENSIONS: &[&str] = &[".bin", ".csv", ".txt"];
 

@@ -32,14 +32,16 @@ ARG USER_GID=$USER_UID
 
 # Application code
 WORKDIR /app
+# The runners start `python3 -m reconstruction <stage>`; find the package whatever the cwd.
+ENV PYTHONPATH=/app
 
-COPY scripts /app/scripts
-COPY src /app/src
+COPY reconstruction /app/reconstruction
+COPY cpp /app/cpp
 COPY config /app/config
-COPY utils /app/utils
-COPY update_main.py local_main.py global_main.py occlusion_box.py topology_main.py main.py CMakeLists.txt /app/
+COPY CMakeLists.txt pyproject.toml /app/
+COPY docker/start_sshd.sh /app/scripts/start_sshd.sh
 
-RUN chmod -R 755 /app/scripts /app/src /app/utils /app/*.py
+RUN chmod -R 755 /app/reconstruction /app/cpp /app/scripts
 
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON && \
     cmake --build build

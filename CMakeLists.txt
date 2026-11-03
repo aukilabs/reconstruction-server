@@ -6,4 +6,4 @@ endif (POLICY CMP0048)
 
 project(auki_solver VERSION 1.0.0)
 
-add_subdirectory(src)
+add_subdirectory(cpp)
