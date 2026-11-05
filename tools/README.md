@@ -46,7 +46,8 @@ _local/golden/<job>/
 │   └── Manifest.json, ARposes.csv, Frames.mp4, Frames.csv, CameraIntrinsics.csv, PortalDetections.csv, …
 ├── refined/local/<scan>/sfm/            # already refined scans: global and update inputs
 └── refined/global/                      # a previous global map: update's input
-    ├── refined_manifest.json
+    ├── poses.json                       # placed domain portals; update aligns to these
+    ├── refined_manifest.json            # previous refined_scan ids
     └── refined_sfm_combined/{cameras,frames,images,points3D,rigs}.bin
 ```
 
