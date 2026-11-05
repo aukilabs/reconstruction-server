@@ -8,7 +8,7 @@ Frames are named the way the Auki SDK names them: each one says which way its x,
 
 | Frame | x | y | z | Declared as | Used by |
 |---|---|---|---|---|---|
-| OpenGL | right | up | backward | `frames.OPENGL` (the SDK's `opengl` preset) | ARKit world (`ARposes.csv`, `PortalDetections.csv`); Domain portal poses (`portals.json`); `refined_manifest.json`; the OpenGL point clouds and topology meshes |
+| OpenGL | right | up | backward | `frames.OPENGL` (the SDK's `opengl` preset) | ARKit world (`ARposes.csv`, `PortalDetections.csv`); Domain portal poses (`poses.json`, `portals.json`); `refined_manifest.json`; the OpenGL point clouds and topology meshes |
 | COLMAP world | up | right | forward | `frames.COLMAP_WORLD` | The world of every COLMAP model the pipeline writes (`colmap_rec`, `sfm`, `refined_sfm_combined`) and of `portals.csv`. Gravity is -x. |
 | COLMAP camera | right | down | forward | `frames.OPENCV_CAMERA` (the SDK's `ros_optical` preset) | Every camera in a COLMAP model: x right and y down in the image, z along the optical axis |
 | DMT camera | down | right | backward | | The camera side of `ARposes.csv`, relative to the stored landscape frame. It is not ARKit's own camera frame (right, up, backward); the recorder app rotates it before writing. |
@@ -64,17 +64,17 @@ Every alignment in global is computed and applied in COLMAP world.
 
 ## Update refinement
 
-Alignment stays in COLMAP world. The manifest is converted into that frame once on the way in, and `save_manifest_json` is the one conversion back to OpenGL. A reference with no shared portal raises `NoOverlapException`. Placing the first scan of a domain is global refinement's job.
+Alignment stays in COLMAP world. Domain poses (`poses.json`, the lighthouse list) are converted into that frame once on the way in, and `save_manifest_json` is the one conversion back to OpenGL. A reference with no shared portal raises `NoOverlapException`. Placing the first scan of a domain is global refinement's job. The previous global manifest is still read, only for the refined-scan ids copied into the new manifest.
 
 | Step | In | Code | Out |
 |---|---|---|---|
-| Read the reference map | `refined_sfm_combined` (COLMAP world) and `refined_manifest.json` portals (OpenGL) | `pipeline/update/update.py:190`, then `convert_pose_convention(…, OPENGL, COLMAP_WORLD)` at `:198` | Model and placed portals in COLMAP world |
-| Read each new scan's portals | `portals.csv`, COLMAP world | `pipeline/update/update.py:130`, poses kept as read | COLMAP world |
-| Alignment | Both portal sets in COLMAP world. A floor marker contributes yaw about up only | `pipeline/update/update.py:59` and `:212` | A COLMAP-world transform |
-| Apply the alignment | The new scan's model, COLMAP world | `pipeline/update/update.py:226` | COLMAP world |
+| Read the reference map | `refined_sfm_combined` (COLMAP world) and `poses.json` portals (OpenGL) | `pipeline/update/update.py` `parse_portals_from_poses`, then `convert_pose_convention(…, OPENGL, COLMAP_WORLD)` | Model and placed portals in COLMAP world |
+| Read each new scan's portals | `portals.csv`, COLMAP world | `pipeline/update/update.py:131`, poses kept as read | COLMAP world |
+| Alignment | Both portal sets in COLMAP world. A floor marker contributes yaw about up only | `pipeline/update/update.py:69` and `:222` | A COLMAP-world transform |
+| Apply the alignment | The new scan's model, COLMAP world | `pipeline/update/update.py:236` | COLMAP world |
 | Prune, merge | COLMAP world | `pipeline/update/carving.py`, `merge.py` | `refined_sfm_combined`, COLMAP world |
-| Manifest portals | COLMAP world | `pipeline/update/update.py:279` passes them to `save_manifest_json`, which converts once at `output/manifest.py:188` | `refined_manifest.json`, OpenGL |
-| Point cloud | COLMAP world | `pipeline/update/update.py:294` → `output/pointcloud.py:71` `convention_matrix(COLMAP_WORLD, OPENGL)` | `RefinedPointCloud*.ply`, OpenGL |
+| Manifest portals | COLMAP world | `pipeline/update/update.py:289` passes them to `save_manifest_json`, which converts once at `output/manifest.py:188` | `refined_manifest.json`, OpenGL |
+| Point cloud | COLMAP world | `pipeline/update/update.py:304` → `output/pointcloud.py:71` `convention_matrix(COLMAP_WORLD, OPENGL)` | `RefinedPointCloud*.ply`, OpenGL |
 
 ## Local refinement (Auki session)
 
@@ -98,6 +98,7 @@ Both flows call `rectify_portal_pose`. DMT uses the default axis `[-1, 0, 0]`, t
 | `refined/local/<scan>/sfm/*.bin`, `colmap_rec/*.bin` | COLMAP world, COLMAP cameras |
 | `refined/local/<scan>/sfm/portals.csv` | COLMAP world, relabelled marker axes |
 | `refined/global/refined_sfm_combined/*.bin`, `refined/update/refined_sfm_combined/*.bin` | COLMAP world (the domain frame) |
+| `poses.json` (update input) | OpenGL, QR marker axes. The domain lighthouse list |
 | `refined_manifest.json` portals | OpenGL, QR marker axes |
 | `RefinedPointCloud.ply`, `RefinedPointCloudReduced.ply`, `RefinedPointCloudFloat.ply`, `RefinedPointCloud.ply.drc` | OpenGL |
 | `topology/*.obj`, `topology/*.glb` | OpenGL |
@@ -110,7 +111,7 @@ flowchart LR
   G -- "COLMAP_WORLD to OPENGL" --> M["refined_manifest.json<br/>OpenGL"]
   G -- "convention_matrix" --> P["point clouds, topology<br/>OpenGL"]
   L --> U["update alignment<br/>COLMAP world"]
-  M -- "OPENGL to COLMAP_WORLD once" --> U
+  D["poses.json<br/>OpenGL"] -- "OPENGL to COLMAP_WORLD once" --> U
   U --> UM["update model<br/>COLMAP world"]
   UM -- "save_manifest_json" --> MU["updated manifest<br/>OpenGL"]
 ```
@@ -119,7 +120,7 @@ flowchart LR
 
 Closed.
 
-1. Update alignment is computed and applied in COLMAP world (`pipeline/update/update.py`). `save_manifest_json` is the one conversion back to OpenGL.
+1. Update alignment is computed and applied in COLMAP world (`pipeline/update/update.py`). Placed portals come from domain `poses.json`. `save_manifest_json` is the one conversion back to OpenGL.
 2. The update manifest is converted once. `portal_r` goes to `save_manifest_json`, which converts COLMAP world to OpenGL.
 3. Update has no first-chunk branch. A reference with no shared portal raises `NoOverlapException`. Global refinement still places its first scan on a floor portal.
 4. One flat-portal function, `rectify_portal_pose`. The axis is `[1, 0, 0]` before the Auki marker relabel and `[-1, 0, 0]` after it. See the Auki session section.

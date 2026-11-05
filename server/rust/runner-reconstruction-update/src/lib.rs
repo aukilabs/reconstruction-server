@@ -169,6 +169,19 @@ impl NodeRunner for RunnerReconstructionUpdate {
             "timestamp": Utc::now().to_rfc3339(),
         }));
 
+        input::materialize_domain_poses(task, io, &workspace).await?;
+        if task.is_cancelled() {
+            anyhow::bail!("task cancelled during domain poses materialization");
+        }
+        let _ = task.log_event(json!({
+            "level": "info",
+            "stage": "inputs",
+            "message": "domain poses materialized",
+            "task_id": task_id,
+            "job_id": job_ctx.metadata.name,
+            "timestamp": Utc::now().to_rfc3339(),
+        }));
+
         let python_args = build_python_args(&self.config, &job_ctx, &workspace);
         let _ = task.progress(json!({"pct": 20, "stage": "python", "status": "starting"}));
         let _ = task.log_event(json!({

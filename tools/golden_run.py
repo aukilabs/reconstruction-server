@@ -106,13 +106,14 @@ def stage_workspace(stage, scans, source, work_dir, domain_id):
     for scan in scans:
         _stage_refined_scan(workspace, scan, _refined_scan_source(scan, source, work_dir))
     if stage == "update":
-        # Mirror materialize_global_colmap and materialize_refine_manifest.
+        # Mirror materialize_global_colmap, materialize_refine_manifest and materialize_domain_poses.
         reference = source / "refined" / "global"
         target = workspace / "refined" / "global"
         (target / "refined_sfm_combined").mkdir(parents=True)
         for name in GLOBAL_SFM_FILES:
             shutil.copy2(reference / "refined_sfm_combined" / name, target / "refined_sfm_combined" / name)
         shutil.copy2(reference / "refined_manifest.json", target / "refined_manifest.json")
+        shutil.copy2(reference / "poses.json", target / "poses.json")
     job_name = _write_job_metadata(workspace, stage, index, domain_id, [f"refined_scan_{s}" for s in scans])
     return workspace, job_name
 

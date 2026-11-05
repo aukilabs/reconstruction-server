@@ -10,7 +10,8 @@ from reconstruction.geometry.frames import COLMAP_WORLD, OPENGL, convert_pose_co
 from reconstruction.geometry.pose import flatten_portal_rotation, is_portal_almost_flat, mean_pose, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
-from reconstruction.io.manifest import parse_info_from_manifest
+from reconstruction.io.manifest import previous_refined_scan_files
+from reconstruction.io.poses import parse_portals_from_poses
 from reconstruction.io.portals import read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 from reconstruction.layout import JobLayout
@@ -187,11 +188,20 @@ def update_helper(
     # Loading the reference model that will be refined. This should be the model
     # set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(layout.refined_global / "refined_sfm_combined", ".bin", logger=logger)
-    portal_gl, refined_files_r = parse_info_from_manifest(layout.refined_global / "refined_manifest.json")  # portal_id -> (R, t, size) in OpenGL
+    poses_path = layout.refined_global / "poses.json"
+    if not poses_path.is_file():
+        raise RuntimeError(f"Domain poses.json is missing: {poses_path}")
+    portal_gl = parse_portals_from_poses(poses_path)  # portal_id -> (R, t, size) in OpenGL
+    if not portal_gl:
+        raise RuntimeError(f"Domain poses.json has no placed portals: {poses_path}")
+    # Previous refined-scan ids still come from the global manifest. Portal
+    # poses come from the domain, which can move a portal without a new global map.
+    refined_files_r = previous_refined_scan_files(layout.refined_global / "refined_manifest.json")
     portal_sizes = {pid: portal[2] for pid, portal in portal_gl.items()}
-    # The manifest is OpenGL. The model we align into is COLMAP world, and the
-    # two differ by an axis swap, so a yaw computed in OpenGL lands as a tilt
-    # when applied to the cloud. Convert the placed portals once, up front.
+    # Domain poses are OpenGL, the same frame as the old manifest portals. The
+    # model we align into is COLMAP world, and the two differ by an axis swap,
+    # so a yaw computed in OpenGL lands as a tilt when applied to the cloud.
+    # Convert the placed portals once, up front.
     portal_r = {}
     for pid, (rotation, translation, _size) in portal_gl.items():
         quat_xyzw = pycolmap.Rotation3d(rotation).quat
