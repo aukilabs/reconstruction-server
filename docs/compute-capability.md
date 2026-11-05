@@ -205,8 +205,7 @@ Expected Input and Output Files from each compute capability
   │       │    ├── images.bin
   │       │    ├── points3D.bin
   │       │    └── rigs.bin
-  │       ├── poses.json            # placed domain portals (OpenGL); alignment reads these
-  │       └── refined_manifest.json # previous refined_scan ids only; portal poses are ignored
+  │       └── refined_manifest.json
   ```
 
   ### Output

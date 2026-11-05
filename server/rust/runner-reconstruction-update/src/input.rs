@@ -259,62 +259,6 @@ pub async fn materialize_refine_manifest(
     Ok(())
 }
 
-const DOMAIN_POSES_NAME: &str = "poses.json";
-const DOMAIN_POSES_DATA_TYPE: &str = "poses_json";
-
-/// Download the domain's placed portal poses (`poses.json` / `poses_json`).
-/// Update alignment reads this file instead of the portals in the global manifest.
-pub async fn materialize_domain_poses(
-    task: &TaskContext,
-    io: &TaskIo,
-    workspace: &Workspace,
-) -> Result<(), Error> {
-    let domain_id = io.domain_id().to_string();
-    let mut downloaded = false;
-
-    for name in &task.task.inputs_cids {
-        if is_url(name) {
-            return Err(anyhow!(
-                "update refinement expects refined scan names, got URL: {}",
-                name
-            ));
-        }
-        if name != DOMAIN_POSES_NAME {
-            continue;
-        }
-
-        let meta = resolve_by_name_and_type(io, &domain_id, name, DOMAIN_POSES_DATA_TYPE)
-            .await
-            .with_context(|| format!("resolve domain poses '{}'", name))?;
-
-        info!(
-            target: "runner_reconstruction_update",
-            name = %name,
-            data_id = %meta.id,
-            "resolved domain poses to domain data ID"
-        );
-
-        let file_path = workspace
-            .root()
-            .join("refined")
-            .join("global")
-            .join(DOMAIN_POSES_NAME);
-        io.download_to(meta.id, meta.size, &file_path)
-            .await
-            .map_err(|e| anyhow!("failed to download domain poses '{}': {}", name, e))?;
-        downloaded = true;
-    }
-
-    if !downloaded {
-        return Err(anyhow!(
-            "update refinement requires domain data '{}' ({})",
-            DOMAIN_POSES_NAME,
-            DOMAIN_POSES_DATA_TYPE
-        ));
-    }
-    Ok(())
-}
-
 async fn resolve_by_name_and_type(
     io: &TaskIo,
     domain_id: &str,

@@ -35,14 +35,3 @@ def parse_info_from_manifest(manifest_path: Path) -> Tuple[Dict[str, Tuple[np.nd
     data_id = [str(d) for d in data_id if "refined_scan" in str(d)]
 
     return out, data_id
-
-
-def previous_refined_scan_files(manifest_path: Path) -> List[str]:
-    """dataIDs from a previous manifest that name a refined scan.
-
-    Update refinement still copies these into the new manifest. Portal poses
-    come from the domain's poses.json, not from this file.
-    """
-    data = json.loads(Path(manifest_path).read_text())
-    data_ids = data.get("dataIDs", [])
-    return [str(item) for item in data_ids if "refined_scan" in str(item)]
