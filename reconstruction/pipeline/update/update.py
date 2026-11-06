@@ -6,7 +6,7 @@ import zipfile
 import numpy as np 
 import logging
 
-from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_opengl, transform_with_scale
+from reconstruction.geometry.pose import mean_pose, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import previous_refined_scan_files
@@ -267,10 +267,10 @@ def update_helper(
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = layout.refined_update / 'refined_manifest.json'
-    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
-    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
+    # portal_r is COLMAP. save_manifest_json converts each pose to OpenGL once,
+    # which is the domain frame the browser draws.
     save_manifest_json(
-        portals,
+        portal_r,
         manifest_path,
         layout.job_root,
         job_status="refined",
