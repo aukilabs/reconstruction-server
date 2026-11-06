@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from reconstruction.io.manifest import previous_refined_scan_files
-from reconstruction.io.poses import parse_portals_from_poses
+from reconstruction.io.poses import parse_portals_from_poses, parse_portals_from_poses_colmap
 
 
 class ParsePortalsFromPosesTests(unittest.TestCase):
@@ -58,6 +58,43 @@ class ParsePortalsFromPosesTests(unittest.TestCase):
         np.testing.assert_allclose(translation, [1.0, 2.0, 3.0])
         self.assertEqual(size, 0.15)
         self.assertEqual(portals["qr-b"][2], 0.2)
+
+    def test_colmap_loader_swaps_axes_and_converts_size_to_meters(self):
+        payload = {
+            "poses": [
+                {
+                    "short_id": "qr-a",
+                    "px": 1.0,
+                    "py": 2.0,
+                    "pz": 3.0,
+                    "rx": 0.0,
+                    "ry": 0.0,
+                    "rz": 0.0,
+                    "rw": 1.0,
+                    "reported_size": 15,
+                },
+                {
+                    "shortId": "qr-b",
+                    "px": 0.0,
+                    "py": 0.0,
+                    "pz": 0.0,
+                    "rx": 0.0,
+                    "ry": 0.0,
+                    "rz": 0.0,
+                    "rw": 1.0,
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "poses.json"
+            path.write_text(json.dumps(payload))
+            portals = parse_portals_from_poses_colmap(path)
+
+        rotation, translation, size = portals["qr-a"]
+        np.testing.assert_allclose(rotation, np.eye(3))
+        np.testing.assert_allclose(translation, [2.0, 1.0, -3.0])
+        self.assertEqual(size, 0.15)
+        self.assertIsNone(portals["qr-b"][2])
 
     def test_empty_list(self):
         with tempfile.TemporaryDirectory() as tmp:

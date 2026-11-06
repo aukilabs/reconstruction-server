@@ -10,8 +10,8 @@ from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_openg
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
 from reconstruction.io.manifest import previous_refined_scan_files
-from reconstruction.io.poses import parse_portals_from_poses
-from reconstruction.io.portals import read_portal_csv
+from reconstruction.io.poses import parse_portals_from_poses_colmap
+from reconstruction.io.portals import portalPose, read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 from reconstruction.layout import JobLayout
 from reconstruction.pipeline.global_map.alignment import NoOverlapException, floor_origin_portal_pose
@@ -105,14 +105,14 @@ def _get_refined_rec_dir(
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dict[str, pycolmap.Rigid3d], Dict[str, float]]:
     """Load QR portal detections from a local refinement's portals.csv.
-    
-    Reads the portal CSV, converts poses to OpenGL convention, groups by QR ID,
-    and returns mean poses per QR along with portal sizes.
-    
+
+    portals.csv poses are already COLMAP world. Returns the mean pose per QR
+    in that frame, and portal sizes in meters.
+
     Args:
         rec_dir: Path to the local refined reconstruction directory containing portals.csv
         logger: Logger instance
-        
+
     Returns:
         Tuple of (mean_qr_poses, portal_sizes) where mean_qr_poses maps QR short_id
         to mean Rigid3d pose and portal_sizes maps QR short_id to size float.
@@ -123,15 +123,14 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
     portal_sizes = {}
     for portal in portals_list:
         portal_sizes[portal.short_id] = portal.size
-        gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
         portals_u_list.append({
-            "short_id": portal.short_id, 
-            "tvec": gl_tvec,
-            "qvec": gl_qvec,
-            "image_id": portal.image_id, 
-            "size": portal.size, 
+            "short_id": portal.short_id,
+            "tvec": portal.tvec,
+            "qvec": portal.qvec,
+            "image_id": portal.image_id,
+            "size": portal.size,
             "corners": portal.corners,
-            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
+            "pose": portalPose(portal),
         })
     chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
     return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
@@ -194,7 +193,7 @@ def update_helper(
     poses_path = layout.refined_global / "poses.json"
     if not poses_path.is_file():
         raise RuntimeError(f"Domain poses.json is missing: {poses_path}")
-    portal_r = parse_portals_from_poses(poses_path)  # portal_id -> (R, t, size)
+    portal_r = parse_portals_from_poses_colmap(poses_path)  # portal_id -> (R, t, size_m) in COLMAP
     if not portal_r:
         raise RuntimeError(f"Domain poses.json has no placed portals: {poses_path}")
     # Previous refined-scan ids still come from the global manifest. Portal
