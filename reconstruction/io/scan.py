@@ -2,9 +2,28 @@
 import json
 import csv
 import logging
+import re
+from datetime import datetime
 from typing import NamedTuple, Dict
+from dateutil import parser as date_parser
 from reconstruction.io.portals import load_portals_json, load_qr_detections_csv
 from reconstruction.io.job_meta import load_scan_data_summary
+from reconstruction.layout import JobLayout
+from reconstruction.output.uploads import REFINED_SCAN_CAPTURE_METADATA_FILE
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+def _is_uuid_scan_name(name: str) -> bool:
+    return _UUID_RE.fullmatch(name) is not None
+
+
+def _is_scan_folder(path) -> bool:
+    return path.is_dir() and (
+        path.name.startswith("dmt_scan_")
+        or path.name.startswith("20")
+        or _is_uuid_scan_name(path.name)
+    )
 
 
 def get_data_paths(group_folder, logger_name=None):
@@ -17,10 +36,7 @@ def get_data_paths(group_folder, logger_name=None):
 
     dataset_paths = []
     for scan_folder in group_folder.iterdir():
-        if scan_folder.is_dir() and (
-            scan_folder.name.startswith("dmt_scan_")
-            or scan_folder.name.startswith("20")
-        ):
+        if _is_scan_folder(scan_folder):
             dataset_paths.append(scan_folder)
 
     logger.info(f"Using {len(dataset_paths)} scans from folder '{group_folder.name}'")
@@ -32,6 +48,35 @@ def get_data_paths(group_folder, logger_name=None):
         logger.info("No truth provided (portals.json). Will skip comparison with ground truth.")
 
     return truth_portal_poses, dataset_paths
+
+
+def _scan_start_time(layout: JobLayout, scan: str) -> datetime:
+    """Recording start of a UUID-named scan, from the metadata inside its refined scan zip."""
+    path = layout.refined_sfm(scan) / REFINED_SCAN_CAPTURE_METADATA_FILE
+    try:
+        with open(path) as f:
+            raw = json.load(f)["scanStartTime"]
+        start = date_parser.isoparse(raw)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise ValueError(f"Scan {scan} has no valid scanStartTime in {path}: {e!r}") from e
+    if start.tzinfo is None:
+        raise ValueError(f"Scan {scan} scanStartTime has no timezone in {path}: {raw}")
+    return start
+
+
+def sort_scan_paths(dataset_paths, layout: JobLayout):
+    """Oldest scan first, so the origin (first scan) stays the same as a domain grows.
+
+    Timestamp-named scans sort by name, as they always have. UUID names carry no time, so
+    UUID-named scans sort by recorded start time; they always come after timestamp-named
+    scans, since devices switched to UUID names later.
+    """
+    legacy = sorted(p for p in dataset_paths if not _is_uuid_scan_name(p.name))
+    uuids = sorted(
+        (p for p in dataset_paths if _is_uuid_scan_name(p.name)),
+        key=lambda p: (_scan_start_time(layout, p.name), p.name),
+    )
+    return legacy + uuids
 
 
 class RefinementData(NamedTuple):

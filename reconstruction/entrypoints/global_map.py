@@ -4,7 +4,7 @@ import argparse
 import os
 from reconstruction.entrypoints import _refinement
 from reconstruction.layout import JobLayout
-from reconstruction.io.scan import get_data_paths
+from reconstruction.io.scan import get_data_paths, sort_scan_paths
 from reconstruction.geometry.pose import mean_pose
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.log import GLOBAL_REFINEMENT, setup_logger
@@ -86,9 +86,7 @@ def refine_global(args):
     # Find all stitch paths
     truth_portal_poses, dataset_paths = get_data_paths(args.data_dir, GLOBAL_REFINEMENT)
 
-    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
-    # Starting with oldest scan keeps the origin portal consistent.
-    dataset_paths.sort()
+    dataset_paths = sort_scan_paths(dataset_paths, JobLayout(args.data_dir.parent))
     
     # Perform stitching
     

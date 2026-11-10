@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse
 import os
 from reconstruction.log import UPDATE_REFINEMENT, configure, setup_logger
-from reconstruction.io.scan import get_data_paths
+from reconstruction.io.scan import get_data_paths, sort_scan_paths
 from reconstruction.layout import JobLayout
 from reconstruction.output.failure import report_failure
 from reconstruction.pipeline.update.update import update_helper
@@ -40,9 +40,7 @@ def update_refinement(args, layout, logger):
     # Find all stitch paths
     _, dataset_paths = get_data_paths(args.data_path, UPDATE_REFINEMENT)
 
-    # Sort dataset paths by timestamp (indirectly, since folders are named by timestamp)
-    # Starting with oldest scan keeps the origin portal consistent.
-    dataset_paths.sort()
+    dataset_paths = sort_scan_paths(dataset_paths, layout)
     
     if dataset_paths:
         logger.info(f"Found {len(dataset_paths)} dataset paths for stitching:")

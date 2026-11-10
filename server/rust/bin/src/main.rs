@@ -31,13 +31,15 @@ mod tests {
     #[test]
     fn router_serves_every_reconstruction_capability() {
         let router = router();
-        let expected: Vec<&str> = runner_reconstruction_local::CAPABILITIES
-            .iter()
-            .chain(&runner_reconstruction_global::CAPABILITIES)
-            .chain(&runner_reconstruction_update::CAPABILITIES)
-            .copied()
-            .collect();
-        for cap in &expected {
+        let expected = [
+            "/reconstruction/local-refinement/v1",
+            "/reconstruction/local-refinement/v2",
+            "/reconstruction/global-refinement/v1",
+            "/reconstruction/global-refinement/v2",
+            "/reconstruction/update-refinement/v1",
+            "/reconstruction/update-refinement/v2",
+        ];
+        for cap in expected {
             assert!(router.get(cap).is_some(), "missing runner for {cap}");
         }
         assert_eq!(router.capabilities().len(), expected.len());

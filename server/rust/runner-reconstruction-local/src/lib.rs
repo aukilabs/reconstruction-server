@@ -24,8 +24,11 @@ pub const CRATE_NAME: &str = "runner-reconstruction-local";
 /// Capability handled by this runner (local refinement).
 pub const CAPABILITY: &str = "/reconstruction/local-refinement/v1";
 
+/// Same runner as v1; v2 accepts UUID scan IDs (v1 nodes only understand timestamp-named scans).
+pub const CAPABILITY_V2: &str = "/reconstruction/local-refinement/v2";
+
 /// Convenience slice for wiring all supported capabilities.
-pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
+pub const CAPABILITIES: [&str; 2] = [CAPABILITY, CAPABILITY_V2];
 
 /// Scaffold runner for local refinement.
 pub struct RunnerReconstructionLocal {

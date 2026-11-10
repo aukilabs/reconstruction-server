@@ -13,7 +13,7 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
@@ -144,7 +144,7 @@ impl TaskIo {
     ///
     /// Accepts a data UUID or an absolute/relative Domain data URL
     /// (`…/domains/{d}/data/{id}` or `…/domains/{d}/data?ids=&name=&data_type=`).
-    /// Each item lands at `<root>/datasets/<timestamp-or-name>/<name>.<data_type>`.
+    /// Each item lands at `<root>/datasets/<timestamp-or-uuid-or-name>/<name>.<data_type>`.
     pub async fn materialize(&self, cid: &str) -> Result<Materialized> {
         let query = self.parse_cid(cid).map_err(|e| anyhow!(e))?;
         let mut parts = self.download(query).await.map_err(|e| anyhow!(e))?;
@@ -487,9 +487,9 @@ struct DownloadedPart {
     root: PathBuf,
 }
 
-/// `<root>/datasets/<timestamp-or-name>/<name>.<data_type>`, as in the 0.3.2 host.
+/// `<root>/datasets/<timestamp-or-uuid-or-name>/<name>.<data_type>`, as in the 0.3.2 host.
 pub fn download_path(root: &Path, name: &str, data_type: &str) -> PathBuf {
-    let scan = extract_timestamp(name).unwrap_or_else(|| name.to_string());
+    let scan = scan_dataset_folder(name);
     root.join("datasets")
         .join(sanitize_component(&scan))
         .join(format!(
@@ -571,10 +571,36 @@ fn transfer_options(size: u64) -> TransferOptions {
     }
 }
 
+static TIMESTAMP_RE: OnceLock<Regex> = OnceLock::new();
+static TRAILING_UUID_RE: OnceLock<Regex> = OnceLock::new();
+
+fn timestamp_re() -> &'static Regex {
+    TIMESTAMP_RE.get_or_init(|| {
+        Regex::new(r"\d{4}-\d{2}-\d{2}[_-]\d{2}-\d{2}-\d{2}").expect("timestamp regex")
+    })
+}
+
+fn trailing_uuid_re() -> &'static Regex {
+    TRAILING_UUID_RE.get_or_init(|| {
+        Regex::new(r"(?i)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
+            .expect("trailing uuid regex")
+    })
+}
+
+fn scan_dataset_folder(name: &str) -> String {
+    extract_timestamp(name)
+        .or_else(|| extract_trailing_uuid(name))
+        .unwrap_or_else(|| name.to_string())
+}
+
 fn extract_timestamp(name: &str) -> Option<String> {
-    Regex::new(r"\d{4}-\d{2}-\d{2}[_-]\d{2}-\d{2}-\d{2}")
-        .ok()
-        .and_then(|re| re.find(name).map(|m| m.as_str().to_string()))
+    timestamp_re().find(name).map(|m| m.as_str().to_string())
+}
+
+fn extract_trailing_uuid(name: &str) -> Option<String> {
+    trailing_uuid_re()
+        .captures(name)
+        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
 }
 
 fn sanitize_with(value: &str, empty: &str) -> String {
@@ -711,5 +737,46 @@ mod tests {
     fn error_text_is_stable() {
         assert_eq!(StorageError::Conflict.to_string(), "conflict (409)");
         assert_eq!(StorageError::NotFound.to_string(), "not found (404)");
+    }
+
+    #[test]
+    fn download_path_groups_trailing_uuid_scan_ids() {
+        let root = Path::new("/r");
+        let uuid = "8c4869c0-99c5-4515-8545-e3674d383338";
+        for prefix in [
+            "dmt_manifest",
+            "dmt_recording",
+            "dmt_arposes",
+            "refined_scan",
+        ] {
+            let name = format!("{prefix}_{uuid}");
+            let path = download_path(root, &name, "json");
+            assert_eq!(
+                path,
+                PathBuf::from(format!("/r/datasets/{uuid}/{name}.json"))
+            );
+        }
+    }
+
+    #[test]
+    fn download_path_timestamp_takes_precedence_over_trailing_uuid() {
+        let root = Path::new("/r");
+        let ts = "2024-01-02_03-04-05";
+        let name = format!("dmt_recording_{ts}");
+        assert_eq!(
+            download_path(root, &name, "mp4"),
+            PathBuf::from(format!("/r/datasets/{ts}/{name}.mp4"))
+        );
+    }
+
+    #[test]
+    fn download_path_without_timestamp_or_uuid_uses_full_name() {
+        let root = Path::new("/r");
+        assert_eq!(
+            download_path(root, "refined_manifest_x.y", "refined_manifest_json"),
+            PathBuf::from(
+                "/r/datasets/refined_manifest_x_y/refined_manifest_x_y.refined_manifest_json"
+            )
+        );
     }
 }

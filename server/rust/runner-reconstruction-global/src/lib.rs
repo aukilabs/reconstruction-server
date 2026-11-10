@@ -23,8 +23,11 @@ pub const CRATE_NAME: &str = "runner-reconstruction-global";
 /// Capability handled by this runner (global refinement).
 pub const CAPABILITY: &str = "/reconstruction/global-refinement/v1";
 
+/// Same runner as v1; v2 accepts UUID scan IDs (v1 nodes only understand timestamp-named scans).
+pub const CAPABILITY_V2: &str = "/reconstruction/global-refinement/v2";
+
 /// Convenience slice for wiring all supported capabilities.
-pub const CAPABILITIES: [&str; 1] = [CAPABILITY];
+pub const CAPABILITIES: [&str; 2] = [CAPABILITY, CAPABILITY_V2];
 
 /// Scaffold runner for global refinement.
 pub struct RunnerReconstructionGlobal {
