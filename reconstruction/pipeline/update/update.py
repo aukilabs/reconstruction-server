@@ -6,11 +6,12 @@ import zipfile
 import numpy as np 
 import logging
 
-from reconstruction.geometry.pose import mean_pose, convert_pose_colmap_to_opengl, transform_with_scale
+from reconstruction.geometry.pose import mean_pose, transform_with_scale
 from reconstruction.output.manifest import save_manifest_json
 from reconstruction.output.pointcloud import export_rec_as_ply
-from reconstruction.io.manifest import parse_info_from_manifest
-from reconstruction.io.portals import read_portal_csv
+from reconstruction.io.manifest import previous_refined_scan_files
+from reconstruction.io.poses import parse_portals_from_poses_colmap
+from reconstruction.io.portals import portalPose, read_portal_csv
 from reconstruction.io.colmap import read_model, write_model, write_model_with_rigs
 from reconstruction.layout import JobLayout
 from reconstruction.pipeline.global_map.alignment import NoOverlapException, floor_origin_portal_pose
@@ -104,14 +105,14 @@ def _get_refined_rec_dir(
 
 def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dict[str, pycolmap.Rigid3d], Dict[str, float]]:
     """Load QR portal detections from a local refinement's portals.csv.
-    
-    Reads the portal CSV, converts poses to OpenGL convention, groups by QR ID,
-    and returns mean poses per QR along with portal sizes.
-    
+
+    portals.csv poses are already COLMAP world. Returns the mean pose per QR
+    in that frame, and portal sizes in meters.
+
     Args:
         rec_dir: Path to the local refined reconstruction directory containing portals.csv
         logger: Logger instance
-        
+
     Returns:
         Tuple of (mean_qr_poses, portal_sizes) where mean_qr_poses maps QR short_id
         to mean Rigid3d pose and portal_sizes maps QR short_id to size float.
@@ -122,15 +123,14 @@ def load_qr_detections_from_local_refinement(rec_dir: Path, logger) -> Tuple[Dic
     portal_sizes = {}
     for portal in portals_list:
         portal_sizes[portal.short_id] = portal.size
-        gl_tvec, gl_qvec = convert_pose_colmap_to_opengl(portal.tvec, portal.qvec)
         portals_u_list.append({
-            "short_id": portal.short_id, 
-            "tvec": gl_tvec,
-            "qvec": gl_qvec,
-            "image_id": portal.image_id, 
-            "size": portal.size, 
+            "short_id": portal.short_id,
+            "tvec": portal.tvec,
+            "qvec": portal.qvec,
+            "image_id": portal.image_id,
+            "size": portal.size,
             "corners": portal.corners,
-            "pose": pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(gl_qvec)), np.array(gl_tvec))
+            "pose": portalPose(portal),
         })
     chunk_detections_per_qr = _group_detections_by_qr(portals_u_list)
     return _calculate_mean_qr_poses(chunk_detections_per_qr), portal_sizes
@@ -190,7 +190,15 @@ def update_helper(
     # Loading the reference model that will be refined. This should be the model
     # set to be canonical, which is the latest colmap model of the domain.
     cams_r, imgs_r, pts_r = read_model(layout.refined_global / "refined_sfm_combined", ".bin", logger=logger)
-    portal_r, refined_files_r = parse_info_from_manifest(layout.refined_global / "refined_manifest.json")  # return a dict of portal_id -> (R, t, size)
+    poses_path = layout.refined_global / "poses.json"
+    if not poses_path.is_file():
+        raise RuntimeError(f"Domain poses.json is missing: {poses_path}")
+    portal_r = parse_portals_from_poses_colmap(poses_path)  # portal_id -> (R, t, size_m) in COLMAP
+    if not portal_r:
+        raise RuntimeError(f"Domain poses.json has no placed portals: {poses_path}")
+    # Previous refined-scan ids still come from the global manifest. Portal
+    # poses come from the domain, which can move a portal without a new global map.
+    refined_files_r = previous_refined_scan_files(layout.refined_global / "refined_manifest.json")
     portal_sizes = {pid: portal[2] for pid, portal in portal_r.items()}
     portal_r = {pid: pycolmap.Rigid3d(pycolmap.Rotation3d(portal_r[pid][0]), portal_r[pid][1]) for pid in portal_r.keys()}
 
@@ -259,10 +267,10 @@ def update_helper(
     validate_model_consistency(cams_r, imgs_r, pts_r, logger=logger)
 
     manifest_path = layout.refined_update / 'refined_manifest.json'
-    portals_opengl = {pid: convert_pose_colmap_to_opengl(portal.translation, portal.rotation.quat) for pid, portal in portal_r.items()}
-    portals = {pid: [pycolmap.Rigid3d(pycolmap.Rotation3d(np.array(pose[1])), np.array(pose[0]))] for pid, pose in portals_opengl.items()}
+    # portal_r is COLMAP. save_manifest_json converts each pose to OpenGL once,
+    # which is the domain frame the browser draws.
     save_manifest_json(
-        portals,
+        portal_r,
         manifest_path,
         layout.job_root,
         job_status="refined",
