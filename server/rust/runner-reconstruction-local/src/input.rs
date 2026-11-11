@@ -217,6 +217,7 @@ fn copy_dir_recursively(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// The host's download layout must feed the legacy renames the Python pipeline expects.
     #[test]
@@ -276,5 +277,72 @@ mod tests {
             copied.manifest_path,
             Some(copied.dataset_root.join("Manifest.json"))
         );
+    }
+
+    #[test]
+    fn host_download_layout_groups_uuid_and_timestamp_scans() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = Workspace::create(
+            crate::workspace::Stage::Local,
+            Some(&tmp.path().join("ws")),
+            "domain",
+            Some("job"),
+            "task",
+        )
+        .unwrap();
+
+        let uuid_a = "11111111-1111-1111-1111-111111111111";
+        let uuid_b = "22222222-2222-2222-2222-222222222222";
+        let ts_scan = "2024-06-01_12-00-00";
+        let scans: [(&str, &str); 3] = [(uuid_a, uuid_a), (uuid_b, uuid_b), (ts_scan, ts_scan)];
+        let files = [
+            ("dmt_recording", "dmt_recording_mp4", "Frames.mp4"),
+            ("dmt_arposes", "dmt_arposes_csv", "ARposes.csv"),
+            ("dmt_manifest", "dmt_manifest_json", "Manifest.json"),
+        ];
+
+        for (scan_id, scan_suffix) in scans {
+            for (prefix, data_type, _) in &files {
+                let download_root = tmp.path().join(format!("dl-{prefix}-{scan_id}"));
+                let path = node_host::io::download_path(
+                    &download_root,
+                    &format!("{prefix}_{scan_suffix}"),
+                    data_type,
+                );
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, data_type).unwrap();
+                let materialized = Materialized {
+                    cid: "cid".into(),
+                    path: path.clone(),
+                    data_id: None,
+                    name: None,
+                    data_type: None,
+                    domain_id: None,
+                    root_dir: download_root,
+                    related_files: Vec::new(),
+                    extracted_paths: Vec::new(),
+                };
+                copy_materialized_to_workspace(&materialized, &workspace).unwrap();
+            }
+        }
+
+        let dataset_names: HashSet<_> = fs::read_dir(workspace.datasets())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(dataset_names.len(), 3);
+        assert!(dataset_names.contains(uuid_a));
+        assert!(dataset_names.contains(uuid_b));
+        assert!(dataset_names.contains(ts_scan));
+
+        for (scan_id, _) in scans {
+            let root = workspace.datasets().join(scan_id);
+            for (_, data_type, legacy) in &files {
+                let content = fs::read_to_string(root.join(legacy)).unwrap();
+                assert_eq!(content, *data_type, "{scan_id}/{legacy}");
+            }
+        }
     }
 }

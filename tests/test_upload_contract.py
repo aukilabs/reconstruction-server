@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from reconstruction.output.uploads import (
+    REFINED_SCAN_CAPTURE_METADATA_FILE,
     REFINED_SCAN_REQUIRED_FILES,
     REFINED_SCAN_ZIP_EXTENSIONS,
     UPLOAD_TABLE,
@@ -33,6 +34,13 @@ def _rust_str_array(source, const_name):
     if match is None:
         raise AssertionError(f"{const_name} not found")
     return tuple(re.findall(r'"([^"]*)"', match.group(1)))
+
+
+def _rust_str_const(source, const_name):
+    match = re.search(rf"const {const_name}: &str = \"([^\"]*)\";", source)
+    if match is None:
+        raise AssertionError(f"{const_name} not found")
+    return match.group(1)
 
 
 def _rust_final_outputs(runner):
@@ -81,6 +89,7 @@ class UploadContractTests(unittest.TestCase):
         refined_rs = _read("runner-reconstruction-local/src/refined.rs")
         self.assertEqual(_rust_str_array(refined_rs, "REQUIRED_SFM_FILES"), REFINED_SCAN_REQUIRED_FILES)
         self.assertEqual(_rust_str_array(refined_rs, "ZIP_ALLOWED_EXTENSIONS"), REFINED_SCAN_ZIP_EXTENSIONS)
+        self.assertEqual(_rust_str_const(refined_rs, "CAPTURE_METADATA_FILE"), REFINED_SCAN_CAPTURE_METADATA_FILE)
 
         (spec,) = self._table("local", exclude_paths=("log.txt",))
         rust_path = spec.path.replace("{scan}", "{}")

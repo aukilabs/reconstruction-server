@@ -48,13 +48,15 @@ pub async fn materialize_refined_scans(
             ));
         }
 
-        let meta = match resolve_by_name_and_type(io, &domain_id, name, "refined_scan_zip")
+        // Colmap bins, refined_manifest, and poses.json share inputs_cids; only
+        // refined_scan_* belong here. A real refined-scan resolve must not be
+        // swallowed as "not this artifact type".
+        if !name.starts_with("refined_scan_") {
+            continue;
+        }
+        let meta = resolve_by_name_and_type(io, &domain_id, name, "refined_scan_zip")
             .await
-            .with_context(|| format!("resolve refined scan name {}", name))
-        {
-            Ok(meta) => meta,
-            Err(_) => continue,
-        };
+            .with_context(|| format!("resolve refined scan name {}", name))?;
 
         info!(
             target: "runner_reconstruction_update",

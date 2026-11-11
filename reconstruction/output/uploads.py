@@ -15,6 +15,9 @@ UploadSpec = namedtuple("UploadSpec", ["runner", "path", "name", "data_type", "r
 # but only when all of these exist. Scans missing any of them are skipped, not failed.
 REFINED_SCAN_REQUIRED_FILES = ("images.bin", "cameras.bin", "points3D.bin", "portals.csv")
 REFINED_SCAN_ZIP_EXTENSIONS = (".bin", ".csv", ".txt")
+# Also zipped when present: {"scanStartTime": ...} from the scan's manifest. Global and update
+# order UUID-named scans by it.
+REFINED_SCAN_CAPTURE_METADATA_FILE = "capture_metadata.json"
 
 
 def _final_outputs(runner):
