@@ -8,7 +8,7 @@ Most Windows or Linux machines with modern NVIDIA GPUs will be able to run a Rec
 - **CPU:** 8 cores
 - **RAM:** 12 GiB
 - **GPU:** Nvidia with 8+ GiB VRAM. Tested on RTX 3090, RTX 4060, RTX 5070 Ti and T4. May work on older Nvidia cards too with enough VRAM and recent CUDA.
-- **NVIDIA driver:** recent version that supports CUDA 12.8
+- **NVIDIA driver:** recent version that supports CUDA 13.0 (NVIDIA driver 580 or newer)
 - **Disk space:** 40 GB or more
 - **Docker** _- Windows support tested with Docker Desktop and WSL 2_
 - A stable Internet connection with at least 10 Mbps downstream and upstream
