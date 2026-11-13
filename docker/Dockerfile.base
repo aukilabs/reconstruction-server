@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu24.04 AS dependencies
+FROM --platform=$BUILDPLATFORM nvidia/cuda:13.0.3-base-ubuntu24.04 AS dependencies
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PIP_NO_CACHE_DIR=1
@@ -47,13 +47,13 @@ RUN set -eux; \
       python3-tk \
       python3-dev \
       libmkl-full-dev \
-      cuda-nvcc-12-8 \
-      cuda-cudart-dev-12-8 \
-      libcurand-dev-12-8 \
-      libcublas-dev-12-8 \
-      libcusolver-dev-12-8 \
-      libcusparse-dev-12-8 \
-      libnvjitlink-12-8 \
+      cuda-nvcc-13-0 \
+      cuda-cudart-dev-13-0 \
+      libcurand-dev-13-0 \
+      libcublas-dev-13-0 \
+      libcusolver-dev-13-0 \
+      libcusparse-dev-13-0 \
+      libnvjitlink-13-0 \
       ssh \
       netcat-openbsd \
       ca-certificates \
@@ -184,7 +184,7 @@ RUN set -eux; \
       -DCUDA_ENABLED=ON \
       -DBLA_VENDOR=Intel10_64lp \
       -DCOLMAP_HASH_MAP_BACKEND=STD \
-      -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"; \
+      -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120"; \
     ninja -j"$(nproc)"; \
     ninja install; \
     cd ..; \
@@ -198,7 +198,7 @@ RUN set -eux; \
     git clone --recursive https://github.com/aukilabs/Hierarchical-Localization.git; \
     cd Hierarchical-Localization; \
     git checkout --recurse-submodules 87b266cdb3a894455a9c889276f4e5d5913eb0eb; \
-    pip install --ignore-installed torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128; \
+    pip install --ignore-installed torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu130; \
     python3 -m pip install .; \
 # torch and hloc install older releases of these.
 # Delete a pin once those dependencies already require it.
