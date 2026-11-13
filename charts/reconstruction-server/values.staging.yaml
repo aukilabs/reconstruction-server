@@ -1,4 +1,5 @@
 reconstruction-server:
-  replicaCount: 0
+  # The dependency treats numeric zero as empty; quoted zero preserves idle capacity.
+  replicaCount: "0"
   image:
     tag: snapshot@sha256:986e35e9f2767dc2aafc122db55cf673213390298c890ec974bb303e889f46eb
