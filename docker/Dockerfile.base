@@ -233,8 +233,16 @@ RUN set -eux; \
     cd /; \
     rm -rf /tmp/build/*
 
-# Ensure /usr/local/lib is searched
-RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
+# Ensure /usr/local/lib is searched. Also disable CUDA forward-compat libcuda
+# stubs: on nvidia/cuda:13.5 Ubuntu 26.04 they win ldconfig over the host driver
+# libcuda mounted by nvidia-container-toolkit, and Torch then reports
+# "No CUDA GPUs are available" despite nvidia-smi working.
+RUN set -eux; \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf; \
+    for d in /usr/local/cuda/compat /usr/local/cuda-13/compat /usr/local/cuda-13.5/compat; do \
+      if [ -d "$d" ]; then mv "$d" "${d}.disabled"; fi; \
+    done; \
+    ldconfig
 
 # Final cleanup of build caches
 RUN set -eux; \
