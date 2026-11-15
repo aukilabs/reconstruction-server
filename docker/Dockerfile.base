@@ -131,13 +131,15 @@ RUN set -eux; \
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
 # Ceres
+# No 2.3.0 git tag yet; pin the first master commit that selects CUDA arches from
+# CUDAToolkit_VERSION (skips Maxwell/Pascal/Volta under CUDA ≥ 13). Reports as 2.3.0.
+# Do not sed third-party CMake — bump this pin if upstream tags 2.3.0 later.
 RUN set -eux; \
     cd /tmp/build; \
-    git clone --recursive https://ceres-solver.googlesource.com/ceres-solver; \
+    git clone https://ceres-solver.googlesource.com/ceres-solver; \
     cd ceres-solver; \
-    git checkout tags/2.2.0; \
-# Ceres 2.2.0 hardcodes Maxwell–Ampere arches; CUDA 13 rejects pre-Turing (sm < 75).
-    sed -i 's/set(CMAKE_CUDA_ARCHITECTURES "50;60;70;80")/set(CMAKE_CUDA_ARCHITECTURES "75;80;90")/' CMakeLists.txt; \
+    git checkout f616f61eab1fc22bcb1b604ea66f68dd075f5ac7; \
+    git submodule update --init --recursive; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \
