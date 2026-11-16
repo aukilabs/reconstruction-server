@@ -216,7 +216,7 @@ RUN set -eux; \
       'fsspec>=2026.6' \
       'soupsieve>=2.8.4' \
       'opencv-python==5.0.0.93'; \
-    python3 -m pip install --upgrade 'setuptools>=78.1.1' 'wheel>=0.46.2'; \
+    python3 -m pip install --ignore-installed --upgrade 'setuptools>=78.1.1' 'wheel>=0.46.2'; \
     cd /; \
     rm -rf /tmp/build/*
 
