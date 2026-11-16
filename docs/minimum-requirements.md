@@ -14,3 +14,5 @@ Most Windows or Linux machines with modern NVIDIA GPUs will be able to run a Rec
 - A stable Internet connection with at least 10 Mbps downstream and upstream
 
 See [Deployment](deployment.md) for more information.
+
+<!-- CI retrigger for Trivy on chore/ubuntu-26-cuda-13-5 -->
