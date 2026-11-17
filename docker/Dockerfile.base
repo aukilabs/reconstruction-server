@@ -247,3 +247,6 @@ RUN set -eux; \
 # Final cleanup of build caches
 RUN set -eux; \
     rm -rf /tmp/* /root/.cache || true
+
+# Preserve the MKL runtime loader workaround and preload TBB for Open3D/pycolmap.
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so:/usr/lib/x86_64-linux-gnu/libtbb.so.12
