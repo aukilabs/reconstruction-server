@@ -1,8 +1,8 @@
-FROM --platform=$BUILDPLATFORM nvidia/cuda:12.8.1-base-ubuntu24.04 AS dependencies
+FROM --platform=$BUILDPLATFORM nvidia/cuda:13.5.0-base-ubuntu26.04 AS dependencies
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PIP_NO_CACHE_DIR=1
-# Ubuntu 24.04 marks its system Python as externally managed; this image is an
+# Ubuntu marks its system Python as externally managed; this image is an
 # isolated container, so allow pip-managed application packages in that Python.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
@@ -47,13 +47,13 @@ RUN set -eux; \
       python3-tk \
       python3-dev \
       libmkl-full-dev \
-      cuda-nvcc-12-8 \
-      cuda-cudart-dev-12-8 \
-      libcurand-dev-12-8 \
-      libcublas-dev-12-8 \
-      libcusolver-dev-12-8 \
-      libcusparse-dev-12-8 \
-      libnvjitlink-12-8 \
+      cuda-nvcc-13-5 \
+      cuda-cudart-dev-13-5 \
+      libcurand-dev-13-5 \
+      libcublas-dev-13-5 \
+      libcusolver-dev-13-5 \
+      libcusparse-dev-13-5 \
+      libnvjitlink-13-5 \
       ssh \
       netcat-openbsd \
       ca-certificates \
@@ -93,8 +93,10 @@ RUN set -eux; \
 
 
 WORKDIR /tmp/build
+# Pin CMake 3.27.9 over the distro package. Fetch from Kitware GitHub releases:
+# cmake.org/files currently serves an expired TLS cert (wget exit 5 on Ubuntu 26.04).
 RUN set -eux; \
-    wget -q https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz; \
+    wget -q https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz; \
     tar xzf cmake-3.27.9-linux-x86_64.tar.gz; \
     cd cmake-3.27.9-linux-x86_64; \
     cp -r bin /usr/; \
@@ -131,11 +133,15 @@ RUN set -eux; \
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so
 
 # Ceres
+# No 2.3.0 git tag yet; pin the first master commit that selects CUDA arches from
+# CUDAToolkit_VERSION (skips Maxwell/Pascal/Volta under CUDA ≥ 13). Reports as 2.3.0.
+# Do not sed third-party CMake — bump this pin if upstream tags 2.3.0 later.
 RUN set -eux; \
     cd /tmp/build; \
-    git clone --recursive https://ceres-solver.googlesource.com/ceres-solver; \
+    git clone https://ceres-solver.googlesource.com/ceres-solver; \
     cd ceres-solver; \
-    git checkout tags/2.2.0; \
+    git checkout f616f61eab1fc22bcb1b604ea66f68dd075f5ac7; \
+    git submodule update --init --recursive; \
     mkdir build; \
     cd build; \
     cmake .. -GNinja \
@@ -184,7 +190,7 @@ RUN set -eux; \
       -DCUDA_ENABLED=ON \
       -DBLA_VENDOR=Intel10_64lp \
       -DCOLMAP_HASH_MAP_BACKEND=STD \
-      -DCMAKE_CUDA_ARCHITECTURES="60;61;70;75;80;86;89;90;120"; \
+      -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120"; \
     ninja -j"$(nproc)"; \
     ninja install; \
     cd ..; \
@@ -198,7 +204,7 @@ RUN set -eux; \
     git clone --recursive https://github.com/aukilabs/Hierarchical-Localization.git; \
     cd Hierarchical-Localization; \
     git checkout --recurse-submodules 87b266cdb3a894455a9c889276f4e5d5913eb0eb; \
-    pip install --ignore-installed torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128; \
+    pip install --ignore-installed torch==2.15.0 torchvision==0.29.2 torchaudio==2.11.1 --index-url https://download.pytorch.org/whl/cu134; \
     python3 -m pip install .; \
 # torch and hloc install older releases of these.
 # Delete a pin once those dependencies already require it.
@@ -210,7 +216,7 @@ RUN set -eux; \
       'fsspec>=2026.6' \
       'soupsieve>=2.8.4' \
       'opencv-python==5.0.0.93'; \
-    python3 -m pip install --upgrade 'setuptools>=78.1.1' 'wheel>=0.46.2'; \
+    python3 -m pip install --ignore-installed --upgrade 'setuptools>=78.1.1' 'wheel>=0.46.2'; \
     cd /; \
     rm -rf /tmp/build/*
 
@@ -227,9 +233,20 @@ RUN set -eux; \
     cd /; \
     rm -rf /tmp/build/*
 
-# Ensure /usr/local/lib is searched
-RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf && ldconfig
+# Ensure /usr/local/lib is searched. Also disable CUDA forward-compat libcuda
+# stubs: on nvidia/cuda:13.5 Ubuntu 26.04 they win ldconfig over the host driver
+# libcuda mounted by nvidia-container-toolkit, and Torch then reports
+# "No CUDA GPUs are available" despite nvidia-smi working.
+RUN set -eux; \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/local.conf; \
+    for d in /usr/local/cuda/compat /usr/local/cuda-13/compat /usr/local/cuda-13.5/compat; do \
+      if [ -d "$d" ]; then mv "$d" "${d}.disabled"; fi; \
+    done; \
+    ldconfig
 
 # Final cleanup of build caches
 RUN set -eux; \
     rm -rf /tmp/* /root/.cache || true
+
+# Preserve the MKL runtime loader workaround and preload TBB for Open3D/pycolmap.
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu/libmkl_avx2.so:/usr/lib/x86_64-linux-gnu/libmkl_core.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_lp64.so:/usr/lib/x86_64-linux-gnu/libmkl_intel_thread.so:/usr/lib/x86_64-linux-gnu/libiomp5.so:/usr/lib/x86_64-linux-gnu/libtbb.so.12

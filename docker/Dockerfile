@@ -2,9 +2,13 @@
 ## Rust build for server
 ##
 ARG RECONSTRUCTION_VERSION=0.0.0-local
-# Base image (COLMAP/Ceres/pycolmap toolchain) built from docker/Dockerfile.base.
-# Override to test against a locally built base, e.g.
-#   docker build --build-arg BASE_IMAGE=reconstruction-server-base:colmap-4.2.1 -f docker/Dockerfile .
+# Runtime base = docker/Dockerfile.base (Ubuntu 26.04 + CUDA 13.5, COLMAP 4.2.1,
+# Ceres f616f61, Torch 2.15/cu134, Turing+ CUDA arches). After that base is
+# published, ghcr.io/.../reconstruction-server-base:latest is the default.
+# Local bake on Ny1 / PR #108 tip:
+#   docker build -f docker/Dockerfile.base -t reconstruction-server-base:u26-cuda135 .
+#   docker build --build-arg BASE_IMAGE=reconstruction-server-base:u26-cuda135 \
+#     --secret id=github_token,src=... -f docker/Dockerfile -t reconstruction-server:u26-cuda135 .
 ARG BASE_IMAGE=ghcr.io/aukilabs/reconstruction-server-base:latest
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 ARG RECONSTRUCTION_VERSION
@@ -52,6 +56,10 @@ RUN set -eux; \
     useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME"; \
     mkdir -p /app/jobs; \
     chown -R "$USERNAME:$USERNAME" /app/jobs
+
+RUN install -d -o "$USERNAME" -g "$USERNAME" "/home/$USERNAME/.cache/torch/hub" && \
+    printf '%s\n' gmberton_EigenPlaces gmberton_cosplace > "/home/$USERNAME/.cache/torch/hub/trusted_list" && \
+    chown "$USERNAME:$USERNAME" "/home/$USERNAME/.cache/torch/hub/trusted_list"
 
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod 755 /app/entrypoint.sh

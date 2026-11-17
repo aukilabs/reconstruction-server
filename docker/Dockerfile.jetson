@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y wget \
     libsuitesparse-dev \
     python3-h5py
 
-RUN pip install --upgrade pip setuptools wheel
+RUN pip install --upgrade pip 'setuptools>=78.1.1' wheel
 
 RUN git clone https://github.com/google/glog.git && cd glog && \
     git checkout tags/v0.6.0 && \
