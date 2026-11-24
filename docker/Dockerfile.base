@@ -93,8 +93,6 @@ RUN set -eux; \
 
 
 WORKDIR /tmp/build
-# Pin CMake 3.27.9 over the distro package. Fetch from Kitware GitHub releases:
-# cmake.org/files currently serves an expired TLS cert (wget exit 5 on Ubuntu 26.04).
 RUN set -eux; \
     wget -q https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz; \
     tar xzf cmake-3.27.9-linux-x86_64.tar.gz; \
