@@ -133,7 +133,6 @@ ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libmkl_def.so:/usr/lib/x86_64-linux-gnu
 # Ceres
 # No 2.3.0 git tag yet; pin the first master commit that selects CUDA arches from
 # CUDAToolkit_VERSION (skips Maxwell/Pascal/Volta under CUDA ≥ 13). Reports as 2.3.0.
-# Do not sed third-party CMake — bump this pin if upstream tags 2.3.0 later.
 RUN set -eux; \
     cd /tmp/build; \
     git clone https://ceres-solver.googlesource.com/ceres-solver; \
