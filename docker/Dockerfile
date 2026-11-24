@@ -2,9 +2,9 @@
 ## Rust build for server
 ##
 ARG RECONSTRUCTION_VERSION=0.0.0-local
-# Runtime base = docker/Dockerfile.base (Ubuntu 26.04 + CUDA 13.5, COLMAP 4.2.1,
-# Ceres f616f61, Torch 2.15/cu134, Turing+ CUDA arches). After that base is
-# published, ghcr.io/.../reconstruction-server-base:latest is the default.
+# Base image (COLMAP/Ceres/pycolmap toolchain) built from docker/Dockerfile.base.
+# Override to test against a locally built base, e.g.
+#   docker build --build-arg BASE_IMAGE=reconstruction-server-base:colmap-4.2.1 -f docker/Dockerfile .
 ARG BASE_IMAGE=ghcr.io/aukilabs/reconstruction-server-base:latest
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 ARG RECONSTRUCTION_VERSION
