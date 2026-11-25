@@ -5,12 +5,14 @@
 {{- range .Values.keda.include }}
 {{- $query = append $query (printf "include=%s" .) }}
 {{- end }}
-{{- else if .Values.keda.exclude }}
-{{- range .Values.keda.exclude }}
-{{- $query = append $query (printf "exclude=%s" .) }}
 {{- end }}
-{{- else }}
-{{- fail "keda.include or keda.exclude must be set when keda.enabled" }}
+{{- if .Values.keda.modes }}
+{{- range .Values.keda.modes }}
+{{- $query = append $query (printf "mode=%s" .) }}
+{{- end }}
+{{- end }}
+{{- if and (not .Values.keda.include) (not .Values.keda.modes) }}
+{{- fail "keda.modes or keda.include must be set when keda.enabled" }}
 {{- end }}
 {{- range .Values.keda.taskTypes }}
 {{- $query = append $query (printf "task_types=%s" (. | urlquery)) }}
@@ -19,6 +21,7 @@
 {{- $query = append $query (printf "status=%s" .) }}
 {{- end }}
 {{- $metricsUrl := printf "%s?%s" $dmsUrl (join "&" $query) }}
+{{- $useBearer := or .Values.keda.metricsToken .Values.keda.metricsTokenSecret.name }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -41,7 +44,11 @@ spec:
         valueLocation: dms_tasks_scale
         targetValue: {{ .Values.keda.targetValue | quote }}
         activationTargetValue: {{ .Values.keda.activationTargetValue | quote }}
+        {{- if $useBearer }}
         authMode: bearer
+        {{- end }}
+      {{- if $useBearer }}
       authenticationRef:
         name: {{ .Release.Name }}-dms-task-metrics
+      {{- end }}
 {{- end }}

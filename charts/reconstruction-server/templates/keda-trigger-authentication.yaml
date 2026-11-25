@@ -1,9 +1,9 @@
-{{- if .Values.keda.enabled }}
+{{- if and .Values.keda.enabled (or .Values.keda.metricsToken .Values.keda.metricsTokenSecret.name) }}
 {{- $tokenSecretName := .Values.keda.metricsTokenSecret.name }}
 {{- if .Values.keda.metricsToken }}
 {{- $tokenSecretName = printf "%s-dms-task-metrics-token" .Release.Name }}
 {{- else }}
-{{- $tokenSecretName = required "keda.metricsToken or keda.metricsTokenSecret.name is required when keda.enabled" $tokenSecretName }}
+{{- $tokenSecretName = required "keda.metricsToken or keda.metricsTokenSecret.name is required for bearer auth" $tokenSecretName }}
 {{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication

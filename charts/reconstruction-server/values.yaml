@@ -22,7 +22,7 @@ keda:
   enabled: false
   dmsMetricsUrl: ""
   include: []
-  exclude: []
+  modes: []
   taskTypes:
     - /reconstruction/local-refinement/v1
     - /reconstruction/global-refinement/v1
