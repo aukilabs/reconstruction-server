@@ -1,0 +1,47 @@
+{{- if .Values.keda.enabled }}
+{{- $dmsUrl := required "keda.dmsMetricsUrl is required when keda.enabled" .Values.keda.dmsMetricsUrl }}
+{{- $query := list }}
+{{- if .Values.keda.include }}
+{{- range .Values.keda.include }}
+{{- $query = append $query (printf "include=%s" .) }}
+{{- end }}
+{{- else if .Values.keda.exclude }}
+{{- range .Values.keda.exclude }}
+{{- $query = append $query (printf "exclude=%s" .) }}
+{{- end }}
+{{- else }}
+{{- fail "keda.include or keda.exclude must be set when keda.enabled" }}
+{{- end }}
+{{- range .Values.keda.taskTypes }}
+{{- $query = append $query (printf "task_types=%s" (. | urlquery)) }}
+{{- end }}
+{{- range .Values.keda.statuses }}
+{{- $query = append $query (printf "status=%s" .) }}
+{{- end }}
+{{- $metricsUrl := printf "%s?%s" $dmsUrl (join "&" $query) }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-recon
+  labels:
+    app.kubernetes.io/name: reconstruction-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  scaleTargetRef:
+    name: {{ .Values.keda.scaleTargetRef.name | default (printf "%s-reconstruction-server" .Release.Name) }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  triggers:
+    - type: metrics-api
+      metadata:
+        url: {{ $metricsUrl | quote }}
+        format: prometheus
+        valueLocation: dms_tasks_scale
+        targetValue: {{ .Values.keda.targetValue | quote }}
+        activationTargetValue: {{ .Values.keda.activationTargetValue | quote }}
+        authMode: bearer
+      authenticationRef:
+        name: {{ .Release.Name }}-dms-task-metrics
+{{- end }}

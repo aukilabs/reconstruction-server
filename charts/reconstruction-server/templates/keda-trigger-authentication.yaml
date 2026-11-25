@@ -1,0 +1,14 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Release.Name }}-dms-task-metrics
+  labels:
+    app.kubernetes.io/name: reconstruction-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  secretTargetRef:
+    - parameter: token
+      name: {{ required "keda.metricsTokenSecret.name is required when keda.enabled" .Values.keda.metricsTokenSecret.name }}
+      key: {{ .Values.keda.metricsTokenSecret.key }}
+{{- end }}
