@@ -1,4 +1,4 @@
-"""Emit scanAlignmentTransforms.localToGlobalColmap for splatter 0.2 global splat."""
+"""Emit scanAlignmentTransforms.localToDomain for splatter 0.2 tip global splat."""
 import json
 import sys
 import tempfile
@@ -35,7 +35,7 @@ def _stub_heavy_deps():
 
 
 class SaveManifestScanAlignmentTests(unittest.TestCase):
-    def test_writes_local_to_global_colmap_sim3(self):
+    def test_writes_local_to_domain_sim3(self):
         sim3 = _fake_sim3(1.25, 1.0, 2.0, 3.0)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -56,10 +56,10 @@ class SaveManifestScanAlignmentTests(unittest.TestCase):
 
         self.assertIn("scanAlignmentTransforms", manifest)
         entry = manifest["scanAlignmentTransforms"]["scan_a"]
-        self.assertIn("localToGlobalColmap", entry)
-        self.assertNotIn("localToDomain", entry)
+        self.assertIn("localToDomain", entry)
+        self.assertNotIn("localToGlobalColmap", entry)
 
-        xform = entry["localToGlobalColmap"]
+        xform = entry["localToDomain"]
         self.assertEqual(xform["scale"], "1.25")
         self.assertEqual(xform["position"]["x"], "1.0")
         self.assertEqual(xform["position"]["y"], "2.0")
