@@ -1,18 +1,13 @@
 {{- if .Values.keda.enabled }}
 {{- $dmsUrl := required "keda.dmsMetricsUrl is required when keda.enabled" .Values.keda.dmsMetricsUrl }}
 {{- $query := list }}
-{{- if .Values.keda.include }}
-{{- range .Values.keda.include }}
-{{- $query = append $query (printf "include=%s" .) }}
-{{- end }}
-{{- end }}
 {{- if .Values.keda.modes }}
 {{- range .Values.keda.modes }}
 {{- $query = append $query (printf "mode=%s" .) }}
 {{- end }}
 {{- end }}
-{{- if and (not .Values.keda.include) (not .Values.keda.modes) }}
-{{- fail "keda.modes or keda.include must be set when keda.enabled" }}
+{{- if not .Values.keda.modes }}
+{{- fail "keda.modes must be set when keda.enabled" }}
 {{- end }}
 {{- range .Values.keda.taskTypes }}
 {{- $query = append $query (printf "task_types=%s" (. | urlquery)) }}
@@ -21,7 +16,11 @@
 {{- $query = append $query (printf "status=%s" .) }}
 {{- end }}
 {{- $metricsUrl := printf "%s?%s" $dmsUrl (join "&" $query) }}
-{{- $useBearer := or .Values.keda.metricsToken .Values.keda.metricsTokenSecret.name }}
+{{- $needsBearer := has "dedicated" .Values.keda.modes }}
+{{- $useBearer := or $needsBearer .Values.keda.metricsToken .Values.keda.metricsTokenSecret.name }}
+{{- if and $needsBearer (not .Values.keda.metricsToken) (not .Values.keda.metricsTokenSecret.name) }}
+{{- fail "keda.metricsTokenSecret.name (key DMS_TOKEN) or keda.metricsToken is required when modes includes dedicated" }}
+{{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:

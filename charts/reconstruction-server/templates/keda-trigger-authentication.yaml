@@ -16,5 +16,5 @@ spec:
   secretTargetRef:
     - parameter: token
       name: {{ $tokenSecretName }}
-      key: {{ .Values.keda.metricsTokenSecret.key | default "token" }}
+      key: {{ .Values.keda.metricsTokenSecret.key | default "DMS_TOKEN" }}
 {{- end }}

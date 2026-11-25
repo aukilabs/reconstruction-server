@@ -21,7 +21,6 @@ reconstruction-server:
 keda:
   enabled: false
   dmsMetricsUrl: ""
-  include: []
   modes: []
   taskTypes:
     - /reconstruction/local-refinement/v1
@@ -41,4 +40,4 @@ keda:
   metricsToken: ""
   metricsTokenSecret:
     name: ""
-    key: token
+    key: DMS_TOKEN
