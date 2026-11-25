@@ -177,9 +177,8 @@ RUN set -eux; \
     rm -rf /tmp/build/*
 
 # COLMAP (+ its Python bindings)
-# Keep CUDA ON. Disable COLMAP's optional ONNX FetchContent: we use hloc/Torch
-# for features, not COLMAP ONNX matchers, and microsoft/onnxruntime GitHub
-# release assets currently 404 (breaks cmake when FETCH_ONNX defaults ON).
+# Note: ONNX disabled to fix base image build failure, since microsoft/onnxruntime was made private.
+# We don't use the ONNX parts of colmap (eg image feature extraction).
 RUN set -eux; \
     cd /tmp/build; \
     git clone --depth 1 --branch 4.2.1 https://github.com/colmap/colmap.git; \
