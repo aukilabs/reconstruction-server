@@ -136,6 +136,7 @@ def refine_global(args):
         job_progress=100,
         portal_sizes=portal_sizes,
         portal_alignment_metrics=portal_alignment_metrics_to_dict(portal_alignment_metrics),
+        scan_alignment_transforms=refined_aligned_scans.alignment_transforms,
     )
 
     sfm_dir = output_path / "refined_sfm_combined"
