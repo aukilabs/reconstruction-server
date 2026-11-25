@@ -224,8 +224,7 @@ def save_manifest_json(
 
     #-------------------------
     # ALIGNED SCANS (pose & optional scaling to bring local refinement scans into domain coords, as determined by global refinement)
-    # Sim3 stays COLMAP: splatter 0.2 tip (969c21d) reads localToDomain only;
-    # only final portal poses / PLY convert to OpenGL.
+    # Sim3 stays COLMAP; only final portal poses / PLY convert to OpenGL.
     #-------------------------
     if scan_alignment_transforms:
         manifest_data["scanAlignmentTransforms"] = {}
@@ -233,7 +232,7 @@ def save_manifest_json(
             pos = sim3.translation
             quat = sim3.rotation.quat
             manifest_data["scanAlignmentTransforms"][scan_id] = {
-                "localToDomain": {
+                "localToGlobalColmap": {
                     "scale": str(float(sim3.scale)),
                     "position": {
                         "x": str(float(pos[0])),
