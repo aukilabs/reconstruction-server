@@ -1,3 +1,13 @@
 reconstruction-server:
   extraEnvMap:
     RUST_LOG: "debug"
+
+keda:
+  enabled: true
+  dmsMetricsUrl: "https://dms.dev.aukiverse.com/v1/metrics"
+  exclude:
+    - "00000000-0000-0000-0000-000000000000"
+  metricsToken: "dev-keda-dms-task-metrics"
+  metricsTokenSecret:
+    name: ""
+    key: token

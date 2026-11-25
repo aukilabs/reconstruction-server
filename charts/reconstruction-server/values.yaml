@@ -38,6 +38,7 @@ keda:
   cooldownPeriod: 300
   scaleTargetRef:
     name: ""
+  metricsToken: ""
   metricsTokenSecret:
     name: ""
     key: token
