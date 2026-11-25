@@ -53,6 +53,10 @@ RUN set -eux; \
     mkdir -p /app/jobs; \
     chown -R "$USERNAME:$USERNAME" /app/jobs
 
+RUN install -d -o "$USERNAME" -g "$USERNAME" "/home/$USERNAME/.cache/torch/hub" && \
+    printf '%s\n' gmberton_EigenPlaces gmberton_cosplace > "/home/$USERNAME/.cache/torch/hub/trusted_list" && \
+    chown "$USERNAME:$USERNAME" "/home/$USERNAME/.cache/torch/hub/trusted_list"
+
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod 755 /app/entrypoint.sh
 
