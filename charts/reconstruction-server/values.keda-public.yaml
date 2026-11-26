@@ -1,0 +1,8 @@
+keda:
+  enabled: true
+  modes:
+    - public
+  metricsToken: ""
+  metricsTokenSecret:
+    name: ""
+    key: DMS_TOKEN
