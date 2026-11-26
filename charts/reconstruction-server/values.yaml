@@ -36,6 +36,8 @@ keda:
   pollingInterval: 30
   cooldownPeriod: 300
   scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
     name: ""
   metricsToken: ""
   metricsTokenSecret:

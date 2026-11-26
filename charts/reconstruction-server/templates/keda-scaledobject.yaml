@@ -30,6 +30,8 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   scaleTargetRef:
+    apiVersion: {{ .Values.keda.scaleTargetRef.apiVersion | default "apps/v1" }}
+    kind: {{ .Values.keda.scaleTargetRef.kind | default "StatefulSet" }}
     name: {{ .Values.keda.scaleTargetRef.name | default .Release.Name }}
   minReplicaCount: {{ .Values.keda.minReplicaCount }}
   maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
