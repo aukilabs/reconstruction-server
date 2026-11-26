@@ -1,3 +1,6 @@
 reconstruction-server:
   extraEnvMap:
     RUST_LOG: "debug"
+
+keda:
+  maxReplicaCount: 3
