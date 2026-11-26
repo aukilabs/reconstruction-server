@@ -177,6 +177,8 @@ RUN set -eux; \
     rm -rf /tmp/build/*
 
 # COLMAP (+ its Python bindings)
+# Note: ONNX disabled to fix base image build failure, since microsoft/onnxruntime was made private.
+# We don't use the ONNX parts of colmap (eg image feature extraction).
 RUN set -eux; \
     cd /tmp/build; \
     git clone --depth 1 --branch 4.2.1 https://github.com/colmap/colmap.git; \
@@ -185,6 +187,7 @@ RUN set -eux; \
     cd build; \
     cmake .. -GNinja \
       -DCUDA_ENABLED=ON \
+      -DONNX_ENABLED=OFF \
       -DBLA_VENDOR=Intel10_64lp \
       -DCOLMAP_HASH_MAP_BACKEND=STD \
       -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120"; \
