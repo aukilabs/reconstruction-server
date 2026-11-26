@@ -30,7 +30,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   scaleTargetRef:
-    name: {{ .Values.keda.scaleTargetRef.name | default (printf "%s-reconstruction-server" .Release.Name) }}
+    name: {{ .Values.keda.scaleTargetRef.name | default .Release.Name }}
   minReplicaCount: {{ .Values.keda.minReplicaCount }}
   maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
   pollingInterval: {{ .Values.keda.pollingInterval }}
