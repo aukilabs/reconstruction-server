@@ -1,5 +1,7 @@
 reconstruction-server:
-  replicaCount: 2
+  # Scaled to zero on 2026-11-26. Raise this (or scale the StatefulSet in
+  # Argo CD) when a node is needed again.
+  replicaCount: 0
   image:
     tag: v0.4.2
     pullPolicy: IfNotPresent
