@@ -5,13 +5,6 @@ reconstruction-server:
     tag: latest
   ingress:
     enabled: false
-    # Re-enable for specific environments via overlay files if needed.
-    # annotations:
-    #   kubernetes.io/ingress.class: alb
-    #   alb.ingress.kubernetes.io/scheme: internet-facing
-    #   alb.ingress.kubernetes.io/group.name: default
-    #   alb.ingress.kubernetes.io/target-type: ip
-    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
   resources:
     limits:
       cpu: 8
@@ -24,3 +17,29 @@ reconstruction-server:
     - key: "dedicated"
       value: "karpenterGPU"
       effect: "NoSchedule"
+
+keda:
+  enabled: false
+  dmsMetricsUrl: ""
+  modes: []
+  taskTypes:
+    - /reconstruction/local-refinement/v1
+    - /reconstruction/global-refinement/v1
+  statuses:
+    - queued
+    - leased
+    - running
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  targetValue: "1"
+  activationTargetValue: "0"
+  pollingInterval: 30
+  cooldownPeriod: 300
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: ""
+  metricsToken: ""
+  metricsTokenSecret:
+    name: ""
+    key: DMS_TOKEN

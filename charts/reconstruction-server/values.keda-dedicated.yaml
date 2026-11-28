@@ -1,0 +1,7 @@
+keda:
+  enabled: true
+  modes:
+    - dedicated
+  metricsTokenSecret:
+    name: reconstruction-server-std-0
+    key: DMS_TOKEN
